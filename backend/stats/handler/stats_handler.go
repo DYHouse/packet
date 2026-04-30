@@ -40,27 +40,23 @@ func parseDate(dateStr string) (time.Time, bool) {
 	return date, true
 }
 
+func respondError(c *gin.Context, code int, msg string) {
+	c.JSON(code, gin.H{
+		"code":    code * 100,
+		"message": msg,
+	})
+}
+
 func (h *StatsHandler) GetDashboard(c *gin.Context) {
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-
-	var startDate, endDate time.Time
-	var ok bool
-
-	if endDate, ok = parseDate(endDateStr); !ok {
-		endDate = time.Now()
-	}
-
-	if startDate, ok = parseDate(startDateStr); !ok {
-		startDate = endDate
+	startDate, endDate, ok := ParseDateRange(c, 0)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid date range: start_date must <= end_date, max 90 days")
+		return
 	}
 
 	stats, err := h.statsService.GetDashboardStats(c.Request.Context(), startDate, endDate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -71,26 +67,15 @@ func (h *StatsHandler) GetDashboard(c *gin.Context) {
 }
 
 func (h *StatsHandler) GetHourlyTrend(c *gin.Context) {
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-
-	var startDate, endDate time.Time
-	var ok bool
-
-	if endDate, ok = parseDate(endDateStr); !ok {
-		endDate = time.Now()
-	}
-
-	if startDate, ok = parseDate(startDateStr); !ok {
-		startDate = endDate
+	startDate, endDate, ok := ParseDateRange(c, 0)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid date range: start_date must <= end_date, max 90 days")
+		return
 	}
 
 	trends, err := h.statsService.GetHourlyTrend(c.Request.Context(), startDate, endDate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -101,26 +86,15 @@ func (h *StatsHandler) GetHourlyTrend(c *gin.Context) {
 }
 
 func (h *StatsHandler) GetDailyTrend(c *gin.Context) {
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-
-	var startDate, endDate time.Time
-	var ok bool
-
-	if endDate, ok = parseDate(endDateStr); !ok {
-		endDate = time.Now()
-	}
-
-	if startDate, ok = parseDate(startDateStr); !ok {
-		startDate = endDate.AddDate(0, 0, -6)
+	startDate, endDate, ok := ParseDateRange(c, -6)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid date range: start_date must <= end_date, max 90 days")
+		return
 	}
 
 	trends, err := h.statsService.GetDailyTrend(c.Request.Context(), startDate, endDate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -131,26 +105,15 @@ func (h *StatsHandler) GetDailyTrend(c *gin.Context) {
 }
 
 func (h *StatsHandler) GetAmountDistribution(c *gin.Context) {
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-
-	var startDate, endDate time.Time
-	var ok bool
-
-	if endDate, ok = parseDate(endDateStr); !ok {
-		endDate = time.Now()
-	}
-
-	if startDate, ok = parseDate(startDateStr); !ok {
-		startDate = endDate
+	startDate, endDate, ok := ParseDateRange(c, 0)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid date range: start_date must <= end_date, max 90 days")
+		return
 	}
 
 	distributions, err := h.statsService.GetAmountDistribution(c.Request.Context(), startDate, endDate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -161,28 +124,24 @@ func (h *StatsHandler) GetAmountDistribution(c *gin.Context) {
 }
 
 func (h *StatsHandler) GetRoomRanking(c *gin.Context) {
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-
-	var startDate, endDate time.Time
-	var ok bool
-
-	if endDate, ok = parseDate(endDateStr); !ok {
-		endDate = time.Now()
-	}
-
-	if startDate, ok = parseDate(startDateStr); !ok {
-		startDate = endDate
+	startDate, endDate, ok := ParseDateRange(c, 0)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid date range: start_date must <= end_date, max 90 days")
+		return
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if offset < 0 {
+		offset = 0
+	}
 
-	rankings, err := h.statsService.GetRoomRanking(c.Request.Context(), startDate, endDate, limit)
+	rankings, err := h.statsService.GetRoomRanking(c.Request.Context(), startDate, endDate, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -192,21 +151,17 @@ func (h *StatsHandler) GetRoomRanking(c *gin.Context) {
 	})
 }
 
+// GetSystemPacketStats 改用 start_date+end_date 参数风格, 与其他接口统一
 func (h *StatsHandler) GetSystemPacketStats(c *gin.Context) {
-	dateStr := c.Query("date")
-	var date time.Time
-	if d, ok := parseDate(dateStr); ok {
-		date = d
-	} else {
-		date = time.Now()
+	startDate, endDate, ok := ParseDateRange(c, 0)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid date range: start_date must <= end_date, max 90 days")
+		return
 	}
 
-	stats, err := h.statsService.GetSystemPacketStats(c.Request.Context(), date)
+	stats, err := h.statsService.GetSystemPacketStats(c.Request.Context(), startDate, endDate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 

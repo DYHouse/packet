@@ -53,3 +53,16 @@ type DailyTrend struct {
 	SystemPacketCost int64  `json:"system_packet_cost"`
 	NetProfit        int64  `json:"net_profit"`
 }
+
+// PaginationReq 通用分页请求参数.
+type PaginationReq struct {
+	Limit  int `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset int `form:"offset" binding:"omitempty,min=0"`
+}
+
+// PaginationResp 通用分页响应.
+type PaginationResp struct {
+	Total  int64 `json:"total"`
+	Limit  int   `json:"limit"`
+	Offset int   `json:"offset"`
+}

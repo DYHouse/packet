@@ -29,15 +29,18 @@ export const statsApi = {
     return request.get(`/api/v1/stats/distribution${params}`)
   },
 
-  getRoomRanking(startDate, endDate, limit = 10) {
+  getRoomRanking(startDate, endDate, limit = 10, offset = 0) {
     const params = startDate && endDate 
-      ? `?start_date=${startDate}&end_date=${endDate}&limit=${limit}` 
-      : `?limit=${limit}`
+      ? `?start_date=${startDate}&end_date=${endDate}&limit=${limit}&offset=${offset}` 
+      : `?limit=${limit}&offset=${offset}`
     return request.get(`/api/v1/stats/rooms/ranking${params}`)
   },
 
-  getSystemPacketStats(date) {
-    const params = date ? `?date=${date}` : ''
+  // 改用 start_date+end_date 参数, 与其他接口统一
+  getSystemPacketStats(startDate, endDate) {
+    const params = startDate && endDate 
+      ? `?start_date=${startDate}&end_date=${endDate}` 
+      : ''
     return request.get(`/api/v1/stats/system-packets${params}`)
   }
 }

@@ -69,21 +69,24 @@ const selectQuick = (value) => {
     case 'today':
       start = end = today
       break
-    case 'yesterday':
+    case 'yesterday': {
       const yesterday = new Date(today)
       yesterday.setDate(yesterday.getDate() - 1)
       start = end = yesterday
       break
-    case 'last7days':
-      end = today
+    }
+    case 'last7days': {
+      end = new Date(today)
       start = new Date(today)
       start.setDate(start.getDate() - 6)
       break
-    case 'last30days':
-      end = today
+    }
+    case 'last30days': {
+      end = new Date(today)
       start = new Date(today)
       start.setDate(start.getDate() - 29)
       break
+    }
   }
 
   emit('update:startDate', formatDate(start))

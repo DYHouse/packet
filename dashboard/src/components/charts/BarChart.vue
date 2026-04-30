@@ -14,11 +14,25 @@ const props = defineProps({
   title: {
     type: String,
     default: ''
+  },
+  xField: {
+    type: String,
+    default: 'range'
+  },
+  yFields: {
+    type: Array,
+    default: () => ['count']
+  },
+  yNames: {
+    type: Array,
+    default: () => ['数量']
   }
 })
 
 const chartRef = ref(null)
 let chartInstance = null
+
+const colors = ['#1a1a1a', '#666666', '#999999']
 
 const initChart = () => {
   if (!chartRef.value) return
@@ -29,6 +43,17 @@ const initChart = () => {
 
 const updateChart = () => {
   if (!chartInstance || !props.data.length) return
+
+  const xAxisData = props.data.map(item => item[props.xField])
+  const series = props.yFields.map((field, index) => ({
+    name: props.yNames[index] || field,
+    type: 'bar',
+    data: props.data.map(item => item[field]),
+    itemStyle: {
+      color: colors[index % colors.length]
+    },
+    barWidth: props.yFields.length > 1 ? '30%' : '50%'
+  }))
 
   const option = {
     title: {
@@ -50,6 +75,12 @@ const updateChart = () => {
         color: '#1a1a1a'
       }
     },
+    legend: props.yFields.length > 1 ? {
+      data: props.yNames,
+      textStyle: { color: '#666666' },
+      top: 0,
+      right: 0
+    } : undefined,
     grid: {
       left: 50,
       right: 20,
@@ -58,7 +89,7 @@ const updateChart = () => {
     },
     xAxis: {
       type: 'category',
-      data: props.data.map(item => item.range),
+      data: xAxisData,
       axisLine: {
         lineStyle: {
           color: '#e5e5e5'
@@ -91,17 +122,7 @@ const updateChart = () => {
         show: false
       }
     },
-    series: [
-      {
-        name: '红包数量',
-        type: 'bar',
-        data: props.data.map(item => item.count),
-        itemStyle: {
-          color: '#666666'
-        },
-        barWidth: '50%'
-      }
-    ]
+    series
   }
 
   chartInstance.setOption(option)

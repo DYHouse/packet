@@ -17,6 +17,7 @@ import (
 	"github.com/cashparty/backend/stats/repository"
 	"github.com/cashparty/backend/stats/service"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -51,8 +52,28 @@ func main() {
 		logger.Fatal("failed to connect mysql", "error", err)
 	}
 
-	statsRepo := repository.NewStatsRepository(db)
-	statsService := service.NewStatsService(statsRepo)
+	statsRepo := repository.NewStatsRepository(db, cfg.AmountRanges)
+
+	// Redis 缓存 (可选, 连接失败则降级为无缓存)
+	var rdb *redis.Client
+	if cfg.Redis.Addr != "" {
+		rdb = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+			PoolSize: cfg.Redis.PoolSize,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			logger.Warn("redis connection failed, running without cache", "error", err)
+			rdb = nil
+		} else {
+			logger.Info("redis connected", "addr", cfg.Redis.Addr)
+		}
+	}
+
+	statsService := service.NewStatsService(statsRepo, rdb)
 	statsHandler := handler.NewStatsHandler(statsService)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -92,6 +113,10 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error("server shutdown error", "error", err)
+	}
+
+	if rdb != nil {
+		rdb.Close()
 	}
 
 	logger.Info("stats service stopped")

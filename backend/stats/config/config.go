@@ -9,9 +9,24 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	MySQL  MySQLConfig  `yaml:"mysql"`
-	Log    LogConfig    `yaml:"log"`
+	Server       ServerConfig    `yaml:"server"`
+	MySQL        MySQLConfig     `yaml:"mysql"`
+	Redis        RedisConfig     `yaml:"redis"`
+	Log          LogConfig       `yaml:"log"`
+	AmountRanges []AmountRange   `yaml:"amount_ranges"`
+}
+
+type AmountRange struct {
+	Min   int64  `yaml:"min"`
+	Max   int64  `yaml:"max"`
+	Label string `yaml:"label"`
+}
+
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	PoolSize int    `yaml:"pool_size"`
 }
 
 type ServerConfig struct {
@@ -92,5 +107,19 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Log.MaxAge == 0 {
 		cfg.Log.MaxAge = 30
+	}
+
+	if cfg.Redis.PoolSize == 0 {
+		cfg.Redis.PoolSize = 50
+	}
+
+	if len(cfg.AmountRanges) == 0 {
+		cfg.AmountRanges = []AmountRange{
+			{Min: 0, Max: 1000, Label: "0-10元"},
+			{Min: 1000, Max: 5000, Label: "10-50元"},
+			{Min: 5000, Max: 10000, Label: "50-100元"},
+			{Min: 10000, Max: 50000, Label: "100-500元"},
+			{Min: 50000, Max: 0, Label: "500元以上"},
+		}
 	}
 }

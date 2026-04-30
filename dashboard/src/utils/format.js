@@ -16,6 +16,12 @@ export const formatPercent = (value) => {
   return (value * 100).toFixed(2) + '%'
 }
 
+// toYuan 将分转为元的数值, 用于 ECharts 等需要原始数值的场景
+export const toYuan = (value) => {
+  if (!value) return 0
+  return value / 100
+}
+
 export const formatHour = (hourStr) => {
   return hourStr.substring(11, 16)
 }
