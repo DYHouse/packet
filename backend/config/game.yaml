@@ -1,0 +1,83 @@
+server:
+  name: "game-service"
+  grpc_port: 50051
+  mode: "debug"
+
+timeout:
+  seat: 30s
+  ready: 3s
+  grab: 20s
+  send: 30s
+  replace: 30s
+
+redis:
+  mode: "standalone"
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  master_name: ""
+  sentinel_addrs: []
+
+mysql:
+  dsn: "root:123456@tcp(127.0.0.1:3306)/cashparty?charset=utf8mb4&parseTime=True&loc=Local"
+  max_open_conns: 100
+  max_idle_conns: 20
+  conn_max_lifetime: 3600
+
+kafka:
+  brokers:
+    - "127.0.0.1:9092"
+
+broadcast:
+  mode: "redis_pubsub"
+  kafka:
+    topic: "cashparty.gateway.broadcast"
+  redis_pubsub:
+    channel: "cashparty:gateway:broadcast"
+
+platform:
+  provider: "mock"
+  base_url: "https://dev.mars.bingo/api/channel/envelope-dev"
+  merchant_id: "10001"
+  merchant_secret: "aca5d11a-e481-4163-9505-194564558ae3"
+  game_id: 1
+  game_code: "redpacket"
+  game_name: "redpacket"
+  currency: "MXN"
+  timeout: 5s
+  max_retries: 3
+
+log:
+  level: "debug"
+  filename: "logs/game.log"
+  max_size: 100
+  max_backups: 10
+  max_age: 30
+  compress: true
+
+nacos:
+  enabled: true
+  server_addr: "127.0.0.1:8848"
+  namespace: ""
+  group: "DEFAULT_GROUP"
+  username: "nacos"
+  password: "nacos"
+  service_name: "game-service"
+  service_addr: "127.0.0.1"
+  service_port: 50051
+  config_data_id: "game-service.yaml"
+  config_group: "DEFAULT_GROUP"
+  algorithm_data_id: "algorithm.yaml"
+  algorithm_group: "DEFAULT_GROUP"
+
+id_generator:
+  enabled: true
+
+avatar:
+  base_url: "http://43.135.35.31/avatars"
+  default_count: 60

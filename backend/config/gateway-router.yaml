@@ -1,0 +1,42 @@
+routes:
+  - cmd_prefix: "ping"
+    service: "gateway"
+  
+  - cmd_prefix: "get_room_type_list"
+    service: "game-service"
+  
+  - cmd_prefix: "join_room"
+    service: "game-service"
+  
+  - cmd_prefix: "auto_match"
+    service: "game-service"
+  
+  - cmd_prefix: "leave_room"
+    service: "game-service"
+
+  - cmd_prefix: "room_state"
+    service: "game-service"
+  
+  - cmd_prefix: "select_seat"
+    service: "game-service"
+  
+  - cmd_prefix: "cancel_seat"
+    service: "game-service"
+  
+  - cmd_prefix: "player_ready"
+    service: "game-service"
+  
+  - cmd_prefix: "send_packet"
+    service: "game-service"
+  
+  - cmd_prefix: "grab_packet"
+    service: "game-service"
+
+  - cmd_prefix: "get_room_list"
+    service: "game-service"
+
+  - cmd_prefix: "reconnect"
+    service: "game-service"
+
+  - cmd_prefix: "get_user_balance"
+    service: "game-service"

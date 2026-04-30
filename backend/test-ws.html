@@ -1,0 +1,2060 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 { color: #333; margin-bottom: 20px; }
+        h2 { color: #555; font-size: 16px; margin: 15px 0 10px; }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .status-bar.connected { background: #e8f5e9; border: 1px solid #4caf50; }
+        .status-bar.disconnected { background: #ffebee; border: 1px solid #f44336; }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .status-indicator.connected { background: #4caf50; }
+        .status-indicator.disconnected { background: #f44336; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .form-group label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+        input, select {
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            min-width: 150px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #2196f3;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-primary { background: #2196f3; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #1976d2; }
+        .btn-success { background: #4caf50; color: white; }
+        .btn-success:hover:not(:disabled) { background: #388e3c; }
+        .btn-warning { background: #ff9800; color: white; }
+        .btn-warning:hover:not(:disabled) { background: #f57c00; }
+        .btn-danger { background: #f44336; color: white; }
+        .btn-danger:hover:not(:disabled) { background: #d32f2f; }
+        .btn-secondary { background: #757575; color: white; }
+        .btn-secondary:hover:not(:disabled) { background: #616161; }
+        .btn-grab { background: #e91e63; color: white; font-size: 18px; padding: 15px 30px; }
+        .btn-grab:hover:not(:disabled) { background: #c2185b; }
+        .btn-send { background: #ff5722; color: white; font-size: 16px; padding: 12px 25px; }
+        .btn-send:hover:not(:disabled) { background: #e64a19; }
+        .room-types {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .room-type-btn {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .room-type-btn:hover { border-color: #2196f3; }
+        .room-type-btn.selected { border-color: #2196f3; background: #e3f2fd; }
+        .room-type-btn .name { font-weight: 600; color: #333; }
+        .room-type-btn .fee { font-size: 12px; color: #666; margin-top: 4px; }
+        .game-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .room-info {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .room-info h3 { margin: 0 0 10px; font-size: 14px; color: #333; }
+        .room-info .info-row { display: flex; gap: 20px; flex-wrap: wrap; }
+        .room-info .info-item { font-size: 13px; }
+        .room-info .info-item span { color: #666; }
+        .room-info .info-item strong { color: #333; }
+        .game-phase {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .game-phase.waiting { background: #e0e0e0; color: #616161; }
+        .game-phase.countdown { background: #fff3e0; color: #f57c00; }
+        .game-phase.grabbing { background: #fce4ec; color: #c2185b; }
+        .game-phase.settling { background: #e3f2fd; color: #1976d2; }
+        .game-phase.wait_send { background: #fff8e1; color: #ffa000; }
+        .game-phase.game_end { background: #e8f5e9; color: #388e3c; }
+        .seats {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .seat {
+            width: 100px;
+            height: 100px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            background: white;
+            transition: all 0.2s;
+        }
+        .seat:hover:not(.occupied) { border-color: #2196f3; }
+        .seat.occupied { background: #e3f2fd; border-color: #2196f3; }
+        .seat.ready { background: #e8f5e9; border-color: #4caf50; }
+        .seat.ready-playing { background: #e3f2fd; border-color: #2196f3; }
+        .seat.me { border-width: 3px; }
+        .seat.sender { background: #fff3e0; border-color: #ff9800; }
+        .seat .seat-no { font-size: 12px; color: #999; }
+        .seat .player-name { font-size: 11px; color: #333; margin-top: 4px; text-align: center; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .seat .grab-amount { font-size: 14px; color: #e91e63; font-weight: bold; margin-top: 2px; }
+        .seat .sender-badge { font-size: 10px; color: #ff9800; margin-top: 2px; }
+        .log-container {
+            background: #1e1e1e;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: #2d2d2d;
+        }
+        .log-header span { color: #aaa; font-size: 13px; }
+        .log {
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+        }
+        .log .error { color: #f44; }
+        .log .success { color: #4f4; }
+        .log .info { color: #4af; }
+        .log .warn { color: #fa0; }
+        .log div { margin: 4px 0; }
+        .two-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .room-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .room-item:hover {
+            border-color: #2196f3;
+            background: #f5f9ff;
+        }
+        .room-item.selected {
+            border-color: #2196f3;
+            background: #e3f2fd;
+        }
+        .room-item .room-no { font-weight: 600; color: #333; }
+        .room-item .room-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+        .room-item .status-idle { background: #e8f5e9; color: #388e3c; }
+        .room-item .status-waiting { background: #fff3e0; color: #f57c00; }
+        .room-item .status-playing { background: #e3f2fd; color: #1976d2; }
+        .room-item .room-players { font-size: 13px; color: #666; }
+        .room-item .join-btn { padding: 6px 12px; font-size: 12px; }
+        .round-results {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .round-results h4 { margin: 0 0 10px; color: #333; }
+        .round-results table { width: 100%; border-collapse: collapse; }
+        .round-results th, .round-results td { padding: 8px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+        .round-results th { color: #666; font-weight: 500; }
+        .round-results .amount { color: #e91e63; font-weight: bold; }
+        .round-results .min-amount { background: #fff3e0; }
+        .round-results .me-player { background: #e3f2fd; }
+        .round-results .me-min-amount { background: #e8f5e9; }
+        .countdown-display {
+            font-size: 48px;
+            font-weight: bold;
+            text-align: center;
+            color: #f57c00;
+            margin: 20px 0;
+        }
+        .packet-info {
+            background: linear-gradient(135deg, #e91e63, #ff5722);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        .packet-info .amount { font-size: 32px; font-weight: bold; }
+        .packet-info .count { font-size: 16px; margin-top: 5px; }
+        .penalty-info {
+            background: #ffebee;
+            border: 1px solid #f44336;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        .penalty-info h4 { color: #f44336; margin: 0 0 10px; }
+        .replacement-info {
+            background: #fff3e0;
+            border: 1px solid #ff9800;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        .replacement-info h4 { color: #f57c00; margin: 0 0 10px; }
+        .grab-section {
+            background: #fce4ec;
+            border: 2px solid #e91e63;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        .grab-section h3 { color: #c2185b; margin: 0 0 15px; }
+        .packets-container {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        .packet {
+            width: 100px;
+            height: 130px;
+            background: linear-gradient(135deg, #e91e63, #ff5722);
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(233, 30, 99, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        .packet::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px 10px 50% 50%;
+        }
+        .packet:hover:not(.grabbed):not(.disabled) {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(233, 30, 99, 0.5);
+        }
+        .packet.grabbed {
+            background: linear-gradient(135deg, #9e9e9e, #757575);
+            cursor: default;
+            box-shadow: none;
+        }
+        .packet.grabbed.by-me {
+            background: linear-gradient(135deg, #4caf50, #388e3c);
+        }
+        .packet.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .packet .packet-no {
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .packet .packet-icon {
+            font-size: 32px;
+            margin: 5px 0;
+        }
+        .packet .packet-status {
+            font-size: 11px;
+            margin-top: 5px;
+            opacity: 0.9;
+        }
+        .packet .grabbed-amount {
+            font-size: 16px;
+            margin-top: 5px;
+        }
+        .packet .grabbed-by {
+            font-size: 10px;
+            opacity: 0.8;
+            max-width: 90px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .send-section {
+            background: #fff3e0;
+            border: 2px solid #ff9800;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        .send-section h3 { color: #f57c00; margin: 0 0 15px; }
+        .timeout-bar {
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        .timeout-bar .progress {
+            height: 100%;
+            background: #e91e63;
+            transition: width 0.1s;
+        }
+        @media (max-width: 768px) {
+            .two-columns { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <h1>测试</h1>
+    
+    <div class="status-bar disconnected" id="statusBar">
+        <div class="status-indicator disconnected" id="statusIndicator"></div>
+        <span id="statusText">未连接</span>
+        <span id="userInfo" style="margin-left:auto; color:#666;"></span>
+    </div>
+
+    <div class="two-columns">
+        <div>
+            <div class="panel">
+                <h2>1. 连接设置</h2>
+                <div class="controls">
+                    <div class="form-group">
+                        <label>用户ID (测试用)</label>
+                        <input type="text" id="userId" value="10001">
+                    </div>
+                    <div class="form-group">
+                        <label>昵称</label>
+                        <input type="text" id="nickname" value="测试玩家">
+                    </div>
+                    <div class="form-group">
+                        <label>设备ID</label>
+                        <input type="text" id="deviceId" value="device-001">
+                    </div>
+                    <div class="form-group">
+                        <label>平台</label>
+                        <select id="platform">
+                            <option value="web">Web</option>
+                            <option value="h5">H5</option>
+                            <option value="app">App</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="controls" style="margin-top:15px;">
+                    <button class="btn-primary" id="btnConnect" onclick="connect()">连接</button>
+                    <button class="btn-secondary" id="btnDisconnect" onclick="disconnect()" disabled>断开</button>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>2. 选择房间类型</h2>
+                <div class="room-types" id="roomTypes">
+                    <div style="color:#999;padding:20px;text-align:center;">连接后加载...</div>
+                </div>
+                <div class="controls" style="margin-top:15px;">
+                    <button class="btn-primary" id="btnRefreshRooms" onclick="loadRoomList()" disabled>刷新房间列表</button>
+                    <button class="btn-success" id="btnJoinRoom" onclick="joinRoom()" disabled>自动匹配</button>
+                    <button class="btn-danger" id="btnLeaveRoom" onclick="leaveRoom()" disabled>离开房间</button>
+                </div>
+            </div>
+
+            <div class="panel" id="roomListPanel" style="display:none;">
+                <h2>3. 选择房间加入</h2>
+                <div class="room-list-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span id="roomListTitle">房间列表</span>
+                    <span id="roomListCount" style="color:#666;font-size:12px;"></span>
+                </div>
+                <div class="room-list" id="roomList" style="max-height:300px;overflow-y:auto;">
+                </div>
+            </div>
+
+            <div class="panel" id="roomPanel" style="display:none;">
+                <h2>4. 房间内操作</h2>
+                <div class="room-info">
+                    <h3>房间信息</h3>
+                    <div class="info-row">
+                        <div class="info-item"><span>房间号:</span> <strong id="roomNo">-</strong></div>
+                        <div class="info-item"><span>房间类型:</span> <strong id="roomType">-</strong></div>
+                        <div class="info-item"><span>当前轮次:</span> <strong id="currentRound">0/10</strong></div>
+                        <div class="info-item"><span>玩家数:</span> <strong id="playerCount">0/5</strong></div>
+                        <div class="info-item"><span>观众数:</span> <strong id="spectatorCount">0/100</strong></div>
+                        <div class="info-item"><span>身份:</span> <strong id="myRole" style="color:#2196f3;">-</strong></div>
+                    </div>
+                </div>
+                
+                <div class="game-phase waiting" id="gamePhase">等待中</div>
+                
+                <div id="countdownDisplay" style="display:none;">
+                    <div class="countdown-display" id="countdownValue">3</div>
+                </div>
+                
+                <div id="packetInfo" class="packet-info" style="display:none;">
+                    <div>红包总金额</div>
+                    <div class="amount" id="packetAmount">¥0</div>
+                    <div class="count">共 <span id="packetCount">0</span> 个红包</div>
+                </div>
+                
+                <div id="grabSection" class="grab-section" style="display:none;">
+                    <h3>抢红包</h3>
+                    <p>剩余时间: <span id="grabTimeout">10</span> 秒</p>
+                    <div class="timeout-bar"><div class="progress" id="grabProgress" style="width:100%"></div></div>
+                    <div class="packets-container" id="packetsContainer"></div>
+                    <p id="grabResult" style="margin-top:10px;font-size:18px;color:#c2185b;"></p>
+                    <p id="grabHint" style="font-size:14px;color:#666;margin-top:5px;">点击任意红包抢夺</p>
+                </div>
+                
+                <div id="sendSection" class="send-section" style="display:none;">
+                    <h3>轮到你发红包</h3>
+                    <p>剩余时间: <span id="sendTimeout">30</span> 秒</p>
+                    <div class="timeout-bar"><div class="progress" id="sendProgress" style="width:100%"></div></div>
+                    <p>需要发送金额: <strong id="sendAmount">¥0</strong></p>
+                    <button class="btn-send" id="btnSend" onclick="sendPacket()">确认发红包</button>
+                </div>
+                
+                <div id="confirmSendSection" class="send-section" style="display:none;">
+                    <h3>你是最小金额获得者</h3>
+                    <p style="color:#c2185b;font-size:16px;margin:10px 0;">下轮需要你发红包！</p>
+                    <p>剩余时间: <span id="confirmSendTimeout">30</span> 秒</p>
+                    <div class="timeout-bar"><div class="progress" id="confirmSendProgress" style="width:100%"></div></div>
+                    <p>发红包金额: <strong id="confirmSendAmount">¥0</strong> (房费)</p>
+                    <button class="btn-send" id="btnConfirmSend" onclick="confirmSendPacket()">确认发红包</button>
+                </div>
+                
+                <div id="roundResults" class="round-results" style="display:none;">
+                    <h4>回合结果</h4>
+                    <table>
+                        <thead>
+                            <tr><th>红包位置</th><th>玩家</th><th>金额</th><th>标记</th></tr>
+                        </thead>
+                        <tbody id="roundResultsBody"></tbody>
+                    </table>
+                </div>
+                
+                <div id="penaltyInfo" class="penalty-info" style="display:none;">
+                    <h4>惩罚通知</h4>
+                    <p id="penaltyMessage"></p>
+                </div>
+                
+                <div id="replacementInfo" class="replacement-info" style="display:none;">
+                    <h4>等待补位</h4>
+                    <p id="replacementMessage"></p>
+                </div>
+                
+                <h2 style="margin-top:20px;">选择座位</h2>
+                <div class="seats" id="seats"></div>
+                
+                <h2 style="margin-top:20px;">观众列表</h2>
+                <div id="spectators" style="background:#f5f5f5;padding:10px;border-radius:5px;min-height:40px;">
+                    <span style="color:#999;">暂无观众</span>
+                </div>
+                
+                <div class="game-actions" style="margin-top:20px;">
+                    <button class="btn-success" id="btnReady" onclick="playerReady()" disabled>准备</button>
+                    <button class="btn-warning" id="btnCancelSeat" onclick="cancelSeat()" disabled style="display:none;">取消座位</button>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="panel">
+                <h2>快速操作</h2>
+                <div class="game-actions">
+                    <button class="btn-secondary" onclick="sendPing()">发送心跳</button>
+                    <button class="btn-secondary" onclick="getRoomState()">获取房间状态</button>
+                    <button class="btn-primary" onclick="getBalance()">获取余额</button>
+                </div>
+                <div id="balanceInfo" style="margin-top:15px;padding:15px;background:#e3f2fd;border-radius:8px;display:none;">
+                    <strong>当前余额:</strong> <span id="balanceAmount" style="font-size:24px;color:#2196f3;">¥0.00</span>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="log-container">
+                    <div class="log-header">
+                        <span>消息日志</span>
+                        <button class="btn-secondary" onclick="clearLog()" style="padding:5px 10px;font-size:12px;">清空</button>
+                    </div>
+                    <div class="log" id="log"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CMD = {
+            PING: 'ping',
+            JOIN_ROOM: 'join_room',
+            AUTO_MATCH: 'auto_match',
+            LEAVE_ROOM: 'leave_room',
+            ROOM_STATE: 'room_state',
+            SELECT_SEAT: 'select_seat',
+            CANCEL_SEAT: 'cancel_seat',
+            PLAYER_READY: 'player_ready',
+            SEND_PACKET: 'send_packet',
+            GRAB_PACKET: 'grab_packet',
+            GET_ROOM_LIST: 'get_room_list',
+            GET_ROOM_TYPE_LIST: 'get_room_type_list',
+            GET_USER_BALANCE: 'get_user_balance'
+        };
+
+        const PUSH = {
+            ROOM_STATE: 'room_state',
+            SPECTATOR_JOINED: 'spectator_joined',
+            SPECTATOR_LEFT: 'spectator_left',
+            PLAYER_JOINED: 'player_joined',
+            PLAYER_LEFT: 'player_left',
+            SEAT_SELECTED: 'seat_selected',
+            SEAT_CANCELLED: 'seat_cancelled',
+            PLAYER_READY: 'player_ready',
+            PLAYER_DISCONNECTED: 'player_disconnected',
+            PLAYER_RECONNECTED: 'player_reconnected',
+            GAME_START: 'game_start',
+            COUNTDOWN: 'countdown_start',
+            ROUND_START: 'round_start',
+            PACKET_GRABBED: 'packet_grabbed',
+            ROUND_END: 'round_end',
+            AUTO_DISTRIBUTE: 'auto_distribute',
+            PENALTY: 'penalty',
+            WAIT_REPLACEMENT: 'wait_replacement',
+            GAME_INTERRUPTED: 'game_interrupted',
+            KICKED: 'kicked',
+            ERROR: 'error'
+        };
+
+        const GAME_PHASE = {
+            WAITING: 'WAITING',
+            COUNTDOWN: 'COUNTDOWN',
+            ROUND_START: 'ROUND_START',
+            GRABBING: 'GRABBING',
+            SETTLING: 'SETTLING',
+            WAIT_SEND: 'WAIT_SEND',
+            GAME_END: 'GAME_END'
+        };
+
+        const CODE = {
+            SUCCESS: 0,
+            PLAYER_CANNOT_LEAVE: 1023
+        };
+
+        let ws = null;
+        let selectedRoomType = 1;
+        let currentRoom = null;
+        let myUserId = 0;
+        let isReady = false;
+        let mySeatNo = 0;
+        let selectedRoomId = 0;
+        let roomListData = [];
+        let isSpectator = false;
+        let roomTypesData = [];
+        let currentRoundData = null;
+        let gamePhase = GAME_PHASE.WAITING;
+        let grabTimeoutTimer = null;
+        let sendTimeoutTimer = null;
+        let countdownTimer = null;
+        let confirmSendTimeoutTimer = null;
+        let allPlayersReady = false;
+        let currentSenderId = '';
+        let roundResults = [];
+        let packetStates = [];
+        let hasGrabbed = false;
+        let grabbedPacketIndex = -1;
+        let currentMinAmountPlayer = '';
+        let currentRoomFee = 0;
+        
+        function log(msg, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `<div class="${type}">[${time}] ${msg}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function updateStatus(connected) {
+            const statusBar = document.getElementById('statusBar');
+            const indicator = document.getElementById('statusIndicator');
+            const text = document.getElementById('statusText');
+            const btnConnect = document.getElementById('btnConnect');
+            const btnDisconnect = document.getElementById('btnDisconnect');
+            const btnJoinRoom = document.getElementById('btnJoinRoom');
+            const btnRefreshRooms = document.getElementById('btnRefreshRooms');
+            
+            if (connected) {
+                statusBar.className = 'status-bar connected';
+                indicator.className = 'status-indicator connected';
+                text.textContent = '已连接';
+                btnConnect.disabled = true;
+                btnDisconnect.disabled = false;
+                btnJoinRoom.disabled = false;
+                btnRefreshRooms.disabled = false;
+            } else {
+                statusBar.className = 'status-bar disconnected';
+                indicator.className = 'status-indicator disconnected';
+                text.textContent = '未连接';
+                btnConnect.disabled = false;
+                btnDisconnect.disabled = true;
+                btnJoinRoom.disabled = true;
+                btnRefreshRooms.disabled = true;
+                document.getElementById('roomPanel').style.display = 'none';
+                document.getElementById('roomListPanel').style.display = 'none';
+                document.getElementById('userInfo').textContent = '';
+            }
+        }
+        
+        function connect() {
+            if (ws) ws.close();
+            
+            myUserId = parseInt(document.getElementById('userId').value) || 10001;
+            const nickname = document.getElementById('nickname').value || '测试玩家';
+            
+            log(`正在获取测试 Token...`, 'info');
+            
+            fetch('http://43.135.35.31/test/token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    user_id: String(myUserId),
+                    nickname: nickname,
+                    avatar: ''
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.code !== 0) {
+                    log(`获取 Token 失败: ${data.msg}`, 'error');
+                    return;
+                }
+                
+                const token = data.data.token;
+                log(`获取 Token 成功`, 'success');
+                
+                const url = `ws://43.135.35.31/ws?token=${encodeURIComponent(token)}`;
+                
+                log(`连接中: ws://43.135.35.31/ws...`, 'info');        
+                
+                ws = new WebSocket(url);
+                
+                ws.onopen = () => {
+                    log('WebSocket 连接已建立', 'success');
+                    updateStatus(true);
+                    document.getElementById('userInfo').textContent = `用户: ${nickname} (ID: ${myUserId})`;
+                    loadRoomTypeList();
+                };
+                
+                ws.onmessage = (event) => {
+                    log(`[WS 收到] ${event.data}`, 'info');
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (e) {
+                        log(`解析消息失败: ${event.data}`, 'error');
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log('WebSocket 错误', 'error');
+                };
+                
+                ws.onclose = (event) => {
+                    log(`连接关闭: code=${event.code}, reason=${event.reason || '无'}`, 'error');
+                    updateStatus(false);
+                    clearAllTimers();
+                };
+            })
+            .catch(error => {
+                log(`请求失败: ${error.message}`, 'error');
+            });
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        function clearAllTimers() {
+            if (grabTimeoutTimer) {
+                clearInterval(grabTimeoutTimer);
+                grabTimeoutTimer = null;
+            }
+            if (sendTimeoutTimer) {
+                clearInterval(sendTimeoutTimer);
+                sendTimeoutTimer = null;
+            }
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            if (confirmSendTimeoutTimer) {
+                clearInterval(confirmSendTimeoutTimer);
+                confirmSendTimeoutTimer = null;
+            }
+        }
+        
+        function handleMessage(data) {
+            if (data.type) {
+                handlePushMessage(data);
+            } else if (data.cmd) {
+                handleResponseMessage(data);
+            } else {
+                log(`收到未知格式消息: ${JSON.stringify(data)}`, 'warn');
+            }
+        }
+        
+        function handleResponseMessage(data) {
+            const cmd = data.cmd;
+            const code = data.code;
+            const msg = data.msg;
+            const respData = data.data;
+            
+            log(`收到响应 [${cmd}] code=${code} msg=${msg} data=${JSON.stringify(respData)}`, code === 0 ? 'success' : 'error');
+            
+            switch (cmd) {
+                case 'pong':
+                    log(`心跳响应: ${JSON.stringify(respData)}`, 'info');
+                    break;
+                    
+                case 'auth':
+                    if (code === CODE.SUCCESS) {
+                        myUserId = respData.user_id;
+                        log(`认证成功，用户ID: ${myUserId}`, 'success');
+                        document.getElementById('userInfo').textContent = `用户: ${respData.nickname} (ID: ${myUserId})`;
+                    } else {
+                        log(`认证失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.JOIN_ROOM:
+                    if (code === CODE.SUCCESS) {
+                        currentRoom = respData;
+                        isSpectator = respData.is_spectator || false;
+                        log(`成功加入房间: ${currentRoom.room_no} (${isSpectator ? '观众身份' : '玩家身份'})`, 'success');
+                        updateRoomUI();
+                    } else {
+                        log(`加入房间失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.AUTO_MATCH:
+                    if (code === CODE.SUCCESS) {
+                        currentRoom = respData;
+                        isSpectator = respData.is_spectator || false;
+                        log(`自动匹配成功，加入房间: ${currentRoom.room_no} (${isSpectator ? '观众身份' : '玩家身份'})`, 'success');
+                        updateRoomUI();
+                    } else {
+                        log(`自动匹配失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.SELECT_SEAT:
+                    if (code === CODE.SUCCESS) {
+                        mySeatNo = respData.seat_no;
+                        isSpectator = false;
+                        log(`成功选择座位: ${mySeatNo}，请点击准备`, 'success');
+                        updateRoomState(respData.room_state);
+                    } else {
+                        log(`选座失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.CANCEL_SEAT:
+                    if (code === CODE.SUCCESS) {
+                        mySeatNo = 0;
+                        isSpectator = true;
+                        isReady = false;
+                        log('已取消座位，转为观众身份', 'info');
+                        updateRoomState(respData.room_state);
+                        updateReadyButton();
+                    } else {
+                        log(`取消座位失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.PLAYER_READY:
+                    if (code === CODE.SUCCESS) {
+                        isReady = true;
+                        log('准备成功!', 'success');
+                        if (respData.room_state) {
+                            updateRoomState(respData.room_state);
+                        }
+                        updateReadyButton();
+                    } else {
+                        log(`准备失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.LEAVE_ROOM:
+                    if (code === CODE.SUCCESS) {
+                        log('已离开房间', 'info');
+                        resetRoomState();
+                    } else if (code === CODE.PLAYER_CANNOT_LEAVE) {
+                        log('离开失败: 玩家无法离开房间', 'error');
+                    } else {
+                        log(`离开失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.ROOM_STATE:
+                    if (code === CODE.SUCCESS) {
+                        updateRoomState(respData.room_state);
+                    }
+                    break;
+                    
+                case CMD.SEND_PACKET:
+                    if (code === CODE.SUCCESS) {
+                        log(`发红包成功，红包数: ${respData.packet_count}`, 'success');
+                        document.getElementById('sendSection').style.display = 'none';
+                    } else {
+                        log(`发红包失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.GRAB_PACKET:
+                    if (code === CODE.SUCCESS) {
+                        const amountYuan = (respData.amount / 100).toFixed(2);
+                        const position = respData.position;
+                        log(`抢红包成功，金额: ¥${amountYuan}，位置: ${position}`, 'success');
+                        document.getElementById('grabResult').textContent = `恭喜抢到 ¥${amountYuan}！`;
+                        document.getElementById('grabHint').style.display = 'none';
+                        
+                        updatePacketGrabbed(position - 1, myUserId, '我', respData.amount, true);
+                        
+                        if (respData.is_last) {
+                            log('你是最后一个抢红包的人！', 'info');
+                        }
+                    } else {
+                        log(`抢红包失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.GET_ROOM_LIST:
+                    if (code === CODE.SUCCESS) {
+                        handleRoomListResponse(respData);
+                    } else {
+                        log(`获取房间列表失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.GET_ROOM_TYPE_LIST:
+                    if (code === CODE.SUCCESS) {
+                        handleRoomTypeListResponse(respData);
+                    } else {
+                        log(`获取房间类型列表失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case CMD.GET_USER_BALANCE:
+                    if (code === CODE.SUCCESS) {
+                        const balance = respData.balance || 0;
+                        const balanceYuan = (balance / 100).toFixed(2);
+                        document.getElementById('balanceAmount').textContent = `¥${balanceYuan}`;
+                        document.getElementById('balanceInfo').style.display = 'block';
+                        log(`获取余额成功: ¥${balanceYuan}`, 'success');
+                    } else {
+                        log(`获取余额失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                case 'reconnect':
+                    if (code === CODE.SUCCESS) {
+                        log(`重连成功! 房间: ${respData.room_id || '无'}`, 'success');
+                        if (respData.room_state) {
+                            currentRoom = { room_id: respData.room_id, room_state: respData.room_state };
+                            isSpectator = respData.room_state.is_spectator || false;
+                            updateRoomUI();
+                            handleRoomStateUpdate(respData.room_state);
+                        }
+                    } else {
+                        log(`重连失败: ${msg}`, 'error');
+                    }
+                    break;
+                    
+                default:
+                    log(`收到响应: ${JSON.stringify(data)}`, 'info');
+            }
+        }
+        
+        function handlePushMessage(data) {
+            const pushType = data.type;
+            const pushData = data.data;
+            
+            log(`收到推送 [${pushType}]`, 'info');
+            
+            switch (pushType) {
+                case PUSH.ROOM_STATE:
+                    handleRoomStateUpdate(pushData);
+                    break;
+                    
+                case PUSH.SPECTATOR_JOINED:
+                    log(`观众加入: ${pushData.nickname}`, 'info');
+                    break;
+                    
+                case PUSH.SPECTATOR_LEFT:
+                    log(`观众离开: ${pushData.user_id}, 原因: ${pushData.reason}`, 'info');
+                    break;
+                    
+                case PUSH.PLAYER_JOINED:
+                    log(`玩家加入: ${pushData.nickname}, 座位: ${pushData.seat_no}`, 'info');
+                    break;
+                    
+                case PUSH.PLAYER_LEFT:
+                    log(`玩家离开: ${pushData.user_id}, 座位: ${pushData.seat_no}`, 'info');
+                    break;
+                    
+                case PUSH.SEAT_SELECTED:
+                    log(`座位选择: ${pushData.nickname} 选择了座位 ${pushData.seat_no}`, 'info');
+                    break;
+                    
+                case PUSH.SEAT_CANCELLED:
+                    log(`取消座位: ${pushData.nickname} 释放了座位 ${pushData.seat_no}，转为观众`, 'info');
+                    break;
+                    
+                case PUSH.PLAYER_READY:
+                    log(`玩家准备: ${pushData.nickname}`, 'info');
+                    break;
+                    
+                case PUSH.GAME_START:
+                    log('游戏开始!', 'success');
+                    setGamePhase(GAME_PHASE.ROUND_START);
+                    break;
+                    
+                case PUSH.COUNTDOWN:
+                    handleCountdownPush(pushData);
+                    break;
+                    
+                case PUSH.ROUND_START:
+                    handleRoundStartPush(pushData);
+                    break;
+                    
+                case PUSH.PACKET_GRABBED:
+                    handlePacketGrabbedPush(pushData);
+                    break;
+                    
+                case PUSH.ROUND_END:
+                    handleRoundEndPush(pushData);
+                    break;
+                    
+                case PUSH.AUTO_DISTRIBUTE:
+                    handleAutoDistributePush(pushData);
+                    break;
+                    
+                case PUSH.PENALTY:
+                    handlePenaltyPush(pushData);
+                    break;
+                    
+                case PUSH.WAIT_REPLACEMENT:
+                    handleWaitReplacementPush(pushData);
+                    break;
+                    
+                case PUSH.GAME_INTERRUPTED:
+                    handleGameInterruptedPush(pushData);
+                    break;
+                    
+                case PUSH.KICKED:
+                    const isMe = String(pushData.user_id) === String(myUserId);
+                    if (isMe) {
+                        log(`被踢出房间: ${pushData.message}`, 'error');
+                        alert(`你已被移出房间\n\n原因: ${pushData.reason}\n详细信息: ${pushData.message}`);
+                        resetRoomState();
+                    } else {
+                        log(`玩家 ${pushData.user_id} 被踢出房间: ${pushData.message}`, 'warn');
+                    }
+                    break;
+                    
+                case 'reconnect_success':
+                    log(`重连成功! 房间: ${pushData.room_id || '无'}`, 'success');
+                    if (pushData.room_state) {
+                        currentRoom = { room_id: pushData.room_id, room_state: pushData.room_state };
+                        isSpectator = pushData.room_state.is_spectator || false;
+                        updateRoomUI();
+                        handleRoomStateUpdate(pushData.room_state);
+                    }
+                    break;
+                    
+                case PUSH.ERROR:
+                    log(`系统错误: ${pushData.message}`, 'error');
+                    break;
+                    
+                default:
+                    log(`收到推送: ${JSON.stringify(data)}`, 'info');
+            }
+        }
+        
+        function handleCountdownPush(pushData) {
+            setGamePhase(GAME_PHASE.COUNTDOWN);
+            document.getElementById('countdownDisplay').style.display = 'block';
+            
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            
+            const countdownEndTime = pushData.countdown_end_time;
+            const now = Math.floor(Date.now() / 1000);
+            let remainingSeconds = countdownEndTime - now;
+            
+            if (remainingSeconds < 0) {
+                remainingSeconds = 0;
+            }
+            
+            document.getElementById('countdownValue').textContent = remainingSeconds;
+            log(`倒计时开始: ${remainingSeconds}秒，结束时间: ${new Date(countdownEndTime * 1000).toLocaleTimeString()}`, 'info');
+            
+            countdownTimer = setInterval(() => {
+                const currentNow = Math.floor(Date.now() / 1000);
+                remainingSeconds = countdownEndTime - currentNow;
+                
+                if (remainingSeconds <= 0) {
+                    remainingSeconds = 0;
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    document.getElementById('countdownValue').textContent = '0';
+                    log('倒计时结束', 'info');
+                } else {
+                    document.getElementById('countdownValue').textContent = remainingSeconds;
+                }
+            }, 100);
+        }
+        
+        function handleRoundStartPush(pushData) {
+            currentRoundData = pushData;
+            currentSenderId = pushData.sender_id;
+            roundResults = [];
+            packetStates = [];
+            hasGrabbed = false;
+            grabbedPacketIndex = -1;
+            
+            document.getElementById('countdownDisplay').style.display = 'none';
+            document.getElementById('confirmSendSection').style.display = 'none';
+            document.getElementById('roundResults').style.display = 'none';
+            document.getElementById('currentRound').textContent = `${pushData.current_round}/${currentRoom?.room_state?.max_rounds || 10}`;
+            
+            const amountYuan = (pushData.total_amount / 100).toFixed(2);
+            const commissionYuan = (pushData.commission / 100).toFixed(2);
+            
+            log(`回合开始: 第${pushData.current_round}轮`, 'success');
+            log(`发红包者: ${pushData.sender_nickname} (${pushData.sender_type || 'player'})`, 'info');
+            log(`红包总金额: ¥${amountYuan}，手续费: ¥${commissionYuan}`, 'info');
+            
+            if (pushData.sender_type === 'system' && pushData.amount_per_player) {
+                log(`系统发红包，每人分摊: ¥${(pushData.amount_per_player / 100).toFixed(2)}`, 'info');
+            }
+            
+            document.getElementById('packetInfo').style.display = 'block';
+            document.getElementById('packetAmount').textContent = `¥${amountYuan}`;
+            document.getElementById('packetCount').textContent = pushData.packet_count;
+            
+            // 所有人都显示抢红包界面（包括发红包者）
+            setGamePhase(GAME_PHASE.GRABBING);
+            showGrabSection(pushData);
+            
+            renderSeats(currentRoom?.room_state);
+        }
+        
+        function handlePacketGrabbedPush(pushData) {
+            const position = pushData.position;
+            const userID = pushData.user_id;
+            const nickname = pushData.nickname || `玩家${userID}`;
+            const amount = pushData.amount;
+            const isMe = String(userID) === String(myUserId);
+            
+            log(`红包被抢: 位置${position} 被 ${nickname} 抢走，金额: ¥${(amount / 100).toFixed(2)}`, 'info');
+            
+            updatePacketGrabbed(position - 1, userID, nickname, amount, isMe);
+        }
+        
+        function handleRoundEndPush(pushData) {
+            setGamePhase(GAME_PHASE.SETTLING);
+            clearAllTimers();
+
+            document.getElementById('grabSection').style.display = 'none';
+            document.getElementById('sendSection').style.display = 'none';
+            document.getElementById('packetInfo').style.display = 'none';
+            document.getElementById('confirmSendSection').style.display = 'none';
+
+            roundResults = pushData.results || [];
+            currentMinAmountPlayer = pushData.min_amount_player || '';
+            log(`回合结束: 第${pushData.current_round}轮`, 'info');
+
+            roundResults.forEach(result => {
+                const isMe = String(result.user_id) === String(myUserId);
+                const position = result.position || 0;
+                if (position > 0) {
+                    updatePacketGrabbed(position - 1, result.user_id, result.nickname, result.amount, isMe);
+                }
+            });
+
+            let minAmount = Infinity;
+            let minUserId = pushData.min_amount_player || '';
+
+            roundResults.forEach(result => {
+                if (result.amount < minAmount) {
+                    minAmount = result.amount;
+                    if (!minUserId) minUserId = result.user_id;
+                }
+            });
+
+            const sortedResults = [...roundResults].sort((a, b) => (a.position || 0) - (b.position || 0));
+
+            const resultsBody = document.getElementById('roundResultsBody');
+            resultsBody.innerHTML = '';
+
+            sortedResults.forEach(result => {
+                const amountYuan = (result.amount / 100).toFixed(2);
+                const isMin = String(result.user_id) === String(minUserId);
+                const isMe = String(result.user_id) === String(myUserId);
+
+                let rowClass = '';
+                if (isMe && isMin) {
+                    rowClass = 'me-min-amount';
+                } else if (isMe) {
+                    rowClass = 'me-player';
+                } else if (isMin) {
+                    rowClass = 'min-amount';
+                }
+
+                resultsBody.innerHTML += `
+                    <tr class="${rowClass}">
+                        <td>红包${result.position || '-'}</td>
+                        <td>${result.nickname}${isMe ? ' (我)' : ''}</td>
+                        <td class="amount">¥${amountYuan}</td>
+                        <td>${isMin ? '🔽 发红包' : ''}</td>
+                    </tr>
+                `;
+                log(`红包${result.position}: ${result.nickname} - ¥${amountYuan}${isMin ? ' (最小，下轮发红包)' : ''}`, 'info');
+            });
+
+            document.getElementById('roundResults').style.display = 'block';
+
+            if (pushData.next_sender_id) {
+                log(`下轮发红包者: ${pushData.next_sender_id}`, 'info');
+            }
+
+            if (pushData.is_game_end) {
+                log('游戏即将结束...', 'warn');
+            }
+
+            const isSystemSend = String(pushData.next_sender_id) === "0";
+            if (isSystemSend && !pushData.is_game_end) {
+                log('🎉 豹子奖励！下轮由系统发红包', 'info');
+                const systemSendHint = document.createElement('div');
+                systemSendHint.className = 'system-send-hint';
+                systemSendHint.style.cssText = 'background: linear-gradient(135deg, #9c27b0, #673ab7); color: white; padding: 15px; border-radius: 8px; margin: 15px 0; text-align: center;';
+                systemSendHint.innerHTML = '<h4 style="margin:0 0 5px;">🎉 豹子奖励！</h4><p style="margin:0;">下轮由系统发红包</p>';
+                const roundResultsDiv = document.getElementById('roundResults');
+                roundResultsDiv.parentNode.insertBefore(systemSendHint, roundResultsDiv.nextSibling);
+                setTimeout(() => systemSendHint.remove(), 5000);
+            }
+
+            const isMinAmountPlayer = String(currentMinAmountPlayer) === String(myUserId);
+            if (isMinAmountPlayer && !pushData.is_game_end && !isSystemSend) {
+                showConfirmSendSection();
+            }
+            
+            if (pushData.reward_type > 0 && pushData.reward_amount > 0) {
+                showRewardInfo(pushData.reward_type, pushData.reward_amount);
+            }
+            
+            if (pushData.is_game_end && pushData.final_results && pushData.final_results.length > 0) {
+                showFinalResults(pushData.final_results);
+            }
+        }
+        
+        function showFinalResults(finalResults) {
+            log('🏆 游戏结束！最终排行榜:', 'success');
+            
+            const finalDiv = document.createElement('div');
+            finalDiv.className = 'final-results';
+            finalDiv.style.cssText = 'background: linear-gradient(135deg, #4caf50, #2196f3); color: white; padding: 20px; border-radius: 12px; margin: 15px 0; text-align: center;';
+            
+            let tableHtml = '<h3 style="margin: 0 0 15px; font-size: 24px;">🏆 最终排行榜 🏆</h3>';
+            tableHtml += '<table style="width: 100%; border-collapse: collapse; text-align: left;">';
+            tableHtml += '<tr><th style="padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.3);">排名</th><th style="padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.3);">玩家</th><th style="padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.3);">累计金额</th></tr>';
+            
+            finalResults.forEach((result, index) => {
+                const amountYuan = (result.total_profit / 100).toFixed(2);
+                const isMe = String(result.user_id) === String(myUserId);
+                const rowStyle = isMe ? 'background: rgba(255,255,255,0.2);' : '';
+                const rankEmoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}`;
+                
+                tableHtml += `<tr style="${rowStyle}">`;
+                tableHtml += `<td style="padding: 8px; font-size: 20px;">${rankEmoji}</td>`;
+                tableHtml += `<td style="padding: 8px;">${result.nickname}${isMe ? ' (我)' : ''}</td>`;
+                tableHtml += `<td style="padding: 8px; font-weight: bold;">¥${amountYuan}</td>`;
+                tableHtml += '</tr>';
+                
+                log(`${rankEmoji} ${result.nickname}: ¥${amountYuan}${isMe ? ' (我)' : ''}`, 'info');
+            });
+            
+            tableHtml += '</table>';
+            finalDiv.innerHTML = tableHtml;
+            
+            const roundResultsDiv = document.getElementById('roundResults');
+            if (roundResultsDiv.style.display !== 'none') {
+                roundResultsDiv.parentNode.insertBefore(finalDiv, roundResultsDiv.nextSibling);
+            } else {
+                const roomPanel = document.getElementById('roomPanel');
+                roomPanel.appendChild(finalDiv);
+            }
+        }
+        
+        function showRewardInfo(rewardType, rewardAmount) {
+            const amountYuan = (rewardAmount / 100).toFixed(2);
+
+            const rewardNames = {
+                1: '顺子奖励',
+                2: '豹子奖励'
+            };
+
+            const rewardName = rewardNames[rewardType] || '未知奖励';
+
+            log(`🎉 ${rewardName}! 每位玩家获得 ¥${amountYuan}`, 'success');
+
+            const rewardDiv = document.createElement('div');
+            rewardDiv.className = 'reward-info';
+            rewardDiv.style.cssText = 'background: linear-gradient(135deg, #ff9800, #ff5722); color: white; padding: 20px; border-radius: 12px; margin: 15px 0; text-align: center;';
+            rewardDiv.innerHTML = `
+                <h3 style="margin: 0 0 10px; font-size: 24px;">🎉 ${rewardName} 🎉</h3>
+                <p style="margin: 0; font-size: 32px; font-weight: bold;">¥${amountYuan}</p>
+                <p style="margin: 10px 0 0; font-size: 14px;">每位玩家获得</p>
+            `;
+
+            const roundResults = document.getElementById('roundResults');
+            if (roundResults.style.display !== 'none') {
+                roundResults.parentNode.insertBefore(rewardDiv, roundResults.nextSibling);
+            } else {
+                const roomPanel = document.getElementById('roomPanel');
+                roomPanel.appendChild(rewardDiv);
+            }
+
+            setTimeout(() => {
+                rewardDiv.style.opacity = '0';
+                rewardDiv.style.transition = 'opacity 1s';
+                setTimeout(() => rewardDiv.remove(), 1000);
+            }, 5000);
+        }
+        
+        function handleAutoDistributePush(pushData) {
+            log(`自动分配: ${pushData.distributed_count} 个红包`, 'warn');
+            
+            pushData.results.forEach(result => {
+                const amountYuan = (result.amount / 100).toFixed(2);
+                const position = result.position;
+                log(`自动分配给 ${result.user_id}: ¥${amountYuan}，位置: ${position}`, 'info');
+                
+                const isMe = String(result.user_id) === String(myUserId);
+                updatePacketGrabbed(position - 1, result.user_id, isMe ? '我' : `玩家${result.user_id}`, result.amount, isMe);
+            });
+        }
+        
+        function handlePenaltyPush(pushData) {
+            const penaltyYuan = (pushData.penalty_amount / 100).toFixed(2);
+            const isMe = String(pushData.user_id) === String(myUserId);
+            const userDisplay = isMe ? '你' : `玩家 ${pushData.user_id}`;
+            
+            log(`惩罚通知: ${userDisplay} ${pushData.reason}`, 'error');
+            log(`惩罚金额: ¥${penaltyYuan}，累计惩罚次数: ${pushData.penalty_count}`, 'error');
+            
+            const penaltyInfo = document.getElementById('penaltyInfo');
+            const penaltyMessage = document.getElementById('penaltyMessage');
+            
+            penaltyMessage.innerHTML = `
+                <strong>被惩罚玩家:</strong> ${userDisplay}${isMe ? ' (你)' : ''}<br>
+                <strong>惩罚原因:</strong> ${pushData.reason}<br>
+                <strong>惩罚金额:</strong> ¥${penaltyYuan}<br>
+                <strong>累计次数:</strong> ${pushData.penalty_count} 次
+                ${pushData.kick_required ? `<br><strong style="color:#f44336;">${isMe ? '你将' : `玩家 ${pushData.user_id} 将`}被踢出房间！</strong>` : ''}
+            `;
+            penaltyInfo.style.display = 'block';
+            
+            if (pushData.kick_required) {
+                setTimeout(() => {
+                    if (isMe) {
+                        alert('累计两次惩罚，你将被踢出房间！');
+                    } else {
+                        alert(`玩家 ${pushData.user_id} 累计两次惩罚，已被踢出房间！`);
+                    }
+                }, 1000);
+            }
+        }
+        
+        function handleWaitReplacementPush(pushData) {
+            const isMe = String(pushData.left_user_id) === String(myUserId);
+            const userDisplay = isMe ? '你' : `玩家 ${pushData.left_user_id}`;
+            
+            log(`等待补位: ${userDisplay} 离开，座位 ${pushData.vacant_seat} 空缺，等待 ${pushData.wait_time} 秒`, 'warn');
+            
+            const replacementInfo = document.getElementById('replacementInfo');
+            const replacementMessage = document.getElementById('replacementMessage');
+            
+            replacementMessage.innerHTML = `
+                <strong>离开玩家:</strong> ${userDisplay}${isMe ? ' (你)' : ''}<br>
+                <strong>空缺座位:</strong> ${pushData.vacant_seat}<br>
+                等待补位中... (${pushData.wait_time} 秒)
+            `;
+            replacementInfo.style.display = 'block';
+        }
+        
+        function handleGameInterruptedPush(pushData) {
+            log(`游戏中断: ${pushData.reason}`, 'error');
+            if (pushData.penalty_share > 0) {
+                log(`惩罚分摊: ¥${(pushData.penalty_share / 100).toFixed(2)}`, 'info');
+            }
+        }
+        
+        function showGrabSection(pushData) {
+            const grabSection = document.getElementById('grabSection');
+            grabSection.style.display = 'block';
+            document.getElementById('grabResult').textContent = '';
+            document.getElementById('grabHint').style.display = 'block';
+            
+            hasGrabbed = false;
+            grabbedPacketIndex = -1;
+            packetStates = [];
+            
+            // 使用后端推送的红包数据
+            if (!pushData.packets || pushData.packets.length === 0) {
+                log('错误: 后端未推送红包数据', 'error');
+                return;
+            }
+            
+            pushData.packets.forEach((packet, index) => {
+                packetStates.push({
+                    index: index,
+                    packet_id: packet.packet_id,
+                    position: packet.position,
+                    grabbed: false,
+                    grabbedBy: null,
+                    amount: null,
+                    byMe: false
+                });
+            });
+            
+            renderPackets();
+            
+            let remainingTime = pushData.grab_timeout || 20;
+            document.getElementById('grabTimeout').textContent = remainingTime;
+            document.getElementById('grabProgress').style.width = '100%';
+            
+            if (grabTimeoutTimer) clearInterval(grabTimeoutTimer);
+            
+            const totalTime = remainingTime;
+            grabTimeoutTimer = setInterval(() => {
+                remainingTime--;
+                document.getElementById('grabTimeout').textContent = remainingTime;
+                document.getElementById('grabProgress').style.width = `${(remainingTime / totalTime) * 100}%`;
+                
+                if (remainingTime <= 0) {
+                    clearInterval(grabTimeoutTimer);
+                    grabTimeoutTimer = null;
+                }
+            }, 1000);
+        }
+        
+        function renderPackets() {
+            const container = document.getElementById('packetsContainer');
+            let html = '';
+            
+            packetStates.forEach((packet, index) => {
+                let classes = 'packet';
+                if (packet.grabbed) {
+                    classes += ' grabbed';
+                    if (packet.byMe) {
+                        classes += ' by-me';
+                    }
+                } else if (hasGrabbed) {
+                    classes += ' disabled';
+                }
+                
+                let content = '';
+                if (packet.grabbed) {
+                    if (packet.byMe) {
+                        content = `
+                            <div class="packet-no">红包 ${index + 1}</div>
+                            <div class="packet-icon">🎉</div>
+                            <div class="grabbed-amount">¥${(packet.amount / 100).toFixed(2)}</div>
+                            <div class="packet-status">我抢到了!</div>
+                        `;
+                    } else {
+                        content = `
+                            <div class="packet-no">红包 ${index + 1}</div>
+                            <div class="packet-icon">✓</div>
+                            <div class="grabbed-by">${packet.grabbedBy || '已抢'}</div>
+                            <div class="packet-status">已抢走</div>
+                        `;
+                    }
+                } else {
+                    content = `
+                        <div class="packet-no">红包 ${index + 1}</div>
+                        <div class="packet-icon">🧧</div>
+                        <div class="packet-status">点击抢夺</div>
+                    `;
+                }
+                
+                const onclick = (!packet.grabbed && !hasGrabbed) ? `onclick="grabPacket(${index})"` : '';
+                html += `<div class="${classes}" ${onclick}>${content}</div>`;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        function updatePacketGrabbed(packetIndex, userID, nickname, amount, isMe) {
+            if (packetIndex >= 0 && packetIndex < packetStates.length) {
+                packetStates[packetIndex].grabbed = true;
+                packetStates[packetIndex].grabbedBy = nickname;
+                packetStates[packetIndex].amount = amount;
+                packetStates[packetIndex].byMe = isMe;
+                
+                if (isMe) {
+                    hasGrabbed = true;
+                    grabbedPacketIndex = packetIndex;
+                }
+                
+                renderPackets();
+            }
+        }
+        
+        function showSendSection(pushData) {
+            const sendSection = document.getElementById('sendSection');
+            sendSection.style.display = 'block';
+            document.getElementById('btnSend').disabled = false;
+            
+            const amountYuan = (pushData.total_amount / 100).toFixed(2);
+            document.getElementById('sendAmount').textContent = `¥${amountYuan}`;
+            
+            let remainingTime = 30;
+            document.getElementById('sendTimeout').textContent = remainingTime;
+            document.getElementById('sendProgress').style.width = '100%';
+            
+            if (sendTimeoutTimer) clearInterval(sendTimeoutTimer);
+            
+            const totalTime = remainingTime;
+            sendTimeoutTimer = setInterval(() => {
+                remainingTime--;
+                document.getElementById('sendTimeout').textContent = remainingTime;
+                document.getElementById('sendProgress').style.width = `${(remainingTime / totalTime) * 100}%`;
+                
+                if (remainingTime <= 0) {
+                    clearInterval(sendTimeoutTimer);
+                    sendTimeoutTimer = null;
+                }
+            }, 1000);
+        }
+        
+        function setGamePhase(phase) {
+            gamePhase = phase;
+            const phaseDiv = document.getElementById('gamePhase');
+            
+            const phaseNames = {
+                'WAITING': '等待中',
+                'COUNTDOWN': '倒计时',
+                'ROUND_START': '回合开始',
+                'GRABBING': '抢红包',
+                'SETTLING': '结算中',
+                'WAIT_SEND': '等待发红包',
+                'GAME_END': '游戏结束'
+            };
+            
+            phaseDiv.textContent = phaseNames[phase] || phase;
+            phaseDiv.className = 'game-phase ' + phase.toLowerCase();
+        }
+        
+        function handleRoomStateUpdate(roomState) {
+            if (!roomState) return;
+            
+            if (currentRoom) {
+                currentRoom.room_state = roomState;
+            }
+            
+            if (roomState.status === 2) {
+                if (gamePhase === GAME_PHASE.WAITING || gamePhase === GAME_PHASE.COUNTDOWN) {
+                    setGamePhase(GAME_PHASE.ROUND_START);
+                }
+            } else if (roomState.status === 3) {
+                setGamePhase(GAME_PHASE.GAME_END);
+            } else if (roomState.status === 4) {
+                setGamePhase(GAME_PHASE.WAITING);
+            } else if (roomState.status <= 1) {
+                if (gamePhase !== GAME_PHASE.WAITING && gamePhase !== GAME_PHASE.COUNTDOWN) {
+                    setGamePhase(GAME_PHASE.WAITING);
+                }
+            }
+            
+            const players = roomState.players || [];
+            const seats = roomState.seats || [];
+            const myPlayer = players.find(p => String(p.user_id) === String(myUserId));
+            
+            if (myPlayer) {
+                isSpectator = false;
+                mySeatNo = myPlayer.seat_no;
+                const mySeat = seats.find(s => Number(s.seat_no) === Number(mySeatNo));
+                isReady = mySeat ? mySeat.ready : false;
+            } else {
+                const spectators = roomState.spectators || [];
+                const mySpectator = spectators.find(s => String(s.user_id) === String(myUserId));
+                if (mySpectator) {
+                    isSpectator = true;
+                    mySeatNo = mySpectator.seat_no;
+                    isReady = false;
+                }
+            }
+            
+            const readyPlayers = seats.filter(s => s.ready);
+            allPlayersReady = readyPlayers.length >= 5;
+            
+            updateRoomState(roomState);
+            updateReadyButton();
+            
+            log(`房间状态更新: 玩家${players.length}人, 观众${roomState.spectator_count || 0}人, status=${roomState.status}`, 'info');
+        }
+        
+        function resetRoomState() {
+            currentRoom = null;
+            mySeatNo = 0;
+            isReady = false;
+            isSpectator = false;
+            allPlayersReady = false;
+            gamePhase = GAME_PHASE.WAITING;
+            currentRoundData = null;
+            roundResults = [];
+            packetStates = [];
+            hasGrabbed = false;
+            grabbedPacketIndex = -1;
+            currentMinAmountPlayer = '';
+            currentRoomFee = 0;
+            clearAllTimers();
+            
+            document.getElementById('roomPanel').style.display = 'none';
+            document.getElementById('btnJoinRoom').disabled = false;
+            document.getElementById('penaltyInfo').style.display = 'none';
+            document.getElementById('replacementInfo').style.display = 'none';
+            document.getElementById('roundResults').style.display = 'none';
+            document.getElementById('grabSection').style.display = 'none';
+            document.getElementById('sendSection').style.display = 'none';
+            document.getElementById('confirmSendSection').style.display = 'none';
+            document.getElementById('packetInfo').style.display = 'none';
+            document.getElementById('countdownDisplay').style.display = 'none';
+        }
+        
+        function updateRoomUI() {
+            document.getElementById('roomPanel').style.display = 'block';
+            document.getElementById('btnJoinRoom').disabled = true;
+            document.getElementById('btnLeaveRoom').disabled = false;
+            
+            const state = currentRoom.room_state || {};
+            document.getElementById('roomNo').textContent = currentRoom.room_no || '-';
+            document.getElementById('roomType').textContent = getRoomTypeName(selectedRoomType);
+            document.getElementById('currentRound').textContent = `${state.current_round || 0}/${state.max_rounds || 10}`;
+            document.getElementById('playerCount').textContent = `${state.players?.length || 0}/5`;
+            document.getElementById('spectatorCount').textContent = `${state.spectator_count || 0}/${state.max_spectators || 100}`;
+            document.getElementById('myRole').textContent = isSpectator ? '观众' : '玩家';
+            document.getElementById('myRole').style.color = isSpectator ? '#ff9800' : '#4caf50';
+            
+            renderSeats(state);
+            updateReadyButton();
+        }
+        
+        function updateRoomState(roomState) {
+            if (!roomState) return;
+            
+            document.getElementById('currentRound').textContent = `${roomState.current_round || 0}/${roomState.max_rounds || 10}`;
+            document.getElementById('playerCount').textContent = `${roomState.players?.length || 0}/5`;
+            document.getElementById('spectatorCount').textContent = `${roomState.spectator_count || 0}/${roomState.max_spectators || 100}`;
+            
+            renderSeats(roomState);
+            renderSpectators(roomState);
+        }
+        
+        function renderSpectators(roomState) {
+            const spectatorsDiv = document.getElementById('spectators');
+            const spectators = roomState?.spectators || [];
+            
+            if (!spectators || spectators.length === 0) {
+                spectatorsDiv.innerHTML = '<span style="color:#999;">暂无观众</span>';
+                return;
+            }
+            
+            let html = '';
+            spectators.forEach((s, index) => {
+                const isMe = String(s.user_id) === String(myUserId);
+                html += `<span style="display:inline-block;padding:4px 8px;margin:4px;background:${isMe ? '#fff3e0' : '#e3f2fd'};border-radius:4px;font-size:12px;${isMe ? 'border:2px solid #ff9800;' : ''}">${s.nickname || `用户${s.user_id}`}${isMe ? ' (我)' : ''}</span>`;
+            });
+            spectatorsDiv.innerHTML = html;
+        }
+        
+        function renderSeats(roomState) {
+            const seatsDiv = document.getElementById('seats');
+            const seats = roomState?.seats || [];
+            
+            let html = '';
+            for (let i = 1; i <= 5; i++) {
+                const seat = seats.find(s => Number(s.seat_no) === i);
+                const isOccupied = seat && seat.occupied;
+                const isMe = seat && String(seat.user_id) === String(myUserId);
+                const isReady = seat && seat.ready;
+                const isSender = currentSenderId && seat && String(seat.user_id) === String(currentSenderId);
+                const isPlaying = gamePhase !== GAME_PHASE.WAITING && gamePhase !== GAME_PHASE.COUNTDOWN;
+                
+                let classes = 'seat';
+                if (isOccupied) classes += ' occupied';
+                if (isMe) classes += ' me';
+                if (isReady) classes += isPlaying ? ' ready-playing' : ' ready';
+                if (isSender) classes += ' sender';
+                
+                let statusHtml = '';
+                if (isPlaying && isOccupied) {
+                    if (isSender && !isMe) {
+                        statusHtml = '<div style="font-size:10px;color:#ff9800;">发红包</div>';
+                    } else if (isReady) {
+                        statusHtml = '<div style="font-size:10px;color:#2196f3;">已准备</div>';
+                    }
+                } else if (isReady) {
+                    statusHtml = '<div style="font-size:10px;color:#4caf50;">已准备</div>';
+                }
+                
+                let grabAmountHtml = '';
+                if (roundResults.length > 0 && isOccupied) {
+                    const result = roundResults.find(r => String(r.user_id) === String(seat.user_id));
+                    if (result) {
+                        grabAmountHtml = `<div class="grab-amount">¥${(result.amount / 100).toFixed(2)}</div>`;
+                    }
+                }
+                
+                html += `<div class="${classes}" onclick="selectSeat(${i})">
+                    <div class="seat-no">座位${i}</div>
+                    <div class="player-name">${isOccupied ? (seat.nickname || `玩家${seat.user_id}`) : '空闲'}</div>
+                    ${statusHtml}
+                    ${grabAmountHtml}
+                </div>`;
+            }
+            seatsDiv.innerHTML = html;
+            
+            const mySeat = seats.find(s => String(s.user_id) === String(myUserId));
+            if (mySeat && mySeat.seat_no > 0 && !mySeat.ready) {
+                document.getElementById('btnReady').disabled = false;
+            } else {
+                document.getElementById('btnReady').disabled = true;
+            }
+            
+            updateReadyButton();
+        }
+        
+        function updateReadyButton() {
+            const btnReady = document.getElementById('btnReady');
+            const btnCancelSeat = document.getElementById('btnCancelSeat');
+            
+            const canCancelSeat = mySeatNo > 0 && !allPlayersReady && gamePhase === GAME_PHASE.WAITING;
+
+            if (mySeatNo > 0) {
+                if (isReady) {
+                    btnReady.style.display = 'none';
+                    btnCancelSeat.style.display = 'block';
+                    btnCancelSeat.disabled = !canCancelSeat;
+                    
+                    if (allPlayersReady) {
+                        btnCancelSeat.title = '所有玩家已准备，无法取消座位';
+                    } else if (gamePhase !== GAME_PHASE.WAITING) {
+                        btnCancelSeat.title = '游戏进行中，无法取消座位';
+                    } else {
+                        btnCancelSeat.title = '';
+                    }
+                } else {
+                    btnReady.style.display = 'block';
+                    btnReady.disabled = false;
+                    btnCancelSeat.style.display = 'block';
+                    btnCancelSeat.disabled = !canCancelSeat;
+                    
+                    if (allPlayersReady) {
+                        btnCancelSeat.title = '所有玩家已准备，无法取消座位';
+                    } else if (gamePhase !== GAME_PHASE.WAITING) {
+                        btnCancelSeat.title = '游戏进行中，无法取消座位';
+                    } else {
+                        btnCancelSeat.title = '';
+                    }
+                }
+            } else {
+                btnReady.style.display = 'none';
+                btnCancelSeat.style.display = 'none';
+            }
+        }
+        
+        function getRoomTypeName(type) {
+            const typeInfo = roomTypesData.find(t => t.id === type);
+            return typeInfo ? typeInfo.name : '未知';
+        }
+        
+        function sendRequest(cmd, data = {}) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('未连接!', 'error');
+                return;
+            }
+            
+            const msg = JSON.stringify({
+                cmd: cmd,
+                request_id: 'req_' + Date.now(),
+                data: data,
+                timestamp: Date.now()
+            });
+            
+            ws.send(msg);
+            log(`[WS 发送] ${msg}`, 'info');
+        }
+        
+        function sendPing() {
+            sendRequest(CMD.PING);
+        }
+        
+        function joinRoom() {
+            sendRequest(CMD.AUTO_MATCH, {});
+        }
+        
+        function joinSpecificRoom(roomId) {
+            sendRequest(CMD.JOIN_ROOM, { room_id: roomId });
+        }
+        
+        function loadRoomList() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('WebSocket 未连接', 'error');
+                return;
+            }
+            sendRequest(CMD.GET_ROOM_LIST, { room_type: selectedRoomType, status: 0, page: 1, page_size: 20 });
+        }
+        
+        function loadRoomTypeList() {
+            sendRequest(CMD.GET_ROOM_TYPE_LIST, {});
+        }
+        
+        function handleRoomTypeListResponse(data) {
+            if (data && data.list) {
+                roomTypesData = data.list;
+                renderRoomTypes(roomTypesData);
+                log(`加载房间类型列表成功: ${data.list.length} 个类型`, 'success');
+            } else {
+                log('加载房间类型列表失败: 数据格式错误', 'error');
+            }
+        }
+        
+        function renderRoomTypes(types) {
+            const container = document.getElementById('roomTypes');
+            if (!types || types.length === 0) {
+                container.innerHTML = '<div style="color:#999;">暂无房间类型</div>';
+                return;
+            }
+            
+            let html = '';
+            types.forEach((type, index) => {
+                const feeYuan = (type.room_fee / 100).toFixed(0);
+                const isSelected = type.id === selectedRoomType;
+                html += `<div class="room-type-btn ${isSelected ? 'selected' : ''}" data-type="${type.id}" onclick="selectRoomType(${type.id})">
+                    <div class="name">${type.name}</div>
+                    <div class="fee">房费: ¥${feeYuan} | ${type.total_people}人在线</div>
+                </div>`;
+            });
+            container.innerHTML = html;
+        }
+        
+        function selectRoomType(type) {
+            selectedRoomType = type;
+            document.querySelectorAll('.room-type-btn').forEach(btn => {
+                btn.classList.toggle('selected', btn.dataset.type == type);
+            });
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                loadRoomList();
+            }
+        }
+        
+        function handleRoomListResponse(data) {
+            if (data && data.list) {
+                roomListData = data.list;
+                renderRoomList(roomListData);
+                document.getElementById('roomListPanel').style.display = 'block';
+                document.getElementById('roomListCount').textContent = `共 ${data.total || data.list.length} 个空闲房间`;
+                log(`加载房间列表成功: ${data.total || data.list.length} 个房间`, 'success');
+            } else {
+                log('加载房间列表失败: 数据格式错误', 'error');
+            }
+        }
+        
+        function renderRoomList(rooms) {
+            const listDiv = document.getElementById('roomList');
+            const titleSpan = document.getElementById('roomListTitle');
+            
+            titleSpan.textContent = `${getRoomTypeName(selectedRoomType)} - 空闲房间`;
+            
+            if (!rooms || rooms.length === 0) {
+                listDiv.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">暂无空闲房间</div>';
+                return;
+            }
+            
+            let html = '';
+            rooms.forEach(room => {
+                const statusText = getStatusText(room.status);
+                const statusClass = getStatusClass(room.status);
+                const roomId = room.room_id;
+                
+                html += `
+                    <div class="room-item" data-room-id="${roomId}" onclick="selectRoomItem('${roomId}')">
+                        <div>
+                            <div class="room-no">${room.room_no}</div>
+                            <div class="room-players">玩家: ${room.player_count}/${room.max_players}</div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="room-status ${statusClass}">${statusText}</span>
+                            <button class="btn-success join-btn" onclick="event.stopPropagation(); joinSpecificRoom('${roomId}')">加入</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            listDiv.innerHTML = html;
+        }
+        
+        function selectRoomItem(roomId) {
+            selectedRoomId = roomId;
+            document.querySelectorAll('.room-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.roomId == roomId);
+            });
+        }
+        
+        function getStatusText(status) {
+            const texts = ['空闲', '等待中', '游戏中', '已结束'];
+            return texts[status] || '未知';
+        }
+        
+        function getStatusClass(status) {
+            const classes = ['status-idle', 'status-waiting', 'status-playing', 'status-playing'];
+            return classes[status] || '';
+        }
+        
+        function leaveRoom() {
+            if (!currentRoom) {
+                log('请先加入房间', 'error');
+                return;
+            }
+            sendRequest(CMD.LEAVE_ROOM, { room_id: currentRoom.room_id });
+        }
+        
+        function selectSeat(seatNo) {
+            if (!currentRoom) {
+                log('请先加入房间', 'error');
+                return;
+            }
+            if (gamePhase !== GAME_PHASE.WAITING) {
+                log('游戏进行中，无法选择座位', 'error');
+                return;
+            }
+            sendRequest(CMD.SELECT_SEAT, { room_id: currentRoom.room_id, seat_no: seatNo });
+        }
+        
+        function playerReady() {
+            if (!currentRoom) {
+                log('请先加入房间', 'error');
+                return;
+            }
+            sendRequest(CMD.PLAYER_READY, { room_id: currentRoom.room_id });
+        }
+        
+        function cancelSeat() {
+            if (!currentRoom) {
+                log('请先加入房间', 'error');
+                return;
+            }
+            if (allPlayersReady) {
+                log('所有玩家已准备，无法取消座位', 'error');
+                return;
+            }
+            if (gamePhase !== GAME_PHASE.WAITING) {
+                log('游戏进行中，无法取消座位', 'error');
+                return;
+            }
+            sendRequest(CMD.CANCEL_SEAT, { room_id: currentRoom.room_id });
+        }
+        
+        function getRoomState() {
+            if (!currentRoom) {
+                log('请先加入房间', 'error');
+                return;
+            }
+            sendRequest(CMD.ROOM_STATE, { room_id: currentRoom.room_id });
+        }
+        
+        function getBalance() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('WebSocket 未连接', 'error');
+                return;
+            }
+            sendRequest(CMD.GET_USER_BALANCE, {});
+        }
+        
+        function grabPacket(packetIndex) {
+            if (!currentRoom || !currentRoundData) {
+                log('当前没有可抢的红包', 'error');
+                return;
+            }
+            if (hasGrabbed) {
+                log('你已经抢过红包了', 'error');
+                return;
+            }
+            
+            const packet = packetStates[packetIndex];
+            if (!packet || packet.grabbed) {
+                log('该红包已被抢走', 'error');
+                return;
+            }
+            
+            sendRequest(CMD.GRAB_PACKET, { 
+                room_id: currentRoom.room_id, 
+                round_id: currentRoundData.round_id,
+                packet_id: packet.packet_id,
+                timestamp: Date.now()
+            });
+        }
+        
+        function sendPacket() {
+            if (!currentRoom || !currentRoundData) {
+                log('当前没有发红包权限', 'error');
+                return;
+            }
+            sendRequest(CMD.SEND_PACKET, { 
+                room_id: currentRoom.room_id,
+                timestamp: Date.now()
+            });
+        }
+        
+        function showConfirmSendSection() {
+            const confirmSendSection = document.getElementById('confirmSendSection');
+            confirmSendSection.style.display = 'block';
+            document.getElementById('btnConfirmSend').disabled = false;
+            
+            const roomTypeInfo = roomTypesData.find(t => t.id === selectedRoomType);
+            if (roomTypeInfo) {
+                currentRoomFee = roomTypeInfo.room_fee;
+                const feeYuan = (currentRoomFee / 100).toFixed(2);
+                document.getElementById('confirmSendAmount').textContent = `¥${feeYuan}`;
+            }
+            
+            let remainingTime = 30;
+            document.getElementById('confirmSendTimeout').textContent = remainingTime;
+            document.getElementById('confirmSendProgress').style.width = '100%';
+            
+            if (confirmSendTimeoutTimer) clearInterval(confirmSendTimeoutTimer);
+            
+            const totalTime = remainingTime;
+            confirmSendTimeoutTimer = setInterval(() => {
+                remainingTime--;
+                document.getElementById('confirmSendTimeout').textContent = remainingTime;
+                document.getElementById('confirmSendProgress').style.width = `${(remainingTime / totalTime) * 100}%`;
+                
+                if (remainingTime <= 0) {
+                    clearInterval(confirmSendTimeoutTimer);
+                    confirmSendTimeoutTimer = null;
+                }
+            }, 1000);
+        }
+        
+        function confirmSendPacket() {
+            if (!currentRoom) {
+                log('请先加入房间', 'error');
+                return;
+            }
+            
+            log('确认发红包，金额为房费', 'info');
+            
+            sendRequest(CMD.SEND_PACKET, { 
+                room_id: currentRoom.room_id,
+                timestamp: Date.now()
+            });
+            
+            document.getElementById('confirmSendSection').style.display = 'none';
+            if (confirmSendTimeoutTimer) {
+                clearInterval(confirmSendTimeoutTimer);
+                confirmSendTimeoutTimer = null;
+            }
+        }
+    </script>
+</body>
+</html>

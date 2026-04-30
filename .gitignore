@@ -1,0 +1,52 @@
+# Logs
+logs/
+*.log
+*.pid
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build artifacts
+dist/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test files
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Temporary files
+tmp/
+temp/
+
+# Archives
+*.zip
+protoc.zip
+
+# Go
+*.a
+*.o
+*.test
+*.out
+go.work

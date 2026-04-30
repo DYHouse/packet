@@ -1,0 +1,83 @@
+server:
+  name: gateway-service
+  port: 8080
+  mode: debug
+  read_timeout: 60s
+  write_timeout: 60s
+
+gateway:
+  read_buffer_size: 4096
+  write_buffer_size: 4096
+  send_queue_size: 256
+  max_connections: 10000
+  allowed_origins:
+    - "*"
+
+redis:
+  mode: "standalone"
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  master_name: ""
+  sentinel_addrs: []
+
+nacos:
+  enabled: true
+  server_addr: "127.0.0.1:8848"
+  namespace: ""
+  group: "DEFAULT_GROUP"
+  username: "nacos"
+  password: "nacos"
+  service_name: "gateway-service"
+  service_addr: "127.0.0.1"
+  service_port: 8080
+  config_data_id: "gateway-service.yaml"
+  config_group: "DEFAULT_GROUP"
+  router_data_id: "gateway-router.yaml"
+  router_group: "DEFAULT_GROUP"
+  rate_limiter_data_id: "gateway-ratelimiter.yaml"
+  rate_limiter_group: "DEFAULT_GROUP"
+
+kafka:
+  enabled: true
+  brokers:
+    - "127.0.0.1:9092"
+
+broadcast:
+  mode: "redis_pubsub"
+  kafka:
+    topic: "cashparty.gateway.broadcast"
+  redis_pubsub:
+    channel: "cashparty:gateway:broadcast"
+
+merchant:
+  id: "10001"
+  secret: "aca5d11a-e481-4163-9505-194564558ae3"
+  game_entry_url: "http://43.135.35.31"
+  ws_url: "ws://43.135.35.31/ws"
+
+token:
+  secret_key: "your-256-bit-secret-key-here-min-32-characters"
+  token_ttl: 2h
+  issuer: "gateway-service"
+
+log:
+  level: debug
+  filename: "logs/gateway.log"
+  max_size: 100
+  max_backups: 10
+  max_age: 30
+  compress: true
+
+rate_limiter:
+  ip_requests_per_second: 100
+  ip_burst_size: 200
+  user_requests_per_second: 50
+  user_burst_size: 100
+  global_requests_per_sec: 10000
+  cleanup_interval: 1m

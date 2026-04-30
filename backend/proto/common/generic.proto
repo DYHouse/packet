@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "github.com/cashparty/backend/proto/common;common";
+
+service GenericService {
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+  rpc SaveUser(SaveUserRequest) returns (SaveUserResponse);
+}
+
+message ForwardRequest {
+  string user_id = 1;
+  string cmd = 2;
+  string request_id = 3;
+  bytes data = 4;
+  int64 timestamp = 5;
+}
+
+message ForwardResponse {
+  string cmd = 1;
+  string request_id = 2;
+  int32 code = 3;
+  string msg = 4;
+  bytes data = 5;
+  int64 timestamp = 6;
+}
+
+message SaveUserRequest {
+  string user_id = 1;
+  string nickname = 2;
+  string avatar = 3;
+  string ip = 4;
+  string device_id = 5;
+}
+
+message SaveUserResponse {
+  int32 code = 1;
+  string msg = 2;
+  string id = 3;
+  string avatar = 4;
+}

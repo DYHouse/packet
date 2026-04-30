@@ -1,0 +1,108 @@
+# Redis Sentinel配置示例
+
+## 开发环境（单机模式）
+
+```yaml
+redis:
+  mode: "standalone"  # 或省略，默认为standalone
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  master_name: ""        # 单机模式不需要
+  sentinel_addrs: []     # 单机模式不需要
+```
+
+## 生产环境（Sentinel模式）
+
+```yaml
+redis:
+  mode: "sentinel"
+  master_name: "mymaster"
+  sentinel_addrs:
+    - "192.168.1.101:26379"
+    - "192.168.1.102:26379"
+    - "192.168.1.103:26379"
+  password: ""
+  db: 0
+  pool_size: 200
+  min_idle_conns: 50
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  addr: ""              # Sentinel模式不需要
+```
+
+## 配置说明
+
+### 必需参数
+
+- `mode`: Redis模式，可选值：
+  - `standalone`: 单机模式（默认）
+  - `sentinel`: Sentinel模式
+
+- `password`: Redis密码（如果有）
+- `db`: Redis数据库编号
+- `pool_size`: 连接池大小
+- `min_idle_conns`: 最小空闲连接数
+
+### 单机模式参数
+
+- `addr`: Redis服务器地址，格式：`host:port`
+
+### Sentinel模式参数
+
+- `master_name`: Sentinel监控的Master名称
+- `sentinel_addrs`: Sentinel节点地址列表
+
+### 可选参数
+
+- `dial_timeout`: 连接超时时间
+- `read_timeout`: 读超时时间
+- `write_timeout`: 写超时时间
+
+## 部署架构
+
+### 单机模式
+
+```
+Application → Redis (127.0.0.1:6379)
+```
+
+### Sentinel模式
+
+```
+Application
+    ↓
+Sentinel Client (自动发现Master)
+    ↓
+Sentinel Cluster (3节点)
+    - Sentinel 1: 26379
+    - Sentinel 2: 26379
+    - Sentinel 3: 26379
+    ↓
+Redis Master:6379 (读写操作)
+    ↓
+Redis Slave:6379 (数据备份)
+```
+
+## 故障转移
+
+Sentinel模式支持自动故障转移：
+
+1. Master宕机
+2. Sentinel检测到Master下线（5秒内）
+3. Sentinel选举新的Master
+4. 客户端自动连接到新Master
+5. 业务继续运行（通常10-30秒内完成）
+
+## 注意事项
+
+1. **游戏业务推荐配置**：所有操作都走Master，避免主从延迟问题
+2. **Sentinel节点数量**：建议至少3个，确保高可用
+3. **连接池大小**：根据业务并发量调整，建议CPU核心数*10
+4. **超时时间**：根据网络环境调整，建议3-5秒

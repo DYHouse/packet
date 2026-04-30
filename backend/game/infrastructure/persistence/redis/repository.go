@@ -1,0 +1,609 @@
+package redis
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/message"
+	"github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/game/domain"
+	goredis "github.com/redis/go-redis/v9"
+)
+
+type RoomRepository struct {
+	client *redis.Client
+}
+
+func NewRoomRepository(client *redis.Client) *RoomRepository {
+	return &RoomRepository{client: client}
+}
+
+func parseLuaCode(val interface{}) int {
+	switch v := val.(type) {
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return -1
+}
+
+func parseInt(val interface{}) int {
+	switch v := val.(type) {
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
+func (r *RoomRepository) GetRoomMeta(ctx context.Context, roomID string) (*domain.RoomMeta, error) {
+	key := RoomHashKey(roomID)
+	data, err := r.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, message.NewError(message.CodeRoomNotFound)
+	}
+
+	meta := r.parseRoomMeta(roomID, data)
+
+	playersKey := RoomPlayersKey(roomID)
+	spectatorsKey := RoomSpectatorsKey(roomID)
+	meta.PlayerCount = int(r.client.Raw().HLen(ctx, playersKey).Val())
+	meta.SpectatorCount = int(r.client.Raw().HLen(ctx, spectatorsKey).Val())
+
+	return meta, nil
+}
+
+func (r *RoomRepository) parseRoomMeta(roomID string, data map[string]string) *domain.RoomMeta {
+	meta := &domain.RoomMeta{
+		RoomID: roomID,
+	}
+
+	if v, ok := data["room_no"]; ok {
+		meta.RoomNo = v
+	}
+	if v, ok := data["config_id"]; ok {
+		meta.ConfigID, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v, ok := data["config_name"]; ok {
+		meta.ConfigName = v
+	}
+	if v, ok := data["room_fee"]; ok {
+		meta.RoomFee, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v, ok := data["max_players"]; ok {
+		meta.MaxPlayers, _ = strconv.Atoi(v)
+	}
+	if v, ok := data["max_rounds"]; ok {
+		meta.MaxRounds, _ = strconv.Atoi(v)
+	}
+	if v, ok := data["max_spectators"]; ok {
+		meta.MaxSpectators, _ = strconv.Atoi(v)
+		if meta.MaxSpectators == 0 {
+			meta.MaxSpectators = 10
+		}
+	}
+	if v, ok := data["status"]; ok {
+		status, _ := strconv.Atoi(v)
+		meta.Status = domain.RoomStatus(status)
+	}
+	if v, ok := data["current_round"]; ok {
+		meta.CurrentRound, _ = strconv.Atoi(v)
+	}
+	if v, ok := data["current_round_id"]; ok {
+		meta.CurrentRoundID = v
+	}
+	if v, ok := data["current_session_id"]; ok {
+		meta.CurrentSessionID = v
+	}
+	if v, ok := data["started_at"]; ok {
+		if ts, err := strconv.ParseInt(v, 10, 64); err == nil && ts > 0 {
+			meta.StartedAt = &ts
+		}
+	}
+
+	return meta
+}
+
+func (r *RoomRepository) GetPlayers(ctx context.Context, roomID string) (map[string]*domain.Player, error) {
+	key := RoomPlayersKey(roomID)
+	data, err := r.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	players := make(map[string]*domain.Player)
+	for userID, playerData := range data {
+		var player domain.Player
+		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
+			continue
+		}
+		players[userID] = &player
+	}
+	return players, nil
+}
+
+func (r *RoomRepository) GetPlayer(ctx context.Context, roomID, userID string) (*domain.Player, error) {
+	key := RoomPlayersKey(roomID)
+	data, err := r.client.HGet(ctx, key, userID).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var player domain.Player
+	if err := json.Unmarshal([]byte(data), &player); err != nil {
+		return nil, err
+	}
+	return &player, nil
+}
+
+func (r *RoomRepository) SavePlayer(ctx context.Context, roomID string, player *domain.Player) error {
+	key := RoomPlayersKey(roomID)
+	data, err := json.Marshal(player)
+	if err != nil {
+		return err
+	}
+	return r.client.HSet(ctx, key, player.UserID, data).Err()
+}
+
+func (r *RoomRepository) GetSpectator(ctx context.Context, roomID, userID string) (*domain.Spectator, error) {
+	key := RoomSpectatorsKey(roomID)
+	data, err := r.client.HGet(ctx, key, userID).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var spectator domain.Spectator
+	if err := json.Unmarshal([]byte(data), &spectator); err != nil {
+		return nil, err
+	}
+	return &spectator, nil
+}
+
+func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, seatNo int) error {
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+		seatNo,
+		fmt.Sprintf("%d", time.Now().Unix()),
+	}
+
+	result, err := r.client.Eval(ctx, LuaSelectSeat, keys, args...).Slice()
+	if err != nil {
+		return err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return domain.MapLuaError(code)
+	}
+	return nil
+}
+
+func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) error {
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+	}
+
+	result, err := r.client.Eval(ctx, LuaCancelSeat, keys, args...).Slice()
+	if err != nil {
+		return err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return domain.MapLuaError(code)
+	}
+	return nil
+}
+
+func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spectator *domain.Spectator) (*domain.JoinResult, error) {
+	spectatorData, err := json.Marshal(spectator)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomPlayersKey(roomID),
+		PlayerRoomKey(spectator.UserID),
+	}
+	args := []interface{}{
+		spectator.UserID,
+		string(spectatorData),
+		fmt.Sprintf("%d", time.Now().Unix()),
+		roomID,
+	}
+
+	result, err := r.client.Eval(ctx, LuaJoinAsSpectator, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return nil, domain.MapLuaError(code)
+	}
+
+	resultRoomID := result[1].(string)
+	roomNo := result[2].(string)
+	configID := result[3].(int64)
+
+	return &domain.JoinResult{
+		RoomID:   resultRoomID,
+		RoomNo:   roomNo,
+		ConfigID: configID,
+	}, nil
+}
+
+func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) error {
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+		PlayerRoomKey(userID),
+	}
+	args := []interface{}{
+		userID,
+		fmt.Sprintf("%d", time.Now().Unix()),
+	}
+
+	result, err := r.client.Eval(ctx, LuaLeaveRoom, keys, args...).Slice()
+	if err != nil {
+		logger.Error("LuaLeaveRoom execution failed", "room_id", roomID, "user_id", userID, "error", err)
+		return err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		logger.Error("LuaLeaveRoom returned error code", "room_id", roomID, "user_id", userID, "code", code)
+		return domain.MapLuaError(code)
+	}
+
+	if len(result) >= 3 {
+		logger.Info("LeaveRoom success", "room_id", roomID, "user_id", userID, "type", result[1], "seat_no", result[2])
+	}
+
+	return nil
+}
+
+func (r *RoomRepository) KickPlayer(ctx context.Context, roomID, userID string, reason string) error {
+	return r.LeaveRoom(ctx, roomID, userID)
+}
+
+func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*domain.KickPlayerResult, error) {
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+		PlayerRoomKey(userID),
+	}
+
+	args := []interface{}{
+		userID,
+		reason,
+		time.Now().Unix(),
+		KeyRoundStatePrefix,
+	}
+
+	result, err := r.client.Eval(ctx, LuaKickPlayerAndInterrupt, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return nil, domain.MapLuaError(code)
+	}
+
+	return &domain.KickPlayerResult{
+		SeatNo:     parseInt(result[2]),
+		RoomStatus: parseInt(result[3]),
+	}, nil
+}
+
+func (r *RoomRepository) UpdateRoomStatus(ctx context.Context, roomID string, status domain.RoomStatus) error {
+	key := RoomHashKey(roomID)
+	return r.client.HSet(ctx, key, "status", int(status)).Err()
+}
+
+func (r *RoomRepository) UpdateRoomSessionID(ctx context.Context, roomID string, sessionID string) error {
+	key := RoomHashKey(roomID)
+	return r.client.HSet(ctx, key, "current_session_id", sessionID).Err()
+}
+
+func (r *RoomRepository) SetAllPlayersOnline(ctx context.Context, roomID string, isOnline bool) error {
+	players, err := r.GetPlayers(ctx, roomID)
+	if err != nil {
+		return err
+	}
+
+	for _, player := range players {
+		if !isOnline {
+			now := time.Now().Unix()
+			player.DisconnectedAt = &now
+		} else {
+			player.DisconnectedAt = nil
+		}
+		if err := r.SavePlayer(ctx, roomID, player); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *RoomRepository) ResetRoomForNextGame(ctx context.Context, roomID string) error {
+	key := RoomHashKey(roomID)
+	pipe := r.client.Pipeline()
+	pipe.HSet(ctx, key, "status", int(domain.RoomStatusWaiting))
+	pipe.HSet(ctx, key, "current_round", 0)
+	pipe.HDel(ctx, key, "current_round_id")
+	pipe.HSet(ctx, key, "started_at", 0)
+	pipe.HSet(ctx, key, "current_session_id", "")
+	pipe.HSet(ctx, key, "next_sender_id", 0)
+
+	playersKey := RoomPlayersKey(roomID)
+	playerDataMap, err := r.client.HGetAll(ctx, playersKey).Result()
+	if err != nil {
+		return err
+	}
+
+	for userID, playerData := range playerDataMap {
+		var player struct {
+			UserID         string `json:"user_id"`
+			Nickname       string `json:"nickname"`
+			Avatar         string `json:"avatar"`
+			SeatNo         int    `json:"seat_no"`
+			Status         int    `json:"status"`
+			JoinedAt       int64  `json:"joined_at"`
+			LastActiveAt   int64  `json:"last_active_at"`
+			DisconnectedAt *int64 `json:"disconnected_at"`
+		}
+		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
+			continue
+		}
+		player.DisconnectedAt = nil
+
+		updatedData, _ := json.Marshal(player)
+		pipe.HSet(ctx, playersKey, userID, string(updatedData))
+	}
+
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+func (r *RoomRepository) InitRoom(ctx context.Context, room *domain.RoomMeta) error {
+	key := RoomHashKey(room.RoomID)
+
+	exists, err := r.client.Exists(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+
+	if exists == 0 {
+		fields := []interface{}{
+			"room_no", room.RoomNo,
+			"config_id", room.ConfigID,
+			"config_name", room.ConfigName,
+			"room_fee", room.RoomFee,
+			"max_players", room.MaxPlayers,
+			"max_rounds", room.MaxRounds,
+			"max_spectators", room.MaxSpectators,
+			"status", int(room.Status),
+			"current_round", room.CurrentRound,
+			"current_session_id", room.CurrentSessionID,
+		}
+		if err := r.client.HSet(ctx, key, fields...).Err(); err != nil {
+			return err
+		}
+		if err := r.client.Expire(ctx, key, 24*time.Hour).Err(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*domain.RoomStateData, error) {
+	roomHashKey := RoomHashKey(roomID)
+	playersKey := RoomPlayersKey(roomID)
+	spectatorsKey := RoomSpectatorsKey(roomID)
+	seatOwnerKey := RoomSeatOwnerKey(roomID)
+
+	pipe := r.client.Pipeline()
+	metaCmd := pipe.HGetAll(ctx, roomHashKey)
+	playersCmd := pipe.HGetAll(ctx, playersKey)
+	spectatorsCmd := pipe.HGetAll(ctx, spectatorsKey)
+	seatOwnersCmd := pipe.HGetAll(ctx, seatOwnerKey)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	metaData, err := metaCmd.Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(metaData) == 0 {
+		return nil, message.NewError(message.CodeRoomNotFound)
+	}
+
+	playersData, err := playersCmd.Result()
+	if err != nil {
+		return nil, err
+	}
+
+	spectatorsData, err := spectatorsCmd.Result()
+	if err != nil {
+		return nil, err
+	}
+
+	seatOwnersData, err := seatOwnersCmd.Result()
+	if err != nil {
+		return nil, err
+	}
+
+	meta := r.parseRoomMeta(roomID, metaData)
+
+	players := make(map[string]*domain.Player)
+	for userID, playerData := range playersData {
+		var player domain.Player
+		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
+			continue
+		}
+		players[userID] = &player
+	}
+
+	spectators := make(map[string]*domain.Spectator)
+	for userID, spectatorData := range spectatorsData {
+		var spectator domain.Spectator
+		if err := json.Unmarshal([]byte(spectatorData), &spectator); err != nil {
+			continue
+		}
+		spectators[userID] = &spectator
+	}
+
+	seatOwners := make(map[int]string)
+	for seatNoStr, userID := range seatOwnersData {
+		seatNo, _ := strconv.Atoi(seatNoStr)
+		seatOwners[seatNo] = userID
+	}
+
+	return &domain.RoomStateData{
+		RoomID:         meta.RoomID,
+		RoomNo:         meta.RoomNo,
+		RoomType:       int(meta.ConfigID),
+		RoomFee:        meta.RoomFee,
+		Status:         int(meta.Status),
+		CurrentRound:   meta.CurrentRound,
+		MaxRounds:      meta.MaxRounds,
+		PlayerCount:    len(players),
+		SpectatorCount: len(spectators),
+		MaxPlayers:     meta.MaxPlayers,
+		MaxSpectators:  meta.MaxSpectators,
+		Players:        players,
+		Spectators:     spectators,
+		SeatOwners:     seatOwners,
+		Meta:           meta,
+	}, nil
+}
+
+func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string) (map[string]*domain.RoomStateData, error) {
+	if len(roomIDs) == 0 {
+		return make(map[string]*domain.RoomStateData), nil
+	}
+
+	pipe := r.client.Pipeline()
+	type roomCmds struct {
+		meta       *goredis.MapStringStringCmd
+		players    *goredis.MapStringStringCmd
+		spectators *goredis.MapStringStringCmd
+		seatOwners *goredis.MapStringStringCmd
+	}
+	cmdsMap := make(map[string]roomCmds, len(roomIDs))
+
+	for _, roomID := range roomIDs {
+		cmdsMap[roomID] = roomCmds{
+			meta:       pipe.HGetAll(ctx, RoomHashKey(roomID)),
+			players:    pipe.HGetAll(ctx, RoomPlayersKey(roomID)),
+			spectators: pipe.HGetAll(ctx, RoomSpectatorsKey(roomID)),
+			seatOwners: pipe.HGetAll(ctx, RoomSeatOwnerKey(roomID)),
+		}
+	}
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*domain.RoomStateData, len(roomIDs))
+	for roomID, cmds := range cmdsMap {
+		metaData, err := cmds.meta.Result()
+		if err != nil {
+			continue
+		}
+
+		playersData, err := cmds.players.Result()
+		if err != nil {
+			continue
+		}
+
+		spectatorsData, err := cmds.spectators.Result()
+		if err != nil {
+			continue
+		}
+
+		seatOwnersData, err := cmds.seatOwners.Result()
+		if err != nil {
+			continue
+		}
+
+		players := make(map[string]*domain.Player)
+		for userID, playerData := range playersData {
+			var player domain.Player
+			if err := json.Unmarshal([]byte(playerData), &player); err != nil {
+				continue
+			}
+			players[userID] = &player
+		}
+
+		spectators := make(map[string]*domain.Spectator)
+		for userID, spectatorData := range spectatorsData {
+			var spectator domain.Spectator
+			if err := json.Unmarshal([]byte(spectatorData), &spectator); err != nil {
+				continue
+			}
+			spectators[userID] = &spectator
+		}
+
+		seatOwners := make(map[int]string)
+		for seatNoStr, userID := range seatOwnersData {
+			seatNo, _ := strconv.Atoi(seatNoStr)
+			seatOwners[seatNo] = userID
+		}
+
+		currentRound, _ := strconv.Atoi(metaData["current_round"])
+		maxRounds, _ := strconv.Atoi(metaData["max_rounds"])
+		status, _ := strconv.Atoi(metaData["status"])
+
+		result[roomID] = &domain.RoomStateData{
+			RoomID:         roomID,
+			CurrentRound:   currentRound,
+			MaxRounds:      maxRounds,
+			Status:         status,
+			PlayerCount:    len(players),
+			SpectatorCount: len(spectators),
+			Players:        players,
+			Spectators:     spectators,
+			SeatOwners:     seatOwners,
+		}
+	}
+
+	return result, nil
+}

@@ -1,0 +1,15 @@
+min_packet_amount: 1
+straight_probability: 0.08
+leopard_probability: 0.002
+
+reward_control:
+  global_switch_enabled: false
+  profit_ratio_threshold: 0.05
+  room_configs:
+    1776078870944425019:
+      guarantee_enabled: true
+      guarantee_straight: true
+      guarantee_leopard: true
+      probability_enabled: false
+      straight_probability: 0.08
+      leopard_probability: 0.002
