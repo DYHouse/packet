@@ -55,7 +55,7 @@ func (r *StatsRepository) GetDashboardStats(ctx context.Context, startDate, endD
 			(SELECT COUNT(*) FROM special_rewards WHERE reward_type = 1 AND created_at >= ? AND created_at < ?) as straight_count,
 			(SELECT COUNT(*) FROM special_rewards WHERE reward_type = 2 AND created_at >= ? AND created_at < ?) as leopard_count,
 			system_packet_count,
-			total_commission + (SELECT COALESCE(SUM(amount), 0) FROM bill_record WHERE bill_type = 8 AND amount > 0 AND status = 1 AND created_at >= ? AND created_at < ?) - system_packet_cost as net_profit
+			total_commission as net_profit
 		FROM (
 			SELECT 
 				COUNT(*) as today_rounds,
@@ -65,7 +65,7 @@ func (r *StatsRepository) GetDashboardStats(ctx context.Context, startDate, endD
 			FROM rounds
 			WHERE created_at >= ? AND created_at < ?
 		) r
-	`, start, nextDay, start, nextDay, start, nextDay, start, nextDay, start, nextDay, start, nextDay, start, nextDay).Scan(&stats).Error
+	`, start, nextDay, start, nextDay, start, nextDay, start, nextDay, start, nextDay, start, nextDay).Scan(&stats).Error
 
 	if err != nil {
 		return nil, err
@@ -221,7 +221,7 @@ func (r *StatsRepository) GetDailyTrend(ctx context.Context, startDate, endDate 
 			t.total_commission,
 			COALESCE(p.penalty_income, 0) as penalty_income,
 			COALESCE(s.system_packet_cost, 0) as system_packet_cost,
-			t.total_commission + COALESCE(p.penalty_income, 0) - COALESCE(s.system_packet_cost, 0) as net_profit
+			t.total_commission as net_profit
 		FROM (
 			SELECT 
 				DATE(created_at) as date,
