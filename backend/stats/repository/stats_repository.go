@@ -60,8 +60,8 @@ func (r *StatsRepository) GetDashboardStats(ctx context.Context, startDate, endD
 			SELECT 
 				COUNT(*) as today_rounds,
 				COALESCE(SUM(commission), 0) as total_commission,
-				COALESCE(SUM(CASE WHEN sender_type IN ('system', 'system_forced', 'system_resume') THEN total_amount ELSE 0 END), 0) as system_packet_cost,
-				SUM(CASE WHEN sender_type IN ('system', 'system_forced', 'system_resume') THEN 1 ELSE 0 END) as system_packet_count
+			COALESCE(SUM(CASE WHEN sender_type IN ('system', 'system_forced', 'system_resume') OR (sender_id = 0 AND deduct_scene = 1) THEN total_amount ELSE 0 END), 0) as system_packet_cost,
+			SUM(CASE WHEN sender_type IN ('system', 'system_forced', 'system_resume') OR (sender_id = 0 AND deduct_scene = 1) THEN 1 ELSE 0 END) as system_packet_count
 			FROM rounds
 			WHERE created_at >= ? AND created_at < ?
 		) r
@@ -245,7 +245,7 @@ func (r *StatsRepository) GetDailyTrend(ctx context.Context, startDate, endDate 
 				DATE(created_at) as date,
 				COALESCE(SUM(total_amount), 0) as system_packet_cost
 			FROM rounds 
-			WHERE sender_type IN ('system', 'system_forced', 'system_resume')
+			WHERE sender_type IN ('system', 'system_forced', 'system_resume') OR (sender_id = 0 AND deduct_scene = 1)
 			AND created_at >= ? AND created_at < ?
 			GROUP BY DATE(created_at)
 		) s ON t.date = s.date

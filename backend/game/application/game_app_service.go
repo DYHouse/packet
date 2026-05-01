@@ -1470,6 +1470,10 @@ func (s *GameAppService) initRoundAndDeduct(ctx context.Context, roomID string, 
 		logger.Error("update round deduct info failed", "round_id", round.RoundID, "error", err)
 	}
 
+	if err := s.dbRepo.RoundDBRepo().UpdateRoundSender(ctx, round.RoundID, 0, "system"); err != nil {
+		logger.Error("update round sender failed", "round_id", round.RoundID, "error", err)
+	}
+
 	commission := s.commissionCfg.Calculate(meta.RoomFee)
 	if err := s.dbRepo.RoundDBRepo().UpdateRoundAmount(ctx, round.RoundID, meta.RoomFee, commission); err != nil {
 		logger.Error("update round amount failed", "round_id", round.RoundID, "error", err)
