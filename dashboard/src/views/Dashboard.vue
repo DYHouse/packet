@@ -29,12 +29,9 @@
           <StatCard :value="dashboard.today_rounds" label="局数" />
           <StatCard :value="dashboard.active_players" label="活跃玩家" />
           <StatCard :value="dashboard.total_commission" label="总抽佣" type="money" />
-          <StatCard :value="dashboard.penalty_income" label="罚金收入" type="money" />
           <StatCard :value="dashboard.net_profit" label="平台收益" type="money" />
-          <StatCard :value="dashboard.system_packet_cost" label="系统红包支出" type="money" />
           <StatCard :value="dashboard.straight_count" label="顺子触发" />
           <StatCard :value="dashboard.leopard_count" label="豹子触发" />
-          <StatCard :value="dashboard.system_packet_count" label="系统红包数" />
         </div>
       </section>
 
@@ -87,33 +84,6 @@
         </div>
       </section>
 
-      <section class="section">
-        <div class="section-header">
-          <h2>系统红包统计</h2>
-        </div>
-        <div class="system-packets-grid">
-          <div v-for="item in systemPacketStats" :key="item.sender_type" class="packet-type-card">
-            <div class="packet-type-label">{{ senderTypeMap[item.sender_type] || item.sender_type }}</div>
-            <div class="packet-type-stats">
-              <div class="packet-stat">
-                <span class="packet-stat-value">{{ item.send_count }}</span>
-                <span class="packet-stat-unit">次</span>
-              </div>
-              <div class="packet-stat">
-                <span class="packet-stat-value">{{ formatMoney(item.total_amount) }}</span>
-                <span class="packet-stat-unit">总金额</span>
-              </div>
-              <div class="packet-stat">
-                <span class="packet-stat-value">{{ formatMoney(item.avg_amount) }}</span>
-                <span class="packet-stat-unit">均值</span>
-              </div>
-            </div>
-          </div>
-          <div v-if="systemPacketStats.length === 0 && !sectionLoading.systemPackets" class="packet-type-card empty">
-            暂无系统红包数据
-          </div>
-        </div>
-      </section>
     </main>
   </div>
 </template>
@@ -160,7 +130,6 @@ const hourlyTrend = ref([])
 const dailyTrend = ref([])
 const amountDistribution = ref([])
 const roomRanking = ref([])
-const systemPacketStats = ref([])
 
 const sectionLoading = ref({
   dashboard: false,
@@ -168,34 +137,6 @@ const sectionLoading = ref({
   dailyTrend: false,
   amountDistribution: false,
   roomRanking: false,
-  systemPackets: false,
-})
-
-const senderTypeMap = {
-  system: '系统红包',
-  system_forced: '强制红包',
-  system_resume: '续场红包',
-}
-
-const dateLabel = computed(() => {
-  if (startDate.value === endDate.value) {
-    return startDate.value === today ? '今日' : startDate.value
-  }
-  return `${startDate.value} ~ ${endDate.value}`
-})
-
-const hourlyTrendTitle = computed(() => {
-  if (startDate.value === endDate.value) {
-    return `${startDate.value} 小时趋势`
-  }
-  return `${startDate.value} ~ ${endDate.value} 小时趋势`
-})
-
-const amountDistributionTitle = computed(() => {
-  if (startDate.value === endDate.value) {
-    return `${startDate.value} 红包金额分布`
-  }
-  return `${startDate.value} ~ ${endDate.value} 红包金额分布`
 })
 
 const dailyTrendTitle = computed(() => {
@@ -273,15 +214,6 @@ const fetchRoomRanking = async () => {
   }
 }
 
-const fetchSystemPacketStats = async () => {
-  sectionLoading.value.systemPackets = true
-  try {
-    systemPacketStats.value = await statsApi.getSystemPacketStats(startDate.value, endDate.value)
-  } finally {
-    sectionLoading.value.systemPackets = false
-  }
-}
-
 const refreshData = async () => {
   if (loading.value) return
   
@@ -294,7 +226,6 @@ const refreshData = async () => {
       fetchDailyTrend(),
       fetchAmountDistribution(),
       fetchRoomRanking(),
-      fetchSystemPacketStats(),
     ])
     updateTimeStr()
   } catch (error) {
@@ -418,53 +349,6 @@ onMounted(() => {
   padding: 20px;
 }
 
-.system-packets-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
-}
-
-.packet-type-card {
-  background: var(--color-bg-section);
-  padding: 20px;
-}
-
-.packet-type-card.empty {
-  color: var(--color-text-tertiary);
-  text-align: center;
-  padding: 32px 20px;
-  font-size: 13px;
-}
-
-.packet-type-label {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: 12px;
-}
-
-.packet-type-stats {
-  display: flex;
-  gap: 20px;
-}
-
-.packet-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.packet-stat-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.packet-stat-unit {
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
 @media (max-width: 1400px) {
   .stats-grid {
     grid-template-columns: repeat(3, 1fr);
@@ -475,12 +359,8 @@ onMounted(() => {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  
-  .charts-grid-2 {
-    grid-template-columns: 1fr;
-  }
 
-  .system-packets-grid {
+  .charts-grid-2 {
     grid-template-columns: 1fr;
   }
 }
