@@ -23,7 +23,7 @@ export const toYuan = (value) => {
 }
 
 export const formatHour = (hourStr) => {
-  return hourStr.substring(11, 16)
+  return hourStr + ':00'
 }
 
 export const formatDate = (dateStr) => {
