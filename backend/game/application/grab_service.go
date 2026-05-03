@@ -3,12 +3,10 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
-	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
@@ -25,25 +23,6 @@ func NewGrabService(redis *cRedis.Client, grabTimeout, sendTimeout time.Duration
 		redis:       redis,
 		grabTimeout: int64(grabTimeout.Seconds()),
 		sendTimeout: int64(sendTimeout.Seconds()),
-	}
-}
-
-func mapLuaGrabCodeToGoCode(luaCode int) int {
-	switch luaCode {
-	case 21:
-		return message.CodeAlreadyGrabbed
-	case 22:
-		return message.CodePacketAlreadyGrabbed
-	case 23:
-		return message.CodePacketNotFound
-	case 40:
-		return message.CodeNotInGrabbingPhase
-	case 41:
-		return message.CodeGrabTimeout
-	case 60:
-		return message.CodeNotPlayer
-	default:
-		return message.CodeSystemError
 	}
 }
 
@@ -73,13 +52,9 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 
 	code := converter.ParseInt(res[0])
 	if code != 0 {
-		goCode := mapLuaGrabCodeToGoCode(code)
-		errMsg := ""
-		if len(res) > 4 {
-			errMsg = converter.ParseString(res[4])
-		}
-		logger.Warn("grab packet failed", "lua_code", code, "go_code", goCode, "msg", errMsg, "room_id", roomID, "user_id", userID)
-		return nil, message.NewErrorWithMsg(goCode, errMsg)
+		luaErr := domain.MapLuaError(code)
+		logger.Warn("grab packet failed", "lua_code", code, "room_id", roomID, "user_id", userID)
+		return nil, luaErr
 	}
 
 	result := &domain.GrabResult{
@@ -124,7 +99,9 @@ func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string
 
 	code := converter.ParseInt(res[0])
 	if code != 0 {
-		return 0, nil, fmt.Errorf("auto distribute failed: code=%d", code)
+		luaErr := domain.MapLuaError(code)
+		logger.Warn("auto distribute failed", "lua_code", code, "room_id", roomID, "round_id", roundID)
+		return 0, nil, luaErr
 	}
 
 	distributedCount := converter.ParseInt(res[1])
@@ -192,11 +169,9 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 
 	code := converter.ParseInt(res[0])
 	if code != 0 {
-		errMsg := ""
-		if len(res) > 2 {
-			errMsg = converter.ParseString(res[2])
-		}
-		return "", nil, fmt.Errorf("init packets failed: code=%d, msg=%s", code, errMsg)
+		luaErr := domain.MapLuaError(code)
+		logger.Warn("init round packets failed", "lua_code", code, "room_id", roomID, "round_id", roundID)
+		return "", nil, luaErr
 	}
 
 	roundIDResult := converter.ParseString(res[1])

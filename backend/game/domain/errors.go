@@ -50,6 +50,12 @@ func MapLuaError(code int) *message.Error {
 		return message.NewError(message.CodePlayerNotOffline)
 	case LuaErrNotPlayer:
 		return message.NewError(message.CodeNotPlayer)
+	case LuaErrInvalidRoundNumber:
+		return message.NewError(message.CodeInvalidRoundNumber)
+	case LuaErrNotYourTurn:
+		return message.NewError(message.CodeNotYourTurn)
+	case LuaErrNoPlayers:
+		return message.NewError(message.CodeNoPlayers)
 	default:
 		return message.NewError(message.CodeSystemError)
 	}

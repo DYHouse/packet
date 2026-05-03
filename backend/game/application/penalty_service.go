@@ -3,11 +3,11 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
@@ -56,7 +56,8 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 
 	code := converter.ParseInt(res[0])
 	if code != 0 {
-		return nil, fmt.Errorf("handle penalty failed: code=%d", code)
+		logger.Warn("handle penalty failed", "lua_code", code, "room_id", roomID, "user_id", userID)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	count := converter.ParseInt(res[1])
@@ -125,7 +126,8 @@ func (s *PenaltyService) DistributePenalty(ctx context.Context, roomID string, p
 
 	code := converter.ParseInt(res[0])
 	if code != 0 {
-		return nil, fmt.Errorf("distribute penalty failed: code=%d", code)
+		logger.Warn("distribute penalty failed", "lua_code", code, "room_id", roomID)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	shareAmount := converter.ParseInt64(res[1])

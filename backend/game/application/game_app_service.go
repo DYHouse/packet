@@ -654,7 +654,7 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 		dist, err := s.penaltyService.DistributePenalty(ctx, roomID, meta.RoomFee, []string{leftUserID})
 		if err != nil {
 			logger.Error("distribute penalty failed", "room_id", roomID, "error", err)
-			return fmt.Errorf("distribute penalty failed: %w", err)
+			return err
 		}
 
 		roomIDInt := converter.ParseID(roomID)
@@ -830,8 +830,8 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 			return nil
 		}
 		if code != 0 {
-			logger.Error("settle round lua failed", "room_id", roomID, "round_id", roundID, "code", code)
-			return fmt.Errorf("settle round failed with code %d", code)
+			logger.Error("settle round lua failed", "room_id", roomID, "round_id", roundID, "lua_code", code)
+			return domain.MapLuaError(code)
 		}
 
 		roundNo := converter.ParseInt(res[1])
@@ -1067,8 +1067,8 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 		return nil
 	}
 	if code != 0 {
-		logger.Error("end game failed", "room_id", roomID, "code", code)
-		return fmt.Errorf("end game failed with code %d", code)
+		logger.Error("end game failed", "room_id", roomID, "lua_code", code)
+		return domain.MapLuaError(code)
 	}
 
 	var results []message.GameResult
@@ -1429,7 +1429,8 @@ func (s *GameAppService) initRoundAndDeduct(ctx context.Context, roomID string, 
 
 	round, err := s.createRoundRecord(ctx, roomIDInt, sessionID, roundNo)
 	if err != nil {
-		return nil, fmt.Errorf("create round record failed: %w", err)
+		logger.Error("create round record failed", "room_id", roomID, "round_no", roundNo, "error", err)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	deductPlayers := make([]*settlementDto.PlayerDeductInfo, 0, len(players))
@@ -1457,7 +1458,8 @@ func (s *GameAppService) initRoundAndDeduct(ctx context.Context, roomID string, 
 		if updateErr := s.updateRoundFailed(ctx, round.RoundID, fmt.Sprintf("deduct failed: %v", err)); updateErr != nil {
 			logger.Error("update round failed status error", "round_id", round.RoundID, "error", updateErr)
 		}
-		return nil, fmt.Errorf("first round deduct failed: %w", err)
+		logger.Error("first round deduct failed", "room_id", roomID, "round_id", round.RoundID, "error", err)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	if !deductResult.AllSuccess {
@@ -1465,7 +1467,8 @@ func (s *GameAppService) initRoundAndDeduct(ctx context.Context, roomID string, 
 			deductResult.SuccessCount, deductResult.FailedCount)); updateErr != nil {
 			logger.Error("update round failed status error", "round_id", round.RoundID, "error", updateErr)
 		}
-		return nil, fmt.Errorf("partial deduct failed: success=%d, failed=%d", deductResult.SuccessCount, deductResult.FailedCount)
+		logger.Error("partial deduct failed", "room_id", roomID, "round_id", round.RoundID, "success", deductResult.SuccessCount, "failed", deductResult.FailedCount)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	if err := s.updateRoundDeductSuccess(ctx, round.RoundID, settlementDto.DeductSceneFirstRoundShare, 1, meta.RoomFee, deductResult.BatchID); err != nil {
@@ -1505,7 +1508,8 @@ func (s *GameAppService) initLaterRoundAndDeduct(ctx context.Context, roomID str
 
 	round, err := s.createRoundRecord(ctx, roomIDInt, sessionID, roundNo)
 	if err != nil {
-		return nil, fmt.Errorf("create round record failed: %w", err)
+		logger.Error("create round record failed", "room_id", roomID, "round_no", roundNo, "error", err)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	senderIDInt := converter.ParseID(senderID)
@@ -1528,7 +1532,8 @@ func (s *GameAppService) initLaterRoundAndDeduct(ctx context.Context, roomID str
 		if updateErr := s.updateRoundFailed(ctx, round.RoundID, fmt.Sprintf("deduct failed: %v", err)); updateErr != nil {
 			logger.Error("update round failed status error", "round_id", round.RoundID, "error", updateErr)
 		}
-		return nil, fmt.Errorf("later round deduct failed: %w", err)
+		logger.Error("later round deduct failed", "room_id", roomID, "round_id", round.RoundID, "error", err)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	if err := s.updateRoundDeductSuccess(ctx, round.RoundID, settlementDto.DeductSceneLaterRoundMin, 1, roomFee, roundTraceID); err != nil {
@@ -1568,7 +1573,8 @@ func (s *GameAppService) initSystemRoundAndDeduct(ctx context.Context, roomID st
 
 	round, err := s.createRoundRecord(ctx, roomIDInt, sessionID, roundNo)
 	if err != nil {
-		return nil, fmt.Errorf("create round record failed: %w", err)
+		logger.Error("create round record failed", "room_id", roomID, "round_no", roundNo, "error", err)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	roundTraceID := fmt.Sprintf("RT_%d_%d", sessionID, roundNo)
@@ -1588,7 +1594,8 @@ func (s *GameAppService) initSystemRoundAndDeduct(ctx context.Context, roomID st
 		if updateErr := s.updateRoundFailed(ctx, round.RoundID, fmt.Sprintf("deduct failed: %v", err)); updateErr != nil {
 			logger.Error("update round failed status error", "round_id", round.RoundID, "error", updateErr)
 		}
-		return nil, fmt.Errorf("system packet deduct failed: %w", err)
+		logger.Error("system packet deduct failed", "room_id", roomID, "round_id", round.RoundID, "error", err)
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	if err := s.updateRoundDeductSuccess(ctx, round.RoundID, settlementDto.DeductSceneSystemPacket, 1, totalAmount, roundTraceID); err != nil {

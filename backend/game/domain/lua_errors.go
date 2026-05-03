@@ -37,6 +37,11 @@ const (
 	LuaErrNotGrabbingPhase = 40
 	LuaErrGrabTimeout      = 41
 
+	// 发红包错误 (50-59)
+	LuaErrInvalidRoundNumber = 50
+	LuaErrNotYourTurn        = 51
+	LuaErrNoPlayers          = 52
+
 	// 权限错误 (60-69)
 	LuaErrNotPlayer = 60
 )

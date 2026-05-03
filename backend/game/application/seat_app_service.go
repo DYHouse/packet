@@ -220,16 +220,14 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 	}
 
 	if len(result) < 8 {
-		return nil, message.NewErrorWithMsg(message.CodeSystemError, "invalid result")
+		return nil, message.NewError(message.CodeSystemError)
 	}
 
 	code := converter.ParseInt(result[0])
 	if code != 1 {
-		errMsg := "operation failed"
-		if len(result) > 7 {
-			errMsg = converter.ParseString(result[7])
-		}
-		return nil, message.NewErrorWithMsg(message.CodeInvalidGameState, errMsg)
+		luaErr := domain.MapLuaError(code)
+		logger.Warn("player ready failed", "lua_code", code, "room_id", req.RoomID, "user_id", req.UserID)
+		return nil, luaErr
 	}
 
 	if s.scheduler != nil {

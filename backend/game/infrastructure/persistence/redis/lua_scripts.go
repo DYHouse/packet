@@ -333,7 +333,7 @@ local now = tonumber(ARGV[2])
 -- 1. 检查房间是否存在
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status == 0 then
-	return {0, 0, 0, 0, 0, 0, '', 'room not found'}
+	return {1, 0, 0, 0, 0, 0, '', ''}
 end
 
 -- 2. 检查用户身份（玩家或观众）
@@ -351,7 +351,7 @@ elseif spectatorData then
 	local seatNo = tonumber(spectator.seat_no or 0)
 	
 	if seatNo == 0 then
-		return {0, 0, 0, 0, 0, 0, '', 'spectator must select seat first'}
+		return {12, 0, 0, 0, 0, 0, '', ''}
 	end
 	
 	-- 将观众转换为玩家
@@ -371,7 +371,7 @@ elseif spectatorData then
 	
 	isConvertedFromSpectator = true
 else
-	return {0, 0, 0, 0, 0, 0, '', 'user not found in room'}
+	return {14, 0, 0, 0, 0, 0, '', ''}
 end
 
 -- 3. 设置玩家准备状态
