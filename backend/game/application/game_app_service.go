@@ -345,6 +345,9 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 	}
 
 	roundID := meta.CurrentRoundID
+	if roundID == "" {
+		return nil, message.NewError(message.CodeNoPacket)
+	}
 
 	result, err := s.grabService.GrabPacket(ctx, req.RoomID, roundID, req.UserID, req.PacketID)
 	if err != nil {
