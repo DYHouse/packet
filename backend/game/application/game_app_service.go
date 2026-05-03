@@ -9,6 +9,7 @@ import (
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
@@ -302,8 +303,8 @@ func (s *GameAppService) postSendPacketAsync(ctx context.Context, params *postSe
 			SenderID:       params.UserID,
 			SenderNickname: params.Nickname,
 			SenderType:     params.SenderType,
-			TotalAmount:    params.ActualAmount,
-			Commission:     params.Commission,
+			TotalAmount:    currency.NewMoneyFromFen(params.ActualAmount),
+			Commission:     currency.NewMoneyFromFen(params.Commission),
 			PacketCount:    int32(params.PacketCount),
 			GrabTimeout:    int32(s.timeoutCfg.Grab.Seconds()),
 			Packets:        packets,
@@ -364,7 +365,7 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 			Position: int32(result.Position),
 			UserID:   req.UserID,
 			Nickname: nickname,
-			Amount:   result.Amount,
+			Amount:   currency.NewMoneyFromFen(result.Amount),
 			IsLast:   result.IsLast,
 		}, req.UserID)
 	}
@@ -511,7 +512,7 @@ func (s *GameAppService) OnGrabTimeout(ctx context.Context, roomID string, round
 		for i, r := range results {
 			msgResults[i] = message.DistributeResult{
 				UserID:   r.UserID,
-				Amount:   r.Amount,
+				Amount:   currency.NewMoneyFromFen(r.Amount),
 				Position: r.Position,
 			}
 		}
@@ -585,7 +586,7 @@ func (s *GameAppService) OnSendTimeout(ctx context.Context, roomID string, userI
 				RoomID:        roomID,
 				UserID:        userID,
 				PenaltyType:   "send_timeout",
-				PenaltyAmount: result.Amount,
+				PenaltyAmount: currency.NewMoneyFromFen(result.Amount),
 				PenaltyCount:  int32(result.Count),
 				KickRequired:  result.KickRequired,
 				Reason:        result.Reason,
@@ -689,7 +690,7 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 			s.broadcaster.Broadcast(roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
 				RoomID:       roomID,
 				Reason:       message.ReasonReplacementTimeout,
-				PenaltyShare: dist.ShareAmount,
+				PenaltyShare: currency.NewMoneyFromFen(dist.ShareAmount),
 				Recipients:   dist.Recipients,
 			}, "")
 		}
@@ -848,7 +849,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 						packetID := converter.ParseInt64(tuple[6])
 						results = append(results, message.RoundResult{
 							UserID:         converter.ParseString(tuple[0]),
-							Amount:         converter.ParseInt64(tuple[1]),
+							Amount:         currency.NewMoneyFromFen(converter.ParseInt64(tuple[1])),
 							Nickname:       converter.ParseString(tuple[2]),
 							Position:       int32(converter.ParseInt(tuple[3])),
 							Avatar:         converter.ParseString(tuple[4]),
@@ -885,7 +886,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 							UserID:      converter.ParseString(tuple[0]),
 							Nickname:    converter.ParseString(tuple[1]),
 							Avatar:      converter.ParseString(tuple[2]),
-							TotalProfit: converter.ParseInt64(tuple[3]),
+							TotalProfit: currency.NewMoneyFromFen(converter.ParseInt64(tuple[3])),
 							Rank:        int32(converter.ParseInt(tuple[4])),
 						})
 					}
@@ -901,13 +902,14 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 				RoundID:         roundID,
 				CurrentRound:    int32(roundNo),
 				SenderID:        senderID,
-				TotalAmount:     totalAmount,
+				TotalAmount:     currency.NewMoneyFromFen(totalAmount),
+				Commission:      currency.NewMoneyFromFen(commission),
 				Results:         results,
 				MinAmountPlayer: minAmountPlayer,
 				NextSenderID:    minAmountPlayer,
 				IsGameEnd:       isGameEnd,
 				RewardType:      rewardType,
-				RewardAmount:    rewardAmount,
+				RewardAmount:    currency.NewMoneyFromFen(rewardAmount),
 				FinalResults:    finalResults,
 			}, "")
 		}
@@ -919,7 +921,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 					UserID:         r.UserID,
 					PacketID:       r.PacketID,
 					Position:       int(r.Position),
-					Amount:         r.Amount,
+					Amount:         r.Amount.Fen(),
 					IsAutoAssigned: r.IsAutoAssigned,
 				})
 			}
@@ -971,7 +973,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 					finalResultsForEvent = append(finalResultsForEvent, &domain.FinalResult{
 						UserID:      r.UserID,
 						Nickname:    r.Nickname,
-						TotalProfit: r.TotalProfit,
+						TotalProfit: r.TotalProfit.Fen(),
 						Rank:        int(r.Rank),
 					})
 				}

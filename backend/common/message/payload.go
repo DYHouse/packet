@@ -1,5 +1,7 @@
 package message
 
+import "github.com/cashparty/backend/common/currency"
+
 type PingResponse struct {
 	ServerTime int64 `json:"server_time"`
 }
@@ -23,21 +25,21 @@ type CountdownStartPush struct {
 }
 
 type RoundResult struct {
-	UserID         string `json:"user_id"`
-	Nickname       string `json:"nickname"`
-	Avatar         string `json:"avatar"`
-	Amount         int64  `json:"amount"`
-	Position       int32  `json:"position"`
-	PacketID       string `json:"packet_id"`
-	IsAutoAssigned bool   `json:"is_auto_assigned"`
+	UserID         string         `json:"user_id"`
+	Nickname       string         `json:"nickname"`
+	Avatar         string         `json:"avatar"`
+	Amount         currency.Money `json:"amount"`
+	Position       int32          `json:"position"`
+	PacketID       string         `json:"packet_id"`
+	IsAutoAssigned bool           `json:"is_auto_assigned"`
 }
 
 type GameResult struct {
-	UserID      string `json:"user_id"`
-	Nickname    string `json:"nickname"`
-	Avatar      string `json:"avatar"`
-	TotalProfit int64  `json:"total_profit"`
-	Rank        int32  `json:"rank"`
+	UserID      string         `json:"user_id"`
+	Nickname    string         `json:"nickname"`
+	Avatar      string         `json:"avatar"`
+	TotalProfit currency.Money `json:"total_profit"`
+	Rank        int32          `json:"rank"`
 }
 
 type KickedPush struct {
@@ -57,18 +59,18 @@ type PlayerReconnectedPush struct {
 
 // RoundStartPush 回合开始推送
 type RoundStartPush struct {
-	RoomID         string       `json:"room_id"`
-	RoundID        string       `json:"round_id"`
-	CurrentRound   int32        `json:"current_round"`
-	SenderID       string       `json:"sender_id"`
-	SenderNickname string       `json:"sender_nickname"`
-	SenderType     string       `json:"sender_type"`
-	TotalAmount    int64        `json:"total_amount"`
-	Commission     int64        `json:"commission"`
-	ActualAmount   int64        `json:"actual_amount"`
-	PacketCount    int32        `json:"packet_count"`
-	GrabTimeout    int32        `json:"grab_timeout"`
-	Packets        []PacketInfo `json:"packets"`
+	RoomID         string         `json:"room_id"`
+	RoundID        string         `json:"round_id"`
+	CurrentRound   int32          `json:"current_round"`
+	SenderID       string         `json:"sender_id"`
+	SenderNickname string         `json:"sender_nickname"`
+	SenderType     string         `json:"sender_type"`
+	TotalAmount    currency.Money `json:"total_amount"`
+	Commission     currency.Money `json:"commission"`
+	ActualAmount   currency.Money `json:"actual_amount"`
+	PacketCount    int32          `json:"packet_count"`
+	GrabTimeout    int32          `json:"grab_timeout"`
+	Packets        []PacketInfo   `json:"packets"`
 }
 
 // PacketInfo 红包信息
@@ -79,31 +81,31 @@ type PacketInfo struct {
 
 // PacketGrabbedPush 红包被抢推送
 type PacketGrabbedPush struct {
-	RoomID   string `json:"room_id"`
-	RoundID  string `json:"round_id"`
-	PacketID string `json:"packet_id"`
-	Position int32  `json:"position"`
-	UserID   string `json:"user_id"`
-	Nickname string `json:"nickname"`
-	Amount   int64  `json:"amount"`
-	IsLast   bool   `json:"is_last"`
+	RoomID   string         `json:"room_id"`
+	RoundID  string         `json:"round_id"`
+	PacketID string         `json:"packet_id"`
+	Position int32          `json:"position"`
+	UserID   string         `json:"user_id"`
+	Nickname string         `json:"nickname"`
+	Amount   currency.Money `json:"amount"`
+	IsLast   bool           `json:"is_last"`
 }
 
 // RoundEndPush 回合结束推送
 type RoundEndPush struct {
-	RoomID          string        `json:"room_id"`
-	RoundID         string        `json:"round_id"`
-	CurrentRound    int32         `json:"current_round"`
-	SenderID        string        `json:"sender_id"`
-	TotalAmount     int64         `json:"total_amount"`
-	Commission      int64         `json:"commission"`
-	Results         []RoundResult `json:"results"`
-	MinAmountPlayer string        `json:"min_amount_player"`
-	NextSenderID    string        `json:"next_sender_id"`
-	IsGameEnd       bool          `json:"is_game_end"`
-	RewardType      int           `json:"reward_type,omitempty"`
-	RewardAmount    int64         `json:"reward_amount,omitempty"`
-	FinalResults    []GameResult  `json:"final_results,omitempty"`
+	RoomID          string         `json:"room_id"`
+	RoundID         string         `json:"round_id"`
+	CurrentRound    int32          `json:"current_round"`
+	SenderID        string         `json:"sender_id"`
+	TotalAmount     currency.Money `json:"total_amount"`
+	Commission      currency.Money `json:"commission"`
+	Results         []RoundResult  `json:"results"`
+	MinAmountPlayer string         `json:"min_amount_player"`
+	NextSenderID    string         `json:"next_sender_id"`
+	IsGameEnd       bool           `json:"is_game_end"`
+	RewardType      int            `json:"reward_type,omitempty"`
+	RewardAmount    currency.Money `json:"reward_amount,omitempty"`
+	FinalResults    []GameResult   `json:"final_results,omitempty"`
 }
 
 // AutoDistributePush 自动分配推送
@@ -116,20 +118,20 @@ type AutoDistributePush struct {
 
 // DistributeResult 分配结果
 type DistributeResult struct {
-	UserID   string `json:"user_id"`
-	Amount   int64  `json:"amount"`
-	Position int32  `json:"position"`
+	UserID   string         `json:"user_id"`
+	Amount   currency.Money `json:"amount"`
+	Position int32          `json:"position"`
 }
 
 // PenaltyPush 惩罚推送
 type PenaltyPush struct {
-	RoomID        string `json:"room_id"`
-	UserID        string `json:"user_id"`
-	PenaltyType   string `json:"penalty_type"`
-	PenaltyAmount int64  `json:"penalty_amount"`
-	PenaltyCount  int32  `json:"penalty_count"`
-	KickRequired  bool   `json:"kick_required"`
-	Reason        string `json:"reason"`
+	RoomID        string         `json:"room_id"`
+	UserID        string         `json:"user_id"`
+	PenaltyType   string         `json:"penalty_type"`
+	PenaltyAmount currency.Money `json:"penalty_amount"`
+	PenaltyCount  int32          `json:"penalty_count"`
+	KickRequired  bool           `json:"kick_required"`
+	Reason        string         `json:"reason"`
 }
 
 // WaitReplacementPush 等待补位推送
@@ -143,8 +145,8 @@ type WaitReplacementPush struct {
 
 // GameInterruptedPush 游戏中断推送
 type GameInterruptedPush struct {
-	RoomID       string   `json:"room_id"`
-	Reason       string   `json:"reason"`
-	PenaltyShare int64    `json:"penalty_share"`
-	Recipients   []string `json:"recipients"`
+	RoomID       string         `json:"room_id"`
+	Reason       string         `json:"reason"`
+	PenaltyShare currency.Money `json:"penalty_share"`
+	Recipients   []string       `json:"recipients"`
 }

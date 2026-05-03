@@ -96,7 +96,7 @@ import BarChart from '../components/charts/BarChart.vue'
 import RankTable from '../components/cards/RankTable.vue'
 import DatePicker from '../components/DatePicker.vue'
 import { statsApi } from '../api/stats'
-import { formatMoney, formatHour, formatDate, toYuan } from '../utils/format'
+import { formatHour, formatDate } from '../utils/format'
 
 const loading = ref(false)
 const updateTime = ref('')
@@ -172,7 +172,7 @@ const fetchHourlyTrend = async () => {
     hourlyTrend.value = data.map(item => ({
       ...item,
       hour: formatHour(item.hour),
-      commission: toYuan(item.commission)
+      commission: item.commission
     }))
   } finally {
     sectionLoading.value.hourlyTrend = false
@@ -186,10 +186,10 @@ const fetchDailyTrend = async () => {
     dailyTrend.value = data.map(item => ({
       ...item,
       date: formatDate(item.date),
-      net_profit: toYuan(item.net_profit),
-      total_commission: toYuan(item.total_commission),
-      system_packet_cost: toYuan(item.system_packet_cost),
-      penalty_income: toYuan(item.penalty_income)
+      net_profit: item.net_profit,
+      total_commission: item.total_commission,
+      system_packet_cost: item.system_packet_cost,
+      penalty_income: item.penalty_income
     }))
   } finally {
     sectionLoading.value.dailyTrend = false

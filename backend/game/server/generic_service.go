@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/limiter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
@@ -318,7 +319,7 @@ func (s *GenericServiceServer) handleGrabPacket(ctx context.Context, req *common
 
 	return s.successResponse(req, map[string]interface{}{
 		"packet_id": result.PacketID,
-		"amount":    result.Amount,
+		"amount":    currency.NewMoneyFromFen(result.Amount),
 		"position":  result.Position,
 		"is_last":   result.IsLast,
 	}), nil
@@ -352,7 +353,7 @@ func (s *GenericServiceServer) handleGetRoomList(ctx context.Context, req *commo
 		items = append(items, map[string]interface{}{
 			"room_id":         r.RoomID,
 			"room_no":         r.RoomNo,
-			"room_fee":        r.RoomFee,
+			"room_fee":        currency.NewMoneyFromFen(r.RoomFee),
 			"max_players":     r.MaxPlayers,
 			"max_rounds":      r.MaxRounds,
 			"max_spectators":  r.MaxSpectators,
@@ -383,7 +384,7 @@ func (s *GenericServiceServer) handleGetRoomTypeList(ctx context.Context, req *c
 		list = append(list, map[string]interface{}{
 			"id":           item.ID,
 			"name":         item.Name,
-			"room_fee":     item.RoomFee,
+			"room_fee":     currency.NewMoneyFromFen(item.RoomFee),
 			"max_rounds":   item.MaxRounds,
 			"total_people": item.TotalPeople,
 		})
@@ -437,7 +438,7 @@ func (s *GenericServiceServer) handleGetUserBalance(ctx context.Context, req *co
 	}
 
 	return s.successResponse(req, map[string]interface{}{
-		"balance": balance,
+		"balance": currency.NewMoneyFromFen(balance),
 	}), nil
 }
 
