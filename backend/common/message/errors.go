@@ -2,7 +2,7 @@ package message
 
 import "fmt"
 
-// ==================== 通用错误码 (0-999) ====================
+// ==================== Códigos de error generales (0-999) ====================
 const (
 	CodeSuccess       = 0
 	CodeInvalidParams = 400
@@ -12,7 +12,7 @@ const (
 	CodeInternalError = 500
 )
 
-// ==================== 房间相关错误码 (1000-1999) ====================
+// ==================== Códigos de error de sala (1000-1999) ====================
 const (
 	CodeInvalidRoomType      = 1001
 	CodeUserAlreadyInRoom    = 1002
@@ -38,7 +38,7 @@ const (
 	CodeNotPlayer          = 1024
 )
 
-// ==================== 连接相关错误码 (2000-2999) ====================
+// ==================== Códigos de error de conexión (2000-2999) ====================
 const (
 	CodeInvalidMessage       = 2001
 	CodeMissingCommand       = 2002
@@ -50,7 +50,7 @@ const (
 	CodeRateLimitExceeded    = 2008
 )
 
-// ==================== 游戏相关错误码 (3000-3999) ====================
+// ==================== Códigos de error de juego (3000-3999) ====================
 const (
 	CodePacketNotFound       = 3001
 	CodePacketAlreadyGrabbed = 3002
@@ -85,7 +85,7 @@ const (
 	CodePlayerAlreadySent    = 3032
 )
 
-// ==================== 系统错误码 (5000-5999) ====================
+// ==================== Códigos de error del sistema (5000-5999) ====================
 const (
 	CodeSystemError      = 5000
 	CodeRedisError       = 5001
@@ -95,7 +95,7 @@ const (
 	CodeLockFailed       = 5005
 )
 
-// ==================== 踢出原因 ====================
+// ==================== Razones de expulsión ====================
 const (
 	ReasonSeatTimeout       = "seat_timeout"
 	ReasonReadyTimeout      = "ready_timeout"
@@ -107,14 +107,14 @@ const (
 	ReasonPenaltyKick       = "penalty_kick"
 )
 
-// ==================== 惩罚原因 ====================
+// ==================== Razones de penalización ====================
 const (
 	ReasonPenaltySendTimeout       = "send_timeout"
 	ReasonPenaltyLeaveDuringGame   = "leave_during_game"
 	ReasonPenaltyDisconnectTimeout = "disconnect_timeout"
 )
 
-// ==================== 游戏中断原因 ====================
+// ==================== Razones de interrupción de juego ====================
 const (
 	ReasonNormalEnd               = "normal"
 	ReasonFirstRoundDeductFailed  = "first_round_deduct_failed"
@@ -125,112 +125,112 @@ const (
 	ReasonPenaltyDeductFailed     = "penalty_deduct_failed"
 )
 
-// ==================== 统一消息映射 ====================
+// ==================== Mapeo de mensajes unificado ====================
 var codeMessages = map[int]string{
-	CodeSuccess:              "成功",
-	CodeInvalidParams:        "参数错误",
-	CodeUnauthorized:         "未授权",
-	CodeForbidden:            "禁止访问",
-	CodeNotFound:             "资源不存在",
-	CodeSystemError:          "内部服务器错误",
-	CodeInvalidRoomType:      "无效的房间类型",
-	CodeUserAlreadyInRoom:    "用户已在房间中",
-	CodeInsufficientBalance:  "余额不足",
-	CodeRoomFull:             "房间已满",
-	CodeRoomNotFound:         "房间不存在",
-	CodeRoomNotWaiting:       "房间不在等待状态",
-	CodeSameIPLimit:          "同IP玩家数量超限",
-	CodeSameDeviceLimit:      "同设备玩家数量超限",
-	CodeUserNotFound:         "用户不存在",
-	CodeUserDisabled:         "用户账号已禁用",
-	CodeUserFrozen:           "用户账号已冻结",
-	CodeSystemBusy:           "系统繁忙",
-	CodeOperationTooFrequent: "操作过于频繁",
-	CodeNoIdleRoom:           "无空闲房间",
-	CodeDailyRoomLimit:       "达到每日房间限制",
-	CodeOperationInProgress:  "操作进行中",
-	CodeGameInProgress:       "游戏进行中",
-	CodeUserBlacklisted:      "用户被列入黑名单",
-	CodeLeavePenaltyApplied:  "离开惩罚已应用，房费已扣除",
-	CodeInvalidMessage:       "无效的消息格式",
-	CodeMissingCommand:       "缺少命令",
-	CodeUnknownCommand:       "未知的命令",
-	CodeConnectionLimit:      "连接数超限",
-	CodeAuthFailed:           "认证失败",
-	CodeUserAlreadyConnected: "用户已连接",
-	CodeNotInRoom:            "用户不在房间中",
-	CodeRateLimitExceeded:    "请求频率超限",
-	CodePacketNotFound:       "红包不存在",
-	CodePacketAlreadyGrabbed: "红包已被抢过",
-	CodeNotYourTurn:          "未轮到你发红包",
-	CodeGameNotStarted:       "游戏未开始",
-	CodeGameAlreadyEnded:     "游戏已结束",
-	CodeInvalidGameState:     "无效的游戏状态",
-	CodeGrabTimeout:          "抢红包超时",
-	CodeSendTimeout:          "发红包超时",
-	CodeInvalidSeatNo:        "无效的座位号",
-	CodeSeatOccupied:         "座位已被占用",
-	CodePlayerNotInRoom:      "玩家不在房间中",
-	CodePlayerAlreadyReady:   "玩家已准备",
-	CodePlayerCannotLeave:   "玩家无法离开房间",
-	CodeNotPlayer:          "只有玩家才能操作",
-	CodeAlreadyPlayer:        "已经是玩家",
-	CodeAlreadySeated:        "已经选座",
-	CodeNotSeated:            "未选座",
-	CodeNeedSeatFirst:        "需要先选座",
-	CodePacketExists:         "红包已创建",
-	CodeAlreadyGrabbed:       "已抢过红包",
-	CodeNoPacket:             "没有可抢的红包",
-	CodePlayerNotOffline:     "玩家未离线",
-	CodeNotInGrabbingPhase:   "不在抢红包阶段",
-	CodeRoundNotFound:        "回合不存在",
-	CodeInvalidRoundNumber:   "无效的回合编号",
-	CodeNoPlayers:            "没有玩家",
-	CodePacketsAlreadyExist:  "红包已存在",
-	CodePenaltyApplied:       "惩罚已应用",
-	CodePlayerKicked:         "玩家已被踢出",
-	CodeReplacementFailed:    "补位失败",
-	CodeNotAllPlayersReady:   "不是所有玩家都已准备",
-	CodeGameResumed:          "游戏已恢复，系统发送红包",
-	CodePlayerAlreadySent:    "玩家已发送红包，不能踢出",
-	CodeRedisError:           "Redis操作失败",
-	CodeMySQLError:           "数据库操作失败",
-	CodeKafkaError:           "消息队列错误",
-	CodePlatformAPIError:     "平台API错误",
-	CodeLockFailed:           "获取锁失败",
+	CodeSuccess:              "Éxito",
+	CodeInvalidParams:        "Error de parámetro",
+	CodeUnauthorized:         "No autorizado",
+	CodeForbidden:            "Acceso prohibido",
+	CodeNotFound:             "Recurso no encontrado",
+	CodeSystemError:          "Error interno del servidor",
+	CodeInvalidRoomType:      "Tipo de sala inválido",
+	CodeUserAlreadyInRoom:    "El usuario ya está en la sala",
+	CodeInsufficientBalance:  "Saldo insuficiente",
+	CodeRoomFull:             "La sala está llena",
+	CodeRoomNotFound:         "La sala no existe",
+	CodeRoomNotWaiting:       "La sala no está en estado de espera",
+	CodeSameIPLimit:          "Límite de jugadores con la misma IP excedido",
+	CodeSameDeviceLimit:      "Límite de jugadores con el mismo dispositivo excedido",
+	CodeUserNotFound:         "El usuario no existe",
+	CodeUserDisabled:         "Cuenta de usuario deshabilitada",
+	CodeUserFrozen:           "Cuenta de usuario congelada",
+	CodeSystemBusy:           "Sistema ocupado",
+	CodeOperationTooFrequent: "Operación demasiado frecuente",
+	CodeNoIdleRoom:           "No hay salas disponibles",
+	CodeDailyRoomLimit:       "Límite diario de salas alcanzado",
+	CodeOperationInProgress:  "Operación en progreso",
+	CodeGameInProgress:       "Juego en progreso",
+	CodeUserBlacklisted:      "Usuario en lista negra",
+	CodeLeavePenaltyApplied:  "Penalización por salida aplicada, tarifa de sala deducida",
+	CodeInvalidMessage:       "Formato de mensaje inválido",
+	CodeMissingCommand:       "Comando faltante",
+	CodeUnknownCommand:       "Comando desconocido",
+	CodeConnectionLimit:      "Límite de conexiones excedido",
+	CodeAuthFailed:           "Autenticación fallida",
+	CodeUserAlreadyConnected: "El usuario ya está conectado",
+	CodeNotInRoom:            "El usuario no está en la sala",
+	CodeRateLimitExceeded:    "Frecuencia de solicitudes excedida",
+	CodePacketNotFound:       "Sobre rojo no encontrado",
+	CodePacketAlreadyGrabbed: "El sobre rojo ya fue reclamado",
+	CodeNotYourTurn:          "No es tu turno para enviar sobre rojo",
+	CodeGameNotStarted:       "El juego no ha comenzado",
+	CodeGameAlreadyEnded:     "El juego ha terminado",
+	CodeInvalidGameState:     "Estado de juego inválido",
+	CodeGrabTimeout:          "Tiempo para reclamar sobre rojo agotado",
+	CodeSendTimeout:          "Tiempo para enviar sobre rojo agotado",
+	CodeInvalidSeatNo:        "Número de asiento inválido",
+	CodeSeatOccupied:         "El asiento ya está ocupado",
+	CodePlayerNotInRoom:      "El jugador no está en la sala",
+	CodePlayerAlreadyReady:   "El jugador está listo",
+	CodePlayerCannotLeave:   "El jugador no puede salir de la sala",
+	CodeNotPlayer:          "Solo los jugadores pueden operar",
+	CodeAlreadyPlayer:        "Ya es jugador",
+	CodeAlreadySeated:        "Ya ha seleccionado asiento",
+	CodeNotSeated:            "No ha seleccionado asiento",
+	CodeNeedSeatFirst:        "Debe seleccionar asiento primero",
+	CodePacketExists:         "Sobre rojo ya creado",
+	CodeAlreadyGrabbed:       "Ya reclamó el sobre rojo",
+	CodeNoPacket:             "No hay sobres rojos para reclamar",
+	CodePlayerNotOffline:     "El jugador no está desconectado",
+	CodeNotInGrabbingPhase:   "No está en fase de reclamar sobres rojos",
+	CodeRoundNotFound:        "Ronda no encontrada",
+	CodeInvalidRoundNumber:   "Número de ronda inválido",
+	CodeNoPlayers:            "No hay jugadores",
+	CodePacketsAlreadyExist:  "Los sobres rojos ya existen",
+	CodePenaltyApplied:       "Penalización aplicada",
+	CodePlayerKicked:         "El jugador ha sido expulsado",
+	CodeReplacementFailed:    "Reemplazo fallido",
+	CodeNotAllPlayersReady:   "No todos los jugadores están listos",
+	CodeGameResumed:          "Juego reanudado, el sistema envía sobre rojo",
+	CodePlayerAlreadySent:    "El jugador ya envió un sobre rojo, no se puede expulsar",
+	CodeRedisError:           "Operación Redis fallida",
+	CodeMySQLError:           "Operación de base de datos fallida",
+	CodeKafkaError:           "Error de cola de mensajes",
+	CodePlatformAPIError:     "Error de API de plataforma",
+	CodeLockFailed:           "Fallo al adquirir bloqueo",
 }
 
-// ==================== 踢出原因消息映射 ====================
+// ==================== Mapeo de mensajes de razones de expulsión ====================
 var kickMessages = map[string]string{
-	ReasonSeatTimeout:       "选座超时，已被移出房间",
-	ReasonReadyTimeout:      "准备超时，已被移出房间",
-	ReasonDisconnectTimeout: "断线超时，已被移出房间",
-	ReasonSystemKick:        "系统踢出",
-	ReasonUserRequest:       "主动离开房间",
-	ReasonPlayerLeave:       "玩家离开房间",
-	ReasonLoginElsewhere:    "您的账号在其他设备登录",
-	ReasonPenaltyKick:       "惩罚踢出，已被移出房间",
+	ReasonSeatTimeout:       "Tiempo de selección de asiento agotado, eliminado de la sala",
+	ReasonReadyTimeout:      "Tiempo de preparación agotado, eliminado de la sala",
+	ReasonDisconnectTimeout: "Tiempo de desconexión agotado, eliminado de la sala",
+	ReasonSystemKick:        "Expulsado por el sistema",
+	ReasonUserRequest:       "Salió de la sala voluntariamente",
+	ReasonPlayerLeave:       "El jugador salió de la sala",
+	ReasonLoginElsewhere:    "Su cuenta ha iniciado sesión en otro dispositivo",
+	ReasonPenaltyKick:       "Expulsado por penalización, eliminado de la sala",
 }
 
-// ==================== 游戏中断原因消息映射 ====================
+// ==================== Mapeo de mensajes de razones de interrupción de juego ====================
 var interruptMessages = map[string]string{
-	ReasonNormalEnd:              "游戏正常结束",
-	ReasonFirstRoundDeductFailed: "余额不足，扣款失败，游戏结束",
-	ReasonLaterRoundDeductFailed: "余额不足，扣款失败，游戏结束",
-	ReasonPartialDeductFailed:    "部分玩家扣款失败，已自动申请退款，游戏结束",
-	ReasonReplacementTimeout:     "补位超时，游戏结束",
-	ReasonSystemError:            "系统错误，游戏结束",
-	ReasonPenaltyDeductFailed:    "惩罚扣款失败，游戏结束",
+	ReasonNormalEnd:              "Juego terminado normalmente",
+	ReasonFirstRoundDeductFailed: "Saldo insuficiente, cargo fallido, juego terminado",
+	ReasonLaterRoundDeductFailed: "Saldo insuficiente, cargo fallido, juego terminado",
+	ReasonPartialDeductFailed:    "Cargo fallido para algunos jugadores, reembolso solicitado automáticamente, juego terminado",
+	ReasonReplacementTimeout:     "Tiempo de reemplazo agotado, juego terminado",
+	ReasonSystemError:            "Error del sistema, juego terminado",
+	ReasonPenaltyDeductFailed:    "Cargo de penalización fallido, juego terminado",
 }
 
-// ==================== 惩罚原因消息映射 ====================
+// ==================== Mapeo de mensajes de razones de penalización ====================
 var penaltyMessages = map[string]string{
-	ReasonPenaltySendTimeout:       "发红包超时，已扣除房费",
-	ReasonPenaltyLeaveDuringGame:   "游戏中离开，已扣除房费",
-	ReasonPenaltyDisconnectTimeout: "断线超时，已扣除房费",
+	ReasonPenaltySendTimeout:       "Tiempo para enviar sobre rojo agotado, tarifa de sala deducida",
+	ReasonPenaltyLeaveDuringGame:   "Salió durante el juego, tarifa de sala deducida",
+	ReasonPenaltyDisconnectTimeout: "Tiempo de desconexión agotado, tarifa de sala deducida",
 }
 
-// ==================== 错误类型 ====================
+// ==================== Tipo de error ====================
 type Error struct {
 	Code int
 	Msg  string
@@ -239,7 +239,7 @@ type Error struct {
 func NewError(code int) *Error {
 	msg, ok := codeMessages[code]
 	if !ok {
-		msg = "未知错误"
+		msg = "Error desconocido"
 	}
 	return &Error{Code: code, Msg: msg}
 }
@@ -252,33 +252,33 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("[%d] %s", e.Code, e.Msg)
 }
 
-// ==================== 工具函数 ====================
+// ==================== Funciones utilitarias ====================
 func GetErrorMsg(code int) string {
 	if msg, ok := codeMessages[code]; ok {
 		return msg
 	}
-	return "未知错误"
+	return "Error desconocido"
 }
 
 func GetKickMessage(reason string) string {
 	if msg, ok := kickMessages[reason]; ok {
 		return msg
 	}
-	return "已被移出房间"
+	return "Eliminado de la sala"
 }
 
 func GetInterruptMessage(reason string) string {
 	if msg, ok := interruptMessages[reason]; ok {
 		return msg
 	}
-	return "游戏中断"
+	return "Juego interrumpido"
 }
 
 func GetPenaltyMessage(reason string) string {
 	if msg, ok := penaltyMessages[reason]; ok {
 		return msg
 	}
-	return "惩罚已应用"
+	return "Penalización aplicada"
 }
 
 func IsGameError(err error) (*Error, bool) {
@@ -296,5 +296,5 @@ func IsErrorCode(err error, code int) bool {
 }
 
 func GetInsufficientBalanceMsg(requiredFee, balance int64) string {
-	return fmt.Sprintf("余额不足，需要%d，当前余额%d", requiredFee, balance)
+	return fmt.Sprintf("Saldo insuficiente, se necesita %d, saldo actual %d", requiredFee, balance)
 }
