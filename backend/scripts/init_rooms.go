@@ -12,14 +12,14 @@ import (
 )
 
 var roomConfigs = []model.RoomConfig{
-	{Name: "5元场", RoomFee: 500, MaxPlayers: 5, MaxRounds: 10, SortOrder: 1, Status: 1},
-	{Name: "10元场", RoomFee: 1000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 2, Status: 1},
-	{Name: "20元场", RoomFee: 2000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 3, Status: 1},
-	{Name: "30元场", RoomFee: 3000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 4, Status: 1},
-	{Name: "50元场", RoomFee: 5000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 5, Status: 1},
-	{Name: "100元场", RoomFee: 10000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 6, Status: 1},
-	{Name: "200元场", RoomFee: 20000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 7, Status: 1},
-	{Name: "500元场", RoomFee: 50000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 8, Status: 1},
+	{Name: "Sala de 5", RoomFee: 500, MaxPlayers: 5, MaxRounds: 10, SortOrder: 1, Status: 1},
+	{Name: "Sala de 10", RoomFee: 1000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 2, Status: 1},
+	{Name: "Sala de 20", RoomFee: 2000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 3, Status: 1},
+	{Name: "Sala de 30", RoomFee: 3000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 4, Status: 1},
+	{Name: "Sala de 50", RoomFee: 5000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 5, Status: 1},
+	{Name: "Sala de 100", RoomFee: 10000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 6, Status: 1},
+	{Name: "Sala de 200", RoomFee: 20000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 7, Status: 1},
+	{Name: "Sala de 500", RoomFee: 50000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 8, Status: 1},
 }
 
 var roomCountPerConfig = map[int64]int{
