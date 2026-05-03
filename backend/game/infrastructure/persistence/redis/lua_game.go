@@ -541,7 +541,7 @@ if isGameEnd == 1 and sessionPlayerTotalsKey and sessionPlayerTotalsKey ~= '' th
     
     -- 按金额降序排序
     table.sort(totalsList, function(a, b)
-        return a[3] > b[3]
+        return a[4] > b[4]
     end)
     
     -- 添加排名
