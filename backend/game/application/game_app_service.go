@@ -580,7 +580,7 @@ func (s *GameAppService) OnSendTimeout(ctx context.Context, roomID string, userI
 		}
 
 		if result.DeductFailed {
-			s.handleDeductFailure(ctx, roomID, meta, "penalty_deduct_failed", result.DeductError)
+			s.handleDeductFailure(ctx, roomID, meta, message.ReasonPenaltyDeductFailed, result.DeductError)
 			return nil
 		}
 
@@ -588,11 +588,11 @@ func (s *GameAppService) OnSendTimeout(ctx context.Context, roomID string, userI
 			s.broadcaster.Broadcast(roomID, message.PushPenalty, &message.PenaltyPush{
 				RoomID:        roomID,
 				UserID:        userID,
-				PenaltyType:   "send_timeout",
+				PenaltyType:   message.ReasonPenaltySendTimeout,
 				PenaltyAmount: currency.NewMoneyFromFen(result.Amount),
 				PenaltyCount:  int32(result.Count),
 				KickRequired:  result.KickRequired,
-				Reason:        result.Reason,
+				Reason:        message.GetPenaltyMessage(result.Reason),
 			}, "")
 		}
 
@@ -630,7 +630,7 @@ func (s *GameAppService) handleSystemSendTimeout(ctx context.Context, roomID str
 		Meta:        meta,
 		RoundNo:     nextRound,
 		TotalAmount: meta.RoomFee,
-		Reason:      "leopard_reward",
+		Reason:      message.ReasonLeopardReward,
 		Scenario:    domain.SendScenarioLeopardReward,
 		SenderType:  domain.SenderTypeSystem,
 		Nickname:    "system",
@@ -682,7 +682,7 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 			RoundID:    roundID,
 			Amount:     meta.RoomFee,
 			Recipients: recipientIDs,
-			Reason:     "replacement_timeout",
+			Reason:     message.ReasonReplacementTimeout,
 		}
 
 		if err := s.settlementService.DistributePenaltyFromPlatform(ctx, distReq); err != nil {
@@ -1149,8 +1149,8 @@ func (s *GameAppService) handleKickAndReplace(ctx context.Context, roomID, userI
 		s.broadcaster.BroadcastToUser(userID, message.PushKicked, &message.KickedPush{
 			RoomID:  roomID,
 			UserID:  userID,
-			Reason:  "penalty_kick",
-			Message: message.GetKickMessage("penalty_kick"),
+			Reason:  message.ReasonPenaltyKick,
+			Message: message.GetKickMessage(message.ReasonPenaltyKick),
 		})
 
 		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
@@ -1250,7 +1250,7 @@ func (s *GameAppService) forceSendPacketForPlayer(ctx context.Context, roomID, u
 		Meta:        meta,
 		RoundNo:     nextRound,
 		TotalAmount: penaltyAmount,
-		Reason:      "send_timeout_forced",
+		Reason:      message.ReasonSendTimeoutForced,
 		Scenario:    domain.SendScenarioTimeoutForced,
 		SenderType:  domain.SenderTypeSystemForced,
 		Nickname:    nickname,
@@ -1302,7 +1302,7 @@ func (s *GameAppService) systemSendRound(ctx context.Context, roomID string, met
 		Meta:        meta,
 		RoundNo:     nextRound,
 		TotalAmount: meta.RoomFee,
-		Reason:      "resume_interrupt",
+		Reason:      message.ReasonResumeInterrupt,
 		Scenario:    domain.SendScenarioResumeInterrupt,
 		SenderType:  domain.SenderTypeSystemResume,
 		Nickname:    "system",

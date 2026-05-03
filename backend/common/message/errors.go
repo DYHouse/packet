@@ -104,6 +104,21 @@ const (
 	ReasonUserRequest       = "user_request"
 	ReasonPlayerLeave       = "player_leave"
 	ReasonLoginElsewhere    = "login_elsewhere"
+	ReasonPenaltyKick       = "penalty_kick"
+)
+
+// ==================== 惩罚原因 ====================
+const (
+	ReasonPenaltySendTimeout       = "send_timeout"
+	ReasonPenaltyLeaveDuringGame   = "leave_during_game"
+	ReasonPenaltyDisconnectTimeout = "disconnect_timeout"
+)
+
+// ==================== 系统发红包原因 ====================
+const (
+	ReasonLeopardReward      = "leopard_reward"
+	ReasonSendTimeoutForced  = "send_timeout_forced"
+	ReasonResumeInterrupt    = "resume_interrupt"
 )
 
 // ==================== 游戏中断原因 ====================
@@ -114,6 +129,7 @@ const (
 	ReasonPartialDeductFailed     = "partial_deduct_failed"
 	ReasonReplacementTimeout      = "replacement_timeout"
 	ReasonSystemError             = "system_error"
+	ReasonPenaltyDeductFailed     = "penalty_deduct_failed"
 )
 
 // ==================== 统一消息映射 ====================
@@ -200,6 +216,7 @@ var kickMessages = map[string]string{
 	ReasonUserRequest:       "主动离开房间",
 	ReasonPlayerLeave:       "玩家离开房间",
 	ReasonLoginElsewhere:    "您的账号在其他设备登录",
+	ReasonPenaltyKick:       "惩罚踢出，已被移出房间",
 }
 
 // ==================== 游戏中断原因消息映射 ====================
@@ -210,6 +227,21 @@ var interruptMessages = map[string]string{
 	ReasonPartialDeductFailed:    "部分玩家扣款失败，已自动申请退款，游戏结束",
 	ReasonReplacementTimeout:     "补位超时，游戏结束",
 	ReasonSystemError:            "系统错误，游戏结束",
+	ReasonPenaltyDeductFailed:    "惩罚扣款失败，游戏结束",
+}
+
+// ==================== 惩罚原因消息映射 ====================
+var penaltyMessages = map[string]string{
+	ReasonPenaltySendTimeout:       "发红包超时，已扣除房费",
+	ReasonPenaltyLeaveDuringGame:   "游戏中离开，已扣除房费",
+	ReasonPenaltyDisconnectTimeout: "断线超时，已扣除房费",
+}
+
+// ==================== 系统发红包原因消息映射 ====================
+var systemSendMessages = map[string]string{
+	ReasonLeopardReward:     "豹子奖励，系统代发红包",
+	ReasonSendTimeoutForced: "发红包超时，系统代发红包",
+	ReasonResumeInterrupt:   "游戏恢复，系统代发红包",
 }
 
 // ==================== 错误类型 ====================
@@ -254,6 +286,20 @@ func GetInterruptMessage(reason string) string {
 		return msg
 	}
 	return "游戏中断"
+}
+
+func GetPenaltyMessage(reason string) string {
+	if msg, ok := penaltyMessages[reason]; ok {
+		return msg
+	}
+	return "惩罚已应用"
+}
+
+func GetSystemSendMessage(reason string) string {
+	if msg, ok := systemSendMessages[reason]; ok {
+		return msg
+	}
+	return "系统代发红包"
 }
 
 func IsGameError(err error) (*Error, bool) {
