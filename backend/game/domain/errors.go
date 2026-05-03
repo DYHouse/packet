@@ -48,6 +48,10 @@ func MapLuaError(code int) *message.Error {
 		return message.NewError(message.CodeNotInRoom)
 	case LuaErrPlayerNotOffline:
 		return message.NewError(message.CodePlayerNotOffline)
+	case LuaErrNotGrabbingPhase:
+		return message.NewError(message.CodeNotInGrabbingPhase)
+	case LuaErrGrabTimeout:
+		return message.NewError(message.CodeGrabTimeout)
 	case LuaErrNotPlayer:
 		return message.NewError(message.CodeNotPlayer)
 	case LuaErrInvalidRoundNumber:
