@@ -114,13 +114,6 @@ const (
 	ReasonPenaltyDisconnectTimeout = "disconnect_timeout"
 )
 
-// ==================== 系统发红包原因 ====================
-const (
-	ReasonLeopardReward      = "leopard_reward"
-	ReasonSendTimeoutForced  = "send_timeout_forced"
-	ReasonResumeInterrupt    = "resume_interrupt"
-)
-
 // ==================== 游戏中断原因 ====================
 const (
 	ReasonNormalEnd               = "normal"
@@ -237,13 +230,6 @@ var penaltyMessages = map[string]string{
 	ReasonPenaltyDisconnectTimeout: "断线超时，已扣除房费",
 }
 
-// ==================== 系统发红包原因消息映射 ====================
-var systemSendMessages = map[string]string{
-	ReasonLeopardReward:     "豹子奖励，系统代发红包",
-	ReasonSendTimeoutForced: "发红包超时，系统代发红包",
-	ReasonResumeInterrupt:   "游戏恢复，系统代发红包",
-}
-
 // ==================== 错误类型 ====================
 type Error struct {
 	Code int
@@ -293,13 +279,6 @@ func GetPenaltyMessage(reason string) string {
 		return msg
 	}
 	return "惩罚已应用"
-}
-
-func GetSystemSendMessage(reason string) string {
-	if msg, ok := systemSendMessages[reason]; ok {
-		return msg
-	}
-	return "系统代发红包"
 }
 
 func IsGameError(err error) (*Error, bool) {
