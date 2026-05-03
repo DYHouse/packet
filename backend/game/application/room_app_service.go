@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/game/domain"
@@ -291,7 +292,7 @@ func (s *RoomAppService) GetSpectator(ctx context.Context, roomID, userID string
 type RoomListItem struct {
 	RoomID         string      `json:"room_id"`
 	RoomNo         string      `json:"room_no"`
-	RoomFee        int64       `json:"room_fee"`
+	RoomFee        currency.Money `json:"room_fee"`
 	MaxPlayers     int         `json:"max_players"`
 	MaxRounds      int         `json:"max_rounds"`
 	MaxSpectators  int         `json:"max_spectators"`
@@ -341,7 +342,7 @@ func (s *RoomAppService) GetRoomList(ctx context.Context, roomType, status, page
 		item := &RoomListItem{
 			RoomID:         roomID,
 			RoomNo:         r.RoomNo,
-			RoomFee:        r.RoomFee,
+			RoomFee:        currency.NewMoneyFromFen(r.RoomFee),
 			MaxPlayers:     r.MaxPlayers,
 			MaxRounds:      r.MaxRounds,
 			MaxSpectators:  r.MaxSpectators,

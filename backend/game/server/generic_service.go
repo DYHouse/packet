@@ -353,7 +353,7 @@ func (s *GenericServiceServer) handleGetRoomList(ctx context.Context, req *commo
 		items = append(items, map[string]interface{}{
 			"room_id":         r.RoomID,
 			"room_no":         r.RoomNo,
-			"room_fee":        currency.NewMoneyFromFen(r.RoomFee),
+			"room_fee":        r.RoomFee,
 			"max_players":     r.MaxPlayers,
 			"max_rounds":      r.MaxRounds,
 			"max_spectators":  r.MaxSpectators,

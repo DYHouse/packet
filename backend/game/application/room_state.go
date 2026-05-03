@@ -1,13 +1,14 @@
 package application
 
 import (
+	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/game/domain"
 )
 
 type RoomState struct {
 	RoomID         string           `json:"room_id"`
 	RoomNo         string           `json:"room_no"`
-	RoomFee        int64            `json:"room_fee"`
+	RoomFee        currency.Money   `json:"room_fee"`
 	Status         int              `json:"status"`
 	CurrentRound   int              `json:"current_round"`
 	MaxRounds      int              `json:"max_rounds"`
@@ -52,7 +53,7 @@ func BuildRoomState(meta *domain.RoomMeta) *RoomState {
 	return &RoomState{
 		RoomID:         meta.RoomID,
 		RoomNo:         meta.RoomNo,
-		RoomFee:        meta.RoomFee,
+		RoomFee:        currency.NewMoneyFromFen(meta.RoomFee),
 		Status:         int(meta.Status),
 		CurrentRound:   meta.CurrentRound,
 		MaxRounds:      meta.MaxRounds,
@@ -152,7 +153,7 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 	return &RoomState{
 		RoomID:         stateData.RoomID,
 		RoomNo:         stateData.RoomNo,
-		RoomFee:        stateData.RoomFee,
+		RoomFee:        currency.NewMoneyFromFen(stateData.RoomFee),
 		Status:         int(stateData.Status),
 		CurrentRound:   stateData.CurrentRound,
 		MaxRounds:      stateData.MaxRounds,
