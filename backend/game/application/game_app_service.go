@@ -630,7 +630,7 @@ func (s *GameAppService) handleSystemSendTimeout(ctx context.Context, roomID str
 		Meta:        meta,
 		RoundNo:     nextRound,
 		TotalAmount: meta.RoomFee,
-		Reason:      message.ReasonLeopardReward,
+		Reason:      "leopard_reward",
 		Scenario:    domain.SendScenarioLeopardReward,
 		SenderType:  domain.SenderTypeSystem,
 		Nickname:    "system",
@@ -682,7 +682,7 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 			RoundID:    roundID,
 			Amount:     meta.RoomFee,
 			Recipients: recipientIDs,
-			Reason:     message.ReasonReplacementTimeout,
+			Reason:     "replacement_timeout",
 		}
 
 		if err := s.settlementService.DistributePenaltyFromPlatform(ctx, distReq); err != nil {
@@ -1250,7 +1250,7 @@ func (s *GameAppService) forceSendPacketForPlayer(ctx context.Context, roomID, u
 		Meta:        meta,
 		RoundNo:     nextRound,
 		TotalAmount: penaltyAmount,
-		Reason:      message.ReasonSendTimeoutForced,
+		Reason:      "send_timeout_forced",
 		Scenario:    domain.SendScenarioTimeoutForced,
 		SenderType:  domain.SenderTypeSystemForced,
 		Nickname:    nickname,
@@ -1302,7 +1302,7 @@ func (s *GameAppService) systemSendRound(ctx context.Context, roomID string, met
 		Meta:        meta,
 		RoundNo:     nextRound,
 		TotalAmount: meta.RoomFee,
-		Reason:      message.ReasonResumeInterrupt,
+		Reason:      "resume_interrupt",
 		Scenario:    domain.SendScenarioResumeInterrupt,
 		SenderType:  domain.SenderTypeSystemResume,
 		Nickname:    "system",
