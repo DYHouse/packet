@@ -143,7 +143,7 @@ func (s *SettlementService) creditRound(ctx context.Context, settlement *model.R
 			UserID:       player.UserID,
 			Amount:       player.Amount,
 			Status:       dto.BillStatusSuccess,
-			Remark:       fmt.Sprintf("抢红包收入(待局级净额结算),局ID:%d", settlement.RoundID),
+			Remark:       fmt.Sprintf("抢红包收入(待会话级入账),局ID:%d", settlement.RoundID),
 		}
 		bills = append(bills, bill)
 		totalSettleAmount += player.Amount

@@ -92,7 +92,7 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 			UserID:       player.UserID,
 			Amount:       settlement.RewardAmount,
 			Status:       dto.BillStatusSuccess,
-			Remark:       fmt.Sprintf("系统奖励收入(待局级净额结算),类型:%d,局ID:%d", settlement.RewardType, settlement.RoundID),
+			Remark:       fmt.Sprintf("系统奖励收入(待会话级入账),类型:%d,局ID:%d", settlement.RewardType, settlement.RoundID),
 		}
 		allBills = append(allBills, playerBill)
 	}

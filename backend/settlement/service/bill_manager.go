@@ -427,7 +427,7 @@ func (m *BillManager) AggregatePayOutBySession(ctx context.Context, sessionID in
 	err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Select("user_id, SUM(amount) as total_amount").
 		Where("session_id = ? AND amount > 0 AND status = ? AND user_id != ? AND bill_type != ?",
-			sessionID, dto.BillStatusSuccess, dto.PlatformAccountID, dto.BillTypeNetSettlement).
+			sessionID, dto.BillStatusSuccess, dto.PlatformAccountID, dto.BillTypeSessionCredit).
 		Group("user_id").
 		Find(&results).Error
 	if err != nil {

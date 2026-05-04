@@ -11,7 +11,7 @@ const (
 	BillTypeSystemPacket       = 9
 	BillTypePenaltyDistribute  = 10
 	BillTypeSystemReward       = 11
-	BillTypeNetSettlement      = 12
+	BillTypeSessionCredit      = 12
 )
 
 const (

@@ -110,10 +110,10 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 		startTime := settlements[0].CreatedAt
 		endTime := settlements[len(settlements)-1].UpdatedAt
 
-		// Net settlement: credit players with positive net amount (payout - bet)
-		// This is the actual fund movement, while round-level credits are just internal bookkeeping
-		if err := s.netSettlePlayers(ctx, sessionID, betMap, payOutMap, settlements[0].RoomID); err != nil {
-			logger.Error("net settle players failed", "session_id", sessionID, "error", err)
+		// Session-level credit: credit players with their payout amount (grab packet + reward income).
+		// This is the actual fund movement, while round-level credits are just internal bookkeeping.
+		if err := s.creditSessionPayouts(ctx, sessionID, payOutMap, settlements[0].RoomID); err != nil {
+			logger.Error("credit session payouts failed", "session_id", sessionID, "error", err)
 		}
 
 		// Settle each player
@@ -248,44 +248,33 @@ func (s *GameSettleService) RetryPlayerSettle(ctx context.Context, sessionID int
 	})
 }
 
-// netSettlePlayers performs session-level net settlement for all players.
-// For each player with netAmount = payout - bet > 0, it calls platform.Credit()
-// to move the net positive funds.
-func (s *GameSettleService) netSettlePlayers(ctx context.Context, sessionID int64, betMap map[int64]int64, payOutMap map[int64]int64, roomID int64) error {
-	allUsers := make(map[int64]bool)
-	for uid := range betMap {
-		allUsers[uid] = true
-	}
-	for uid := range payOutMap {
-		allUsers[uid] = true
-	}
-
-	for userID := range allUsers {
+// creditSessionPayouts performs session-level credit for all players.
+// For each player with payout > 0, it calls platform.Credit() to credit the full payout amount.
+// The bet amount was already debited from the player's wallet during the deduction phase,
+// so only the payout needs to be credited here.
+func (s *GameSettleService) creditSessionPayouts(ctx context.Context, sessionID int64, payOutMap map[int64]int64, roomID int64) error {
+	for userID, payOut := range payOutMap {
 		if userID == dto.PlatformAccountID {
 			continue
 		}
 
-		betAmount := betMap[userID]
-		payOut := payOutMap[userID]
-		netAmount := payOut - betAmount
-
-		if netAmount <= 0 {
+		if payOut <= 0 {
 			continue
 		}
 
-		if err := s.netSettlePlayer(ctx, sessionID, userID, netAmount, roomID); err != nil {
-			logger.Error("net settle player failed", "session_id", sessionID, "user_id", userID, "error", err)
+		if err := s.creditSessionPayout(ctx, sessionID, userID, payOut, roomID); err != nil {
+			logger.Error("credit session payout failed", "session_id", sessionID, "user_id", userID, "error", err)
 		}
 	}
 
 	return nil
 }
 
-// netSettlePlayer performs net settlement for a single player with idempotency check.
-func (s *GameSettleService) netSettlePlayer(ctx context.Context, sessionID int64, userID int64, netAmount int64, roomID int64) error {
-	existingBills, err := s.billMgr.GetBillsBySessionTypeAndUser(ctx, sessionID, dto.BillTypeNetSettlement, userID)
+// creditSessionPayout performs session-level payout credit for a single player with idempotency check.
+func (s *GameSettleService) creditSessionPayout(ctx context.Context, sessionID int64, userID int64, payOut int64, roomID int64) error {
+	existingBills, err := s.billMgr.GetBillsBySessionTypeAndUser(ctx, sessionID, dto.BillTypeSessionCredit, userID)
 	if err != nil {
-		return fmt.Errorf("check existing net settlement bills failed: %w", err)
+		return fmt.Errorf("check existing session credit bills failed: %w", err)
 	}
 
 	for _, bill := range existingBills {
@@ -293,34 +282,34 @@ func (s *GameSettleService) netSettlePlayer(ctx context.Context, sessionID int64
 			return nil
 		}
 		if bill.Status == dto.BillStatusProcessing || bill.Status == dto.BillStatusFailed {
-			return s.executeNetCredit(ctx, bill)
+			return s.executeSessionCredit(ctx, bill)
 		}
 	}
 
-	traceID := fmt.Sprintf("NET_SETTLE_%d_%d", sessionID, userID)
+	traceID := fmt.Sprintf("SESSION_CREDIT_%d_%d", sessionID, userID)
 	bill := &model.BillRecord{
 		RoundTraceID: traceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("NET_CREDIT", userID),
-		BillType:     dto.BillTypeNetSettlement,
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("SESSION_CREDIT", userID),
+		BillType:     dto.BillTypeSessionCredit,
 		RoomID:       roomID,
 		SessionID:    sessionID,
 		RoundID:      0,
 		UserID:       userID,
-		Amount:       netAmount,
+		Amount:       payOut,
 		Status:       dto.BillStatusProcessing,
-		Remark:       fmt.Sprintf("会话级净额入账,局ID:%d,净额:%d", sessionID, netAmount),
+		Remark:       fmt.Sprintf("会话级抢红包/奖励入账,局ID:%d,入账:%d", sessionID, payOut),
 	}
 
 	if err := s.billMgr.CreateBill(ctx, bill); err != nil {
-		return fmt.Errorf("create net settlement bill failed: %w", err)
+		return fmt.Errorf("create session credit bill failed: %w", err)
 	}
 
-	return s.executeNetCredit(ctx, bill)
+	return s.executeSessionCredit(ctx, bill)
 }
 
-// executeNetCredit calls platform.Credit() for a net settlement bill.
+// executeSessionCredit calls platform.Credit() for a session credit bill.
 // On success, marks bill as Success. On failure, marks as Failed and sets next_retry_at.
-func (s *GameSettleService) executeNetCredit(ctx context.Context, bill *model.BillRecord) error {
+func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *model.BillRecord) error {
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
 		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
@@ -359,7 +348,7 @@ func (s *GameSettleService) executeNetCredit(ctx context.Context, bill *model.Bi
 				ErrorMessage: err.Error(),
 			})
 		}
-		return fmt.Errorf("net credit failed: %w", err)
+		return fmt.Errorf("session credit failed: %w", err)
 	}
 
 	balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
