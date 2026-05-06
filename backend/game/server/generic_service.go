@@ -437,8 +437,14 @@ func (s *GenericServiceServer) handleGetUserBalance(ctx context.Context, req *co
 		return s.errorResponse(req, message.CodeSystemError, "failed to get balance"), nil
 	}
 
+	var pendingCredit int64
+	if s.userSvc != nil {
+		pendingCredit = s.userSvc.GetPendingCredit(ctx, req.UserId)
+	}
+
 	return s.successResponse(req, map[string]interface{}{
-		"balance": currency.NewMoneyFromFen(balance),
+		"balance":        currency.NewMoneyFromFen(balance),
+		"pending_credit": currency.NewMoneyFromFen(pendingCredit),
 	}), nil
 }
 

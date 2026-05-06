@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/cashparty/backend/common/config"
@@ -105,4 +106,39 @@ func (s *UserService) GetUserById(ctx context.Context, id string) (*model.User, 
 	userData, _ := json.Marshal(user)
 	s.redis.Set(ctx, cacheKey, string(userData), 30*time.Minute)
 	return user, nil
+}
+
+// GetPendingCredit 获取玩家当前游戏的待入账金额（累计抢红包+奖励）
+func (s *UserService) GetPendingCredit(ctx context.Context, userID string) int64 {
+	// 1. 获取当前房间 ID
+	roomID := s.redis.Get(ctx, redis.PlayerRoomKey(userID)).Val()
+	if roomID == "" || roomID == "0" {
+		return 0
+	}
+
+	// 2. 获取房间 meta
+	roomData := s.redis.HGetAll(ctx, redis.RoomHashKey(roomID)).Val()
+	if len(roomData) == 0 {
+		return 0
+	}
+
+	// 3. 检查房间状态，非 Playing(2) 返回 0
+	status, _ := strconv.Atoi(roomData["status"])
+	if status != 2 {
+		return 0
+	}
+
+	// 4. 获取 sessionID
+	sessionID := roomData["current_session_id"]
+	if sessionID == "" {
+		return 0
+	}
+
+	// 5. 从 session:{sid}:player:totals 获取玩家累计金额
+	val := s.redis.HGet(ctx, redis.SessionPlayerTotalsKey(sessionID), userID).Val()
+	if val == "" {
+		return 0
+	}
+	amount, _ := strconv.ParseInt(val, 10, 64)
+	return amount
 }
