@@ -133,7 +133,7 @@ func (r *gormRoomRepository) MatchRoomByBalance(ctx context.Context, balance int
 		WHERE room_fee <= ?
 		  AND status IN (0, 1)
 		  AND player_count < max_players
-		ORDER BY room_fee DESC, player_count DESC
+		ORDER BY (max_players - player_count) ASC
 		LIMIT 1
 	`, balance).Scan(&roomID).Error
 	if err != nil {
