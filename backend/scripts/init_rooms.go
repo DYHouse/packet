@@ -12,25 +12,27 @@ import (
 )
 
 var roomConfigs = []model.RoomConfig{
-	{Name: "Sala de 5", RoomFee: 500, MaxPlayers: 5, MaxRounds: 10, SortOrder: 1, Status: 1},
-	{Name: "Sala de 10", RoomFee: 1000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 2, Status: 1},
-	{Name: "Sala de 20", RoomFee: 2000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 3, Status: 1},
-	{Name: "Sala de 30", RoomFee: 3000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 4, Status: 1},
-	{Name: "Sala de 50", RoomFee: 5000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 5, Status: 1},
-	{Name: "Sala de 100", RoomFee: 10000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 6, Status: 1},
-	{Name: "Sala de 200", RoomFee: 20000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 7, Status: 1},
-	{Name: "Sala de 500", RoomFee: 50000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 8, Status: 1},
+	{Name: "Sala de 1", RoomFee: 100, MaxPlayers: 5, MaxRounds: 10, SortOrder: 1, Status: 1},
+	{Name: "Sala de 5", RoomFee: 500, MaxPlayers: 5, MaxRounds: 10, SortOrder: 2, Status: 1},
+	{Name: "Sala de 10", RoomFee: 1000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 3, Status: 1},
+	{Name: "Sala de 20", RoomFee: 2000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 4, Status: 1},
+	{Name: "Sala de 30", RoomFee: 3000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 5, Status: 1},
+	{Name: "Sala de 50", RoomFee: 5000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 6, Status: 1},
+	{Name: "Sala de 100", RoomFee: 10000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 7, Status: 1},
+	{Name: "Sala de 200", RoomFee: 20000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 8, Status: 1},
+	{Name: "Sala de 500", RoomFee: 50000, MaxPlayers: 5, MaxRounds: 10, SortOrder: 9, Status: 1},
 }
 
 var roomCountPerConfig = map[int64]int{
-	1: 10,
-	2: 50,
-	3: 40,
-	4: 30,
-	5: 30,
-	6: 20,
-	7: 10,
-	8: 10,
+	100:   10,
+	500:   10,
+	1000:  50,
+	2000:  40,
+	3000:  30,
+	5000:  30,
+	10000: 20,
+	20000: 10,
+	50000: 10,
 }
 
 func main() {
@@ -118,7 +120,7 @@ func initRooms(db *gorm.DB) error {
 		var existingCount int64
 		db.Model(&model.Room{}).Where("config_id = ?", cfg.ID).Count(&existingCount)
 
-		needCreate := roomCountPerConfig[cfg.ID] - int(existingCount)
+		needCreate := roomCountPerConfig[cfg.RoomFee] - int(existingCount)
 		if needCreate <= 0 {
 			log.Printf("rooms for %s already exist: %d", cfg.Name, existingCount)
 			continue
