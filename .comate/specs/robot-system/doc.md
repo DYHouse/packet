@@ -114,41 +114,47 @@
 
 #### 与 User 表的关系
 
-机器人首先是 User，其次才是 RobotAccount。两张表 1:1 关联：
+机器人首先是 User，其次才是 RobotAccount。两张表 1:1 关联。User 表新增 `is_robot` 标识，DB 层面区分机器人与真人：
 
 ```
 ┌─────────────────────────────────┐     ┌─────────────────────────────────────┐
 │          users (基础身份表)       │     │      robot_accounts (机器人扩展表)    │
 ├─────────────────────────────────┤     ├─────────────────────────────────────┤
-│ id          int64  PK           │◄────│ user_id          int64  UK → users.id│
-│ user_id     string UK (平台ID)   │     │ platform_user_id string UK → users.user_id│
-│ nickname    string              │     │ status           int                 │
-│ avatar      string              │     │ virtual_balance  int64              │
-│ ip          string              │     │ min_room_fee     int                 │
-│ device_id   string              │     │ max_room_fee     int                 │
-│ created_at  timestamp           │     │ ... (机器人专属字段)                  │
-│ updated_at  timestamp           │     │ created_at       timestamp           │
-└─────────────────────────────────┘     └─────────────────────────────────────┘
+│ id          int64  PK (雪花)     │◄────│ user_id           int64  UK → users.id│
+│ user_id     string UK (mars平台ID)│    │ status            int                 │
+│ nickname    string              │     │ virtual_balance   int64              │
+│ avatar      string              │     │ min_room_fee      int                 │
+│ ip          string              │     │ max_room_fee      int                 │
+│ device_id   string              │     │ ... (机器人专属字段)                  │
+│ is_robot    bool   default:false │     │ created_at        timestamp           │
+│ created_at  timestamp           │     └─────────────────────────────────────┘
+│ updated_at  timestamp           │
+└─────────────────────────────────┘
 ```
 
-**双 ID 设计**（User 表有两个标识，机器人需同时持有）：
+> **User 表新增 `is_robot` 字段**：虽然机器人 `user_id` 使用 `robot_` 前缀可从语义上区分，但 `is_robot` 布尔字段提供 DB 层面的明确标识，便于查询过滤和运营统计，且作为 Redis SET 丢失时的兜底识别手段。真人玩家该字段为 `false`，机器人为 `true`。
+
+**双 ID 说明**（User 表有两个标识，但 RobotAccount 只需存一个）：
 
 | 字段 | 类型 | 来源 | 使用方 |
 |------|------|------|--------|
-| `UserID` (int64) | 内部主键 | `users.id` | **结算层**：RobotChecker.IsRobot、VirtualBalance、BillRecord |
-| `PlatformUserID` (string) | 平台用户ID | `users.user_id` | **游戏层**：SelectSeat、GrabPacket、SendPacket、广播 |
+| `users.id` (int64) | 游戏服务统一ID(雪花) | 内部主键 | **结算层**(int64) + **游戏层**(`FormatID`转string)：RobotChecker.IsRobot、VirtualBalance、BillRecord、SelectSeat、GrabPacket、SendPacket、广播 |
+| `users.user_id` (string) | mars平台用户ID | mars平台同步 | **仅记录用** + 真人平台API调用（Debit/Credit/Settle/GetBalance） |
 
-> 现有代码中，游戏层方法（`SeatAppService.SelectSeat`、`GameAppService.GrabPacket` 等）全部使用 `string` UserID（`users.user_id`）；结算层（`RobotChecker`、`DeductService` 等）全部使用 `int64` 内部 ID（`users.id`），通过 `UserIDConvertService.GetPlatformUserID(int64)` 反查 `users.user_id`。RobotAccount 需同时存储两个 ID，避免调度热路径中反查 User 表。
+> **澄清**：`users.id`（int64，雪花算法生成）是游戏平台统一使用的用户 ID。游戏层将其转为 string 传输（`FormatID`，因雪花类型怕丢失精度才使用 string）；结算层直接使用 int64。两者本质是**同一个 ID 的不同表示形式**。`users.user_id`（string）仅是从 mars 平台同步过来的平台用户 ID，用于记录和真人调用资金平台 API。
+>
+> 现有代码中，游戏层方法（`SeatAppService.SelectSeat`、`GameAppService.GrabPacket` 等）使用 `FormatID(users.id)`（string）；结算层（`RobotChecker`、`DeductService` 等）使用 `users.id`（int64）。`UserIDConvertService.GetPlatformUserID(int64)` 用于结算层调用平台 API 前反查 `users.user_id`。
+>
+> **RobotAccount 只需存储 `UserID`（int64, → users.id）**：游戏层通过 `FormatID(UserID)` 即可转换得到 string 形式，无需反查 User 表；机器人不调用平台 API，不需要 `users.user_id`。`users.user_id` 已存在于 User 表中，需要时按 `users.id` 查询即可。
 
-**机器人 User 记录创建**：机器人没有真实平台账号，其 `users.user_id` 为合成值（如 `robot_<seq>`），通过内部调用 `UserService.SaveUser` 创建（绕过 Gateway），昵称/头像从名称库随机生成。Nickname/Avatar 存在 User 表中，RobotAccount 不重复存储。
+**机器人 User 记录创建**：机器人没有真实 mars 平台账号，其 `users.user_id` 为合成值（如 `robot_<seq>`），通过内部调用 `UserService.SaveUser` 创建（绕过 Gateway），昵称/头像从名称库随机生成。创建后设置 `is_robot = true`。Nickname/Avatar 存在 User 表中，RobotAccount 不重复存储。
 
 #### 数据模型
 ```go
 // RobotAccount 机器人账号表（与 users 表 1:1 关联）
 type RobotAccount struct {
     ID                 int64     `gorm:"primaryKey"`
-    UserID             int64     `gorm:"uniqueIndex"`          // 关联 users.id（内部主键，供结算层使用）
-    PlatformUserID     string    `gorm:"uniqueIndex;size:64"`  // 关联 users.user_id（平台ID，供游戏层使用）
+    UserID             int64     `gorm:"uniqueIndex"`          // 关联 users.id（雪花内部主键，结算层int64 + 游戏层FormatID转string）
     Status             int       // 0=未激活 1=空闲 2=游戏中 3=停用
     VirtualBalance     int64     // 虚拟余额(分), Redis为主, DB定期同步
     TotalVirtualDebit  int64     // 虚拟扣款累计(分)
@@ -216,26 +222,27 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
   1. 生成合成平台 UserID: "robot_<seq>" (如 robot_00001)
   2. 随机昵称 + 随机头像
   3. 调用 UserService.SaveUser("robot_<seq>", nickname, avatar, "", "")
-     → 创建 User 记录, 获得 User.ID (int64) 和 User.UserID (string)
-  4. 创建 RobotAccount 记录:
+     → 创建 User 记录, 获得 User.ID (int64, 雪花) 和 User.UserID (string, robot_<seq>)
+  4. 设置 User.is_robot = true (UPDATE users SET is_robot = true WHERE id = User.ID)
+  5. 创建 RobotAccount 记录:
      - UserID = User.ID (int64)
-     - PlatformUserID = User.UserID (string)
      - Status = 1 (空闲)
      - VirtualBalance = 档位要求 × initial_balance_multi
      - MinRoomFee / MaxRoomFee 按分配策略设定
-  5. SADD robot:user_ids {User.ID}          // 结算层 RobotChecker 识别
-  6. SET robot:virtual_balance:{User.ID} {VirtualBalance}  // Redis 虚拟余额
-  7. SADD robot:pool:available {User.ID}    // 加入可用账号池
+  6. SADD robot:user_ids {User.ID}          // 结算层 RobotChecker 识别
+  7. SET robot:virtual_balance:{User.ID} {VirtualBalance}  // Redis 虚拟余额
+  8. SADD robot:pool:available {User.ID}    // 加入可用账号池
 ```
 
 #### 影响文件
+- **修改**: `backend/game/model/user.go` — User 结构新增 `IsRobot` 字段
 - **新建**: `backend/game/model/robot_account.go` — 数据模型
 - **新建**: `backend/game/infrastructure/persistence/mysql/robot_account_repo.go` — 数据库操作
 - **新建**: `backend/game/infrastructure/persistence/redis/robot_pool.go` — 账号池 Redis 缓存 + 虚拟余额 Redis 操作
 - **新建**: `backend/game/infrastructure/persistence/redis/virtual_balance.go` — 虚拟余额 Redis 操作
 - **新建**: `backend/game/application/robot_account_service.go` — 账号管理业务逻辑
 - **新建**: `backend/game/scheduler/virtual_balance_sync.go` — 虚拟余额定时同步调度器
-- **新建**: `backend/scripts/init_robot_accounts.go` — 机器人账号初始化脚本（含 User 创建）
+- **新建**: `backend/scripts/init_robot_accounts.go` — 机器人账号初始化脚本（含 User 创建 + is_robot 标记）
 
 ---
 
@@ -798,7 +805,17 @@ func (c *redisRobotChecker) IsRobot(ctx context.Context, userID int64) bool {
 
 机器人账号创建/加载到 Redis 账号池时，同时 `SADD robot:user_ids {userID}`。
 
-#### 3.5.2 Player 身份标识
+#### 3.5.2 身份标识（三层）
+
+机器人身份在三个层面标识，各有不同用途：
+
+| 层面 | 标识位置 | 用途 | 查询方式 |
+|------|---------|------|---------|
+| DB 层 | `users.is_robot` (bool) | DB 查询过滤、运营统计、Redis 兜底重建 | SQL WHERE |
+| Redis 层 | `robot:user_ids` SET | 结算层 RobotChecker 热路径快速判断 | SISMEMBER O(1) |
+| 内存层 | `Player.IsRobot` (bool) | 游戏内调度器/行为引擎识别 | 内存读取 |
+
+> 三层标识各有用途：Redis 层用于结算热路径 O(1) 查询；内存层用于游戏内调度；DB 层用于持久化查询、运营统计和 Redis SET 丢失时的兜底重建（`SELECT id FROM users WHERE is_robot = true` → 重建 `robot:user_ids` SET）。
 
 在 Room/Player 结构中新增 `IsRobot` 标记，用于调度器识别机器人身份。
 
@@ -863,6 +880,7 @@ type BillRecord struct {
 
 #### 影响文件
 - **新建**: `backend/settlement/service/robot_checker.go` — RobotChecker 接口与 Redis 实现
+- **修改**: `backend/game/model/user.go` — User 结构新增 `IsRobot` 字段（DB 层标识，见 3.1）
 - **修改**: `backend/game/domain/room.go` — Player 结构新增 `IsRobot` 标记
 - **修改**: `backend/game/infrastructure/persistence/redis/lua_scripts.go` — 选座/加入房间 Lua 脚本传递 is_robot 标记
 - **修改**: `backend/settlement/model/bill.go` — 新增 `IsRobot` 字段
