@@ -11,6 +11,7 @@
 - **机器人使用虚拟账号，所有资金操作（扣款/入账/结算/余额查询）均在游戏系统内部完成，不与资金平台交互，零平台 API 调用**
 - 机器人余额由游戏系统自行管理（虚拟账本），与资金平台完全隔离
 - 真人玩家的资金操作保持不变
+- **调度规则与行为参数全部可配置**，无需改代码即可调整运营策略
 
 ### 1.3 虚拟账号方案
 
@@ -39,7 +40,7 @@
 3. 机器人通过 Game Service 内部接口执行：进入房间 → 选座 → 准备 → 抢红包/发红包等操作
 4. 游戏过程中机器人行为模拟真人节奏（带随机延迟），包括抢红包和发红包
 5. 游戏结束后机器人自动离场，回到账号池等待下次分配
-6. 真人作为旁观者进入房间，等当前局游戏结束后机器人自动离场，真人选空座入局
+6. 真人作为旁观者进入房间，等当前局游戏结束后机器人自动离场，真人主动选空座入局
 7. **机器人所有扣款/入账/结算走内部虚拟通道，不调用资金平台 API**
 8. **机器人余额检查/查询走内部虚拟余额，不调用资金平台 API**
 
@@ -71,6 +72,8 @@
 │  - 内部调用选座/准备/抢红包/发红包，不走WebSocket        │
 │  VirtualBalanceService (虚拟余额服务)                   │
 │  - Redis 原子操作 | 余额扣减/增加/查询 | DB同步         │
+│  RobotConfig (配置中心)                                │
+│  - 加载 game.yaml robot 段 | 热更新                     │
 └────────────────────┬─────────────────────────────────┘
                      │ Kafka
 ┌────────────────────▼─────────────────────────────────┐
@@ -94,6 +97,7 @@
 - **结算处理**: 真人走正常平台 API 流程；机器人走虚拟通道，BillRecord 直接标记 Success，零平台 API 调用
 - **账号管理**: 机器人账号预创建并存储在数据库，初始虚拟余额由管理 API 设定，无需资金平台充值
 - **离场策略**: 游戏结束后机器人统一自动离场，回到账号池等待下次调度分配，不做中途替换
+- **配置管理**: 调度规则、行为参数统一由 `game.yaml` 的 `robot` 段管理，通过 Nacos 下发，支持运行时热更新
 
 ---
 
@@ -102,40 +106,73 @@
 ### 3.1 模块一：机器人账号管理 (Robot Account Management)
 
 #### 功能点
-- **机器人账号批量创建**: 支持批量创建机器人账号，生成内部用户记录
+- **机器人账号批量创建**: 先创建 User 记录（合成平台 UserID），再创建 RobotAccount 记录，建立 1:1 关联
 - **虚拟余额初始化**: 创建时设定初始虚拟余额（如 10000 分），存储在 Redis + DB
 - **账号状态管理**: 激活/停用/余额不足标记，余额不足时自动下线
 - **账号池管理**: 维护可用机器人账号池，按房间等级分配账号（确保机器人虚拟余额匹配房间费用要求）
 - **账号信息模拟**: 随机昵称生成（本地化名称库）、随机头像分配，使机器人看起来像不同玩家
 
+#### 与 User 表的关系
+
+机器人首先是 User，其次才是 RobotAccount。两张表 1:1 关联：
+
+```
+┌─────────────────────────────────┐     ┌─────────────────────────────────────┐
+│          users (基础身份表)       │     │      robot_accounts (机器人扩展表)    │
+├─────────────────────────────────┤     ├─────────────────────────────────────┤
+│ id          int64  PK           │◄────│ user_id          int64  UK → users.id│
+│ user_id     string UK (平台ID)   │     │ platform_user_id string UK → users.user_id│
+│ nickname    string              │     │ status           int                 │
+│ avatar      string              │     │ virtual_balance  int64              │
+│ ip          string              │     │ min_room_fee     int                 │
+│ device_id   string              │     │ max_room_fee     int                 │
+│ created_at  timestamp           │     │ ... (机器人专属字段)                  │
+│ updated_at  timestamp           │     │ created_at       timestamp           │
+└─────────────────────────────────┘     └─────────────────────────────────────┘
+```
+
+**双 ID 设计**（User 表有两个标识，机器人需同时持有）：
+
+| 字段 | 类型 | 来源 | 使用方 |
+|------|------|------|--------|
+| `UserID` (int64) | 内部主键 | `users.id` | **结算层**：RobotChecker.IsRobot、VirtualBalance、BillRecord |
+| `PlatformUserID` (string) | 平台用户ID | `users.user_id` | **游戏层**：SelectSeat、GrabPacket、SendPacket、广播 |
+
+> 现有代码中，游戏层方法（`SeatAppService.SelectSeat`、`GameAppService.GrabPacket` 等）全部使用 `string` UserID（`users.user_id`）；结算层（`RobotChecker`、`DeductService` 等）全部使用 `int64` 内部 ID（`users.id`），通过 `UserIDConvertService.GetPlatformUserID(int64)` 反查 `users.user_id`。RobotAccount 需同时存储两个 ID，避免调度热路径中反查 User 表。
+
+**机器人 User 记录创建**：机器人没有真实平台账号，其 `users.user_id` 为合成值（如 `robot_<seq>`），通过内部调用 `UserService.SaveUser` 创建（绕过 Gateway），昵称/头像从名称库随机生成。Nickname/Avatar 存在 User 表中，RobotAccount 不重复存储。
+
 #### 数据模型
 ```go
-// RobotAccount 机器人账号表
+// RobotAccount 机器人账号表（与 users 表 1:1 关联）
 type RobotAccount struct {
-    ID                int64     `gorm:"primaryKey"`
-    UserID            int64     `gorm:"uniqueIndex"`         // 关联 users.id
-    Nickname          string    `gorm:"size:100"`
-    Avatar            string    `gorm:"size:512"`
-    Status            int       // 0=未激活 1=空闲 2=游戏中 3=停用
-    VirtualBalance    int64     // 虚拟余额(分), Redis为主, DB定期同步
-    TotalVirtualDebit int64     // 虚拟扣款累计(分)
-    TotalVirtualCredit int64    // 虚拟入账累计(分)
-    MinRoomFee        int       // 可参与的最低房间费用
-    MaxRoomFee        int       // 可参与的最高房间费用
-    TotalGames        int       // 总参与局数
-    TotalProfit       int64     // 总盈亏(分)
-    LastActiveAt      time.Time // 最后活跃时间
-    CreatedAt         time.Time
-    UpdatedAt         time.Time
+    ID                 int64     `gorm:"primaryKey"`
+    UserID             int64     `gorm:"uniqueIndex"`          // 关联 users.id（内部主键，供结算层使用）
+    PlatformUserID     string    `gorm:"uniqueIndex;size:64"`  // 关联 users.user_id（平台ID，供游戏层使用）
+    Status             int       // 0=未激活 1=空闲 2=游戏中 3=停用
+    VirtualBalance     int64     // 虚拟余额(分), Redis为主, DB定期同步
+    TotalVirtualDebit  int64     // 虚拟扣款累计(分)
+    TotalVirtualCredit int64     // 虚拟入账累计(分)
+    MinRoomFee         int       // 可参与的最低房间费用
+    MaxRoomFee         int       // 可参与的最高房间费用
+    TotalGames         int       // 总参与局数
+    TotalProfit        int64     // 总盈亏(分)
+    LastActiveAt       time.Time // 最后活跃时间
+    CreatedAt          time.Time
+    UpdatedAt          time.Time
 }
 ```
 
+> Nickname/Avatar 不在 RobotAccount 中，统一从 User 表获取（`UserService.GetUserById` 或 Redis 用户缓存）。机器人加入房间广播时，从 User 缓存读取昵称/头像。
+
 #### 虚拟余额 Redis 数据结构
 ```
-robot:virtual_balance:{userID}  →  int64   // 虚拟余额(分)
-robot:virtual_balance:dirty     →  SET     // 需要同步到DB的userID集合
-robot:user_ids                  →  SET     // 所有机器人 UserID 集合（供 RobotChecker 使用）
+robot:virtual_balance:{userID}  →  int64   // 虚拟余额(分), {userID} 为 users.id (int64)
+robot:virtual_balance:dirty     →  SET     // 需要同步到DB的 userID(int64) 集合
+robot:user_ids                  →  SET     // 所有机器人 users.id (int64) 集合（供结算层 RobotChecker 使用）
 ```
+
+> `robot:user_ids` 存储的是 `users.id`（int64 转字符串），供结算层 `RobotChecker.IsRobot(userID int64)` 调用 `SISMEMBER` 判断。游戏层通过 Player.IsRobot 标记识别机器人，不查此 SET。
 
 #### 虚拟余额操作接口
 ```go
@@ -172,6 +209,25 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 }
 ```
 
+#### 机器人账号创建流程
+
+```
+批量创建机器人 (init_robot_accounts.go 或管理API):
+  1. 生成合成平台 UserID: "robot_<seq>" (如 robot_00001)
+  2. 随机昵称 + 随机头像
+  3. 调用 UserService.SaveUser("robot_<seq>", nickname, avatar, "", "")
+     → 创建 User 记录, 获得 User.ID (int64) 和 User.UserID (string)
+  4. 创建 RobotAccount 记录:
+     - UserID = User.ID (int64)
+     - PlatformUserID = User.UserID (string)
+     - Status = 1 (空闲)
+     - VirtualBalance = 档位要求 × initial_balance_multi
+     - MinRoomFee / MaxRoomFee 按分配策略设定
+  5. SADD robot:user_ids {User.ID}          // 结算层 RobotChecker 识别
+  6. SET robot:virtual_balance:{User.ID} {VirtualBalance}  // Redis 虚拟余额
+  7. SADD robot:pool:available {User.ID}    // 加入可用账号池
+```
+
 #### 影响文件
 - **新建**: `backend/game/model/robot_account.go` — 数据模型
 - **新建**: `backend/game/infrastructure/persistence/mysql/robot_account_repo.go` — 数据库操作
@@ -179,7 +235,7 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 - **新建**: `backend/game/infrastructure/persistence/redis/virtual_balance.go` — 虚拟余额 Redis 操作
 - **新建**: `backend/game/application/robot_account_service.go` — 账号管理业务逻辑
 - **新建**: `backend/game/scheduler/virtual_balance_sync.go` — 虚拟余额定时同步调度器
-- **新建**: `backend/scripts/init_robot_accounts.go` — 机器人账号初始化脚本
+- **新建**: `backend/scripts/init_robot_accounts.go` — 机器人账号初始化脚本（含 User 创建）
 
 ---
 
@@ -193,13 +249,17 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 
 #### 游戏规则约束
 
-现有游戏规则对调度设计的关键约束：
-- **5人满员开局**：所有房间 MaxPlayers=5，必须 5 人全部 Ready 才触发 3 秒倒计时开局
-- **9 档房间费用**：1/5/10/20/30/50/100/200/500（元），每档机器人需满足不同的余额要求
-- **余额要求公式**：`roomFee/5 + roomFee * 9`（首回合平摊 + 9 轮后续房费），如 1 元房需 9.2 元
-- **210 个房间**：各档位房间数量不等（1元房10个、10元房50个等）
+现有游戏规则对调度设计的关键约束（均来自代码实测）：
+- **5人满员开局**：所有房间 `MaxPlayers=5`（`backend/game/model/config.go:9`），必须 5 人全部 Ready 才触发 3 秒倒计时开局
+- **9 档房间费用**：1/5/10/20/30/50/100/200/500（元）（`backend/scripts/init_rooms.go:14-24`），每档机器人需满足不同的余额要求
+- **余额要求公式**：`roomFee/5 + roomFee * 9`（首回合平摊 + 9 轮后续房费），如 1 元房需 9.2 元。此公式为**派生计算**，非硬编码常量，房间费变化时自动适配
+- **210 个房间**：各档位房间数量不等（1元房10个、10元房50个等）（`backend/scripts/init_rooms.go:26-36`）
+- **房间状态**：`RoomStatusWaiting=1` 为补位目标状态（`backend/game/domain/room.go:3-10`）
+- **游戏阶段**：`PhaseGrabbing=4` / `PhaseWaitSend=6` / `PhaseGameEnd=7`（`backend/game/domain/game_state.go:3-13`）
 
 #### 调度规则设计
+
+> **可配置性说明**：以下所有规则的阈值参数均来自配置中心（见第 4 章配置设计）。规则逻辑本身固定，阈值可调。
 
 ##### 规则一：补位触发条件
 
@@ -208,34 +268,66 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 | 条件 | 规则 | 说明 |
 |------|------|------|
 | 房间状态 | `RoomStatusWaiting` | 仅等待中的房间需要补位 |
-| 真人玩家数 | >= `MinRealPlayers`（默认 1） | 至少有1个真人玩家，防止全机器人房间 |
-| 已准备人数 | < `MaxPlayers`（5） | 人数不足才需要补位 |
-| 至少1人已准备 | 已准备真人 >= 1 | 避免给无人准备的房间分配机器人 |
+| 已准备真人数 | >= `MinRealPlayers` | 至少有 N 个真人已准备，防止全机器人房间 |
+| 已选座总人数 | < `MaxPlayers`（5） | 有空座才需要补位（含已准备 + 已选座未准备） |
 
 **不补位的场景**：
 - 纯旁观者房间（没有已准备真人）→ 机器人不参与
-- 已满员房间 → 无需补位
+- 已满员房间（5 座全占）→ 无需补位，即使有人未准备也只等其准备或超时踢出
 - 游戏进行中房间 → 机器人不中途加入（中断替换走现有真人替补机制）
+
+> 说明：`MinRealPlayers` 统计的是**已准备**的真人玩家数，确保机器人补位后能尽快触发开局。但"是否需要补位"看的是**已选座总人数**（空座数），而非已准备人数——因为选座未准备的真人也占着座位，机器人不能选已被占的座位。
 
 ##### 规则二：机器人分配数量
 
 ```
-需要机器人数 = MaxPlayers - 当前已准备人数
+需要机器人数 = MaxPlayers - 当前已选座总人数（含已准备 + 已选座未准备）
 实际分配数 = min(需要机器人数, MaxRobotsPerRoom - 房间已有机器人数, 可用机器人池数量)
 ```
 
-- `MaxRobotsPerRoom`（默认 4）：单房间最大机器人数，防止全机器人房间
-- 与 `MinRealPlayers`（默认 1）联动：`MaxRobotsPerRoom = MaxPlayers - MinRealPlayers`
-- 当 `MinRealPlayers=1` 时：1个真人最多配4个机器人
+> **关键修正**：计算依据是**已选座总人数**（占座数），而非已准备人数。真人选座后即使未准备也占着座位，机器人只能填补**空座**。
 
-**建议配置**：
+- `MaxRobotsPerRoom`：单房间最大机器人数，防止全机器人房间
+- 约束关系：`MaxRobotsPerRoom = MaxPlayers - MinRealPlayers`（启动时校验，不满足则告警并自动修正）
 
-| 配置项 | 建议值 | 说明 |
+**默认配置（全局）**：
+
+| 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| MinRealPlayers | 2 | 至少2个真人，避免1真人对4机器人体验差 |
+| MinRealPlayers | 2 | 至少2个真人已准备才补位，避免1真人对4机器人体验差 |
 | MaxRobotsPerRoom | 3 | 最多3个机器人，保证真人占多数 |
 
-> 1个真人 + 4个机器人的体验较差（80%是机器人），建议至少 2 个真人才补位，机器人最多 3 个。
+> 1个真人 + 4个机器人的体验较差（80%是机器人），因此默认至少 2 个真人才补位，机器人最多 3 个。
+
+##### 规则二补充：选座与准备时序场景
+
+> 真人选座后会启动 30s `TimeoutTypeSeat` 定时器（`seat_app_service.go:84-85`），未在 30s 内准备则被踢出。准备时清除该定时器（`seat_app_service.go:233-234`）。机器人补位需正确处理此时序。
+
+**场景一：真人已选座未准备时触发补位**
+
+```
+房间状态: 2 真人已准备 + 1 真人已选座未准备（3 座被占，2 空座）
+触发: 已准备真人 2 >= MinRealPlayers(2) ✅, 已选座 3 < 5 ✅
+分配: 需要机器人数 = 5 - 3 = 2（按占座数算，不是 5-2=3）
+结果: 2 个机器人填空座 → 5 座占满 → 等未准备真人准备或超时踢出
+  - 真人准备 → 全员准备 → 开局 ✅
+  - 真人超时踢出 → 空出 1 座 → 下轮巡检补 1 个机器人
+```
+
+**场景二：机器人选座延迟期间真人抢座（竞态）**
+
+```
+巡检快照: 2 真人已准备, 3 空座 → 分配 3 个机器人
+机器人 A 延迟 2s 后选座 → 成功（此时 1 真人选了座, 剩 2 空座）
+机器人 B 延迟 3s 后选座 → 成功（剩 1 空座）
+机器人 C 延迟 5s 后选座 → 无空座 → 选座失败 → 归还账号池
+```
+
+处理方式：`RobotPlayer.SelectSeat` 选座前检查空座，无空座则返回错误，调度器捕获后将机器人归还账号池。房间限流锁（30s TTL）防止本轮重复分配，下轮巡检重新评估。
+
+**场景三：机器人自身的选座超时**
+
+机器人调用 `SeatAppService.SelectSeat` 同样会设置 30s `TimeoutTypeSeat` 定时器。但行为引擎在选座后 1-3s 内调用 `PlayerReady`（清除定时器），远小于 30s，不会触发踢出。
 
 ##### 规则三：机器人选择策略
 
@@ -248,7 +340,7 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 | 优先级 | 余额最低的机器人优先分配 | 避免高余额机器人消耗在低费用房间 |
 | 排除条件 | 已在游戏中、已停用、余额不足 | 跳过不可用的机器人 |
 
-**各档位机器人余额要求**：
+**各档位机器人余额要求**（由公式 `roomFee/5 + roomFee * 9` 派生，非硬编码）：
 
 | 房间档位 | RoomFee(分) | 最低虚拟余额(分) | 最低虚拟余额(元) |
 |---------|------------|-----------------|-----------------|
@@ -262,23 +354,25 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 | 200元房 | 20,000 | 184,000 | 1,840 |
 | 500元房 | 50,000 | 460,000 | 4,600 |
 
-> 建议机器人初始虚拟余额设为对应档位余额要求的 **1.5~2 倍**，留出多局游戏的空间。
+> 建议机器人初始虚拟余额设为对应档位余额要求的 **1.5~2 倍**，留出多局游戏的空间。初始余额在账号创建时设定（见第 4 章 `initial_balance_multi` 配置）。
 
 ##### 规则四：房间优先级
 
-当可用机器人数量不足以满足所有待补位房间时，按以下优先级分配：
+当可用机器人数量不足以满足所有待补位房间时，按以下优先级分配（多级排序）：
 
-| 优先级 | 条件 | 原因 |
-|--------|------|------|
-| 高 | 已准备真人多（4人等1人） | 差1人就能开局，补位效果最明显 |
-| 中 | 已准备真人中等（3人等2人） | 常规补位 |
-| 低 | 已准备真人少（1~2人） | 补位需求不紧急，优先满足高优先级房间 |
+| 优先级维度 | 排序规则 | 原因 |
+|-----------|---------|------|
+| 第一级：已准备真人数 | 降序（4人等1人 > 3人等2人） | 差1人就能开局，补位效果最明显 |
+| 第二级：等待时长 | 升序（等得久的优先） | 避免低优先级房间长期饥饿 |
 
 ```go
-// 房间优先级排序：已准备真人多的房间优先获得机器人
+// 房间优先级排序：先按已准备真人数降序，再按等待时长升序
 func (s *RobotSchedulerService) sortRoomsByPriority(rooms []RoomCandidate) {
-    sort.Slice(rooms, func(i, j int) bool {
-        return rooms[i].ReadyPlayerCount > rooms[j].ReadyPlayerCount
+    sort.SliceStable(rooms, func(i, j int) bool {
+        if rooms[i].ReadyPlayerCount != rooms[j].ReadyPlayerCount {
+            return rooms[i].ReadyPlayerCount > rooms[j].ReadyPlayerCount
+        }
+        return rooms[i].WaitingSince.Before(rooms[j].WaitingSince)
     })
 }
 ```
@@ -289,17 +383,20 @@ func (s *RobotSchedulerService) sortRoomsByPriority(rooms []RoomCandidate) {
 
 | 场景 | 规则 | 说明 |
 |------|------|------|
-| 分配锁 | `robot:assign:{userID}` 分布式锁，TTL 10s | 防止同一机器人被同时分配到多个房间 |
-| 房间锁 | `robot:room_assign:{roomID}` 限流锁，TTL 30s | 防止同一房间在短时间内重复触发分配 |
-| 回收冷却 | 机器人回收后 60s 内不重新分配 | 防止机器人刚离开又被分配回同一房间 |
+| 分配锁 | `robot:assign:{userID}` 分布式锁，TTL `RobotAssignLockTTL`（默认 10s） | 防止同一机器人被同时分配到多个房间 |
+| 房间锁 | `robot:room_assign:{roomID}` 限流锁，TTL `RoomAssignLockTTL`（默认 30s） | 防止同一房间在短时间内重复触发分配 |
+| 回收冷却 | 机器人回收后 `RecycleCooldown`（默认 60s）内不重新分配 | 防止机器人刚离开又被分配回同一房间 |
 | 余量保护 | 账号池保留 `ReserveCount`（默认 5）个机器人 | 避免账号池被完全耗尽 |
 
-##### 规则六：旁观者等待真人补位
+> **ReserveCount 与总池规模关系**：`ReserveCount` 应不超过总机器人池的 30%。若总池 10 个，建议 ReserveCount=3 而非 5，否则可用机器人仅 5 个。启动时校验：若 `ReserveCount > 总池数 * 0.5`，输出告警日志。实际可用机器人 = 总池数 - ReserveCount - 游戏中机器人。
+
+##### 规则六：旁观者与真人补位
 
 当真人作为旁观者等待时：
 - 游戏进行中：机器人正常参与，不中途替换
-- 游戏结束：机器人自动离场（延迟 3-10s），真人可以选空座入局
-- 无需特殊处理，现有机制自然支持
+- 游戏结束：机器人自动离场（延迟 3-10s），释放座位
+- **真人需主动选座**：当前系统旁观者→座位需调用 `SelectSeat`（`backend/game/application/seat_app_service.go:69`），**无自动晋级队列**。机器人离场后空座不会自动分配给旁观者，真人需自行点击空座入局
+- 后续如实现旁观者自动排队补位（`auto-seat-and-queue` 方案），可在此基础上联动：机器人离场后自动触发队列首位真人选座
 
 #### 核心结构
 
@@ -310,19 +407,9 @@ type RobotSchedulerService struct {
     repo          domain.RoomRepository     // 查询房间状态
     dbRepo        domain.DBRepository       // 查询房间配置
     redis         *cRedis.Client            // 分布式锁 + 状态存储
-    config        RobotSchedulerConfig
+    config        *RobotConfig              // 调度+行为配置
     ctx           context.Context
     cancel        context.CancelFunc
-}
-
-type RobotSchedulerConfig struct {
-    ScanInterval       time.Duration // 巡检间隔，默认 5 秒
-    MinRealPlayers     int           // 最少真人玩家数，默认 2
-    MaxRobotsPerRoom   int           // 单房间最大机器人数，默认 3
-    RobotAssignLockTTL int           // 分配锁超时(秒)，默认 10
-    RoomAssignLockTTL  int           // 房间分配限流锁(秒)，默认 30
-    RecycleCooldown    time.Duration // 回收冷却时间，默认 60s
-    ReserveCount       int           // 账号池保留数量，默认 5
 }
 ```
 
@@ -334,25 +421,30 @@ type RobotSchedulerConfig struct {
   2. 过滤出需要补位的房间:
      - 状态 = RoomStatusWaiting
      - 已准备真人 >= MinRealPlayers
-     - 已准备总人数 < MaxPlayers
-  3. 按优先级排序 (已准备真人多的房间优先)
+     - 已选座总人数 < MaxPlayers（有空座才补位）
+  3. 按优先级排序 (已准备真人多 > 等待时长久)
   4. 对每个房间 (按优先级):
      a. 检查房间分配限流锁 (robot:room_assign:{roomID})
-     b. 计算需要的机器人数
+     b. 计算需要的机器人数 = MaxPlayers - 已选座总人数
      c. 对每个需要的机器人:
         i.  从 RobotPool 获取空闲机器人 (按房间费用等级匹配，余额最低优先)
         ii. 获取分配锁 (robot:assign:{robotUserID})
-        iii. 委托 RobotPlayer.JoinAndReady(roomID, robotUserID)
+        iii. 委托 RobotPlayer.JoinAndReady(roomID, robotUserID) — 仅入房为旁观者 + 调度延迟选座
         iv. 更新机器人状态、记录映射
      d. 设置房间分配限流锁
   5. 检查账号池余量，低于 ReserveCount 时记录告警日志
+
+并发控制:
+  - 单次巡检内房间串行处理（避免机器人池竞争）
+  - 单次巡检设时间预算上限 (默认 ScanInterval 的 80%)，超时则本轮终止，剩余房间下轮处理
+  - 防止单次巡检耗时超过 ScanInterval 导致巡检堆积
 ```
 
 #### 机器人回收流程
 
 游戏结束时触发回收（两种触发方式）：
 
-**方式一：事件驱动（实时）** — 监听 Kafka `session_end` 事件或 Game Service 内部的 `endGameWithOptions` 调用：
+**方式一：事件驱动（实时）** — 监听 Kafka `session_end` 事件或 Game Service 内部的 `endGameWithOptions`（`backend/game/application/game_app_service.go:1040`）调用：
 ```
 OnGameEnd(roomID):
   1. 查询房间内的机器人列表 (从 robot:room:{roomID} 获取)
@@ -391,7 +483,7 @@ robot:scheduler:active         →  SET    // 所有正在游戏中的机器人 
 行为引擎是机器人的"大脑"，负责在游戏各阶段做出模拟真人的行为决策。它**不自己实现游戏逻辑**，而是监听游戏状态变化，在合适的时机调用现有的 GameAppService / SeatAppService 的内部方法。
 
 关键设计决策：
-- **复用现有 TimeoutScheduler 基础设施**：机器人的延迟行为注册到现有的 Redis ZSET 定时系统，而非自建定时器。这样可以统一管理所有定时任务，且服务重启后定时任务不丢失。
+- **复用现有 TimeoutScheduler 基础设施**：机器人的延迟行为注册到现有的 Redis ZSET 定时系统（`backend/game/scheduler/timeout_scheduler.go`），而非自建定时器。这样可以统一管理所有定时任务，且服务重启后定时任务不丢失。
 - **监听游戏事件而非轮询**：行为引擎通过 Kafka 事件（round_settle、session_end 等）和内部回调感知游戏状态变化，而非轮询房间状态。
 - **无状态行为决策**：每次行为触发时，根据当前游戏状态 + 配置参数做出决策，无需维护复杂状态机。
 
@@ -399,31 +491,12 @@ robot:scheduler:active         →  SET    // 所有正在游戏中的机器人 
 
 ```go
 type RobotBehaviorEngine struct {
-    config       RobotBehaviorConfig
-    robotPlayer  *RobotPlayer              // 执行具体游戏操作
+    config       *RobotConfig                // 行为配置
+    robotPlayer  *RobotPlayer                // 执行具体游戏操作
     scheduler    *scheduler.TimeoutScheduler // 复用现有定时调度器
-    accountSvc   *RobotAccountService       // 查询机器人信息
-    grabSvc      *GrabService               // 抢红包服务
+    accountSvc   *RobotAccountService        // 查询机器人信息
+    grabSvc      *GrabService                // 抢红包服务
     redis        *cRedis.Client
-}
-
-type RobotBehaviorConfig struct {
-    // 选座行为
-    SeatDelayMin      time.Duration // 选座延迟下限，默认 2s
-    SeatDelayMax      time.Duration // 选座延迟上限，默认 5s
-    // 准备行为
-    ReadyDelayMin     time.Duration // 准备延迟下限，默认 1s
-    ReadyDelayMax     time.Duration // 准备延迟上限，默认 3s
-    // 抢红包行为
-    GrabDelayMin      time.Duration // 抢红包延迟下限，默认 1s
-    GrabDelayMax      time.Duration // 抢红包延迟上限，默认 8s
-    GrabSkipProb      float64       // 不抢概率，默认 0.05 (5%)
-    // 发红包行为
-    SendDelayMin      time.Duration // 发红包延迟下限，默认 2s
-    SendDelayMax      time.Duration // 发红包延迟上限，默认 5s
-    // 离场行为
-    LeaveAfterGameMin time.Duration // 游戏后离场延迟下限，默认 3s
-    LeaveAfterGameMax time.Duration // 游戏后离场延迟上限，默认 10s
 }
 ```
 
@@ -434,9 +507,9 @@ type RobotBehaviorConfig struct {
 | 游戏阶段 | 触发方式 | 机器人行为 | 调用方法 |
 |---------|---------|-----------|---------|
 | 分配到房间 | 调度器分配后回调 | 延迟选座 → 延迟准备 | `RobotPlayer.SelectSeat` → `RobotPlayer.Ready` |
-| 抢红包 (Grabbing) | 监听 Kafka `packet_created` 事件 | 延迟抢红包 | `RobotPlayer.GrabPacket` |
-| 等待发送 (WaitSend) | 监听 Kafka `round_settle` 事件，识别最小金额获得者 | 若机器人为发送者，延迟发红包 | `RobotPlayer.SendPacket` |
-| 游戏结束 (GameEnd) | 监听 Kafka `session_end` 事件 | 延迟离场 | `RobotPlayer.LeaveRoom` |
+| 抢红包 (PhaseGrabbing=4) | 监听 Kafka `packet_created` 事件 | 延迟抢红包 | `RobotPlayer.GrabPacket` |
+| 等待发送 (PhaseWaitSend=6) | 监听 Kafka `round_settle` 事件，识别最小金额获得者 | 若机器人为发送者，延迟发红包 | `RobotPlayer.SendPacket` |
+| 游戏结束 (PhaseGameEnd=7) | 监听 Kafka `session_end` 事件 | 延迟离场 | `RobotPlayer.LeaveRoom` |
 
 #### 各行为详细设计
 
@@ -488,10 +561,10 @@ type RobotBehaviorConfig struct {
 
 #### 延迟实现方式
 
-机器人行为延迟**复用现有 TimeoutScheduler**：
+机器人行为延迟**复用现有 TimeoutScheduler**（`backend/game/scheduler/timeout_scheduler.go`，Redis ZSET 持久化）：
 
 ```go
-// 注册新的超时类型
+// 注册新的超时类型（现有类型: seat/ready/grab/send/replace，新增 robot）
 const TimeoutTypeRobot TimeoutType = "robot"
 
 // 延迟触发机器人行为
@@ -500,7 +573,7 @@ func (e *RobotBehaviorEngine) scheduleRobotAction(roomID string, robotUserID str
     e.scheduler.SetTimeout(context.Background(), TimeoutTypeRobot, roomID, data, delay)
 }
 
-// 注册机器人行为处理器 (在 bootstrap 中)
+// 注册机器人行为处理器 (在 bootstrap/container.go 中，与现有 5 个 handler 并列)
 scheduler.RegisterHandler(scheduler.TimeoutTypeRobot, behaviorEngine.HandleRobotTimeout)
 
 func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID string, data string) {
@@ -521,6 +594,7 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 - 复用现有定时基础设施，无需新建调度器
 - Redis ZSET 持久化，服务重启后机器人行为不丢失
 - 统一的定时管理，便于监控和调试
+- 与现有 5 个 TimeoutType handler 注册方式一致（`bootstrap/container.go:185-189`）
 
 #### 防检测设计
 
@@ -597,38 +671,45 @@ func (p *RobotPlayer) LeaveRoom(ctx context.Context, roomID string, robotUserID 
 
 #### 各方法实现详解
 
-**JoinAndReady**：调度器分配机器人时调用，执行完整的入场流程
+**JoinAndReady**：调度器分配机器人时调用，仅入房为旁观者并调度延迟选座（选座/准备由行为引擎延迟执行，模拟真人节奏）
 ```go
 func (p *RobotPlayer) JoinAndReady(ctx context.Context, roomID string, robotUserID string) error {
     // 1. 加入房间为旁观者
     p.roomAppService.JoinRoom(ctx, &JoinRoomRequest{RoomID: roomID, UserID: robotUserID})
 
-    // 2. 随机选择空座位
+    // 2. 检查是否有空座（竞态保护：巡检快照后可能已有真人选座）
     roomState, _ := p.repo.GetRoomState(ctx, roomID)
-    seatNo := pickRandomEmptySeat(roomState)
+    if !hasEmptySeat(roomState) {
+        return ErrNoEmptySeat // 调度器捕获后归还账号池
+    }
 
-    // 3. 选座
-    _, err := p.seatAppService.SelectSeat(ctx, &SelectSeatRequest{
-        RoomID: roomID, UserID: robotUserID, SeatNo: seatNo,
-    })
-
-    // 4. 准备
-    _, err = p.seatAppService.PlayerReady(ctx, &SetReadyRequest{
-        RoomID: roomID, UserID: robotUserID,
-    })
-    return err
+    // 3. 调度延迟选座（由行为引擎经 TimeoutScheduler 延迟触发）
+    delay := randomDelay(p.config.Behavior.SeatDelayMin, p.config.Behavior.SeatDelayMax)
+    p.behaviorEngine.scheduleRobotAction(roomID, robotUserID, "seat", delay)
+    return nil
 }
 ```
 
-**SelectSeat**：行为引擎延迟调用
+> **设计修正**：`JoinAndReady` 不再同步选座+准备，改为仅入房 + 调度延迟选座。选座成功后由行为引擎链式调度延迟准备。这与行为引擎的"延迟选座 → 延迟准备"设计一致，且选座前检查空座可处理竞态。
+
+**SelectSeat**：行为引擎延迟调用，选座成功后链式调度延迟准备
 ```go
 func (p *RobotPlayer) SelectSeat(ctx context.Context, roomID string, robotUserID string) error {
     roomState, _ := p.repo.GetRoomState(ctx, roomID)
     seatNo := pickRandomEmptySeat(roomState)
+    if seatNo == 0 { // 无空座
+        return ErrNoEmptySeat // 行为引擎捕获后归还账号池
+    }
     _, err := p.seatAppService.SelectSeat(ctx, &SelectSeatRequest{
         RoomID: roomID, UserID: robotUserID, SeatNo: seatNo,
     })
-    return err
+    if err != nil {
+        return err
+    }
+    // 选座成功 → 链式调度延迟准备
+    delay := randomDelay(p.config.Behavior.ReadyDelayMin, p.config.Behavior.ReadyDelayMax)
+    p.behaviorEngine.scheduleRobotAction(roomID, robotUserID, "ready", delay)
+    return nil
 }
 ```
 
@@ -694,7 +775,7 @@ RobotPlayer 直接调用 SeatAppService / GameAppService 的现有方法，**不
 
 > **本模块是虚拟账号方案的核心**。解决两个问题：1) 在游戏内标识机器人身份，用于调度和结算分支；2) Settlement Service 中所有平台 API 调用路径为机器人提供"虚拟通道"——跳过平台 API 调用，直接内部记账。
 
-#### 3.4.1 机器人身份识别 (RobotChecker)
+#### 3.5.1 机器人身份识别 (RobotChecker)
 
 在 Settlement Service 中判断某 UserID 是否为机器人，基于 Redis SET 实现，O(1) 查询复杂度。
 
@@ -717,11 +798,11 @@ func (c *redisRobotChecker) IsRobot(ctx context.Context, userID int64) bool {
 
 机器人账号创建/加载到 Redis 账号池时，同时 `SADD robot:user_ids {userID}`。
 
-#### 3.4.2 Player 身份标识
+#### 3.5.2 Player 身份标识
 
 在 Room/Player 结构中新增 `IsRobot` 标记，用于调度器识别机器人身份。
 
-#### 3.4.3 BillRecord 机器人标记
+#### 3.5.3 BillRecord 机器人标记
 
 新增 `is_robot` 字段，用于运营侧区分机器人和真人账单，做独立的盈亏统计（不影响结算逻辑）。
 
@@ -732,9 +813,9 @@ type BillRecord struct {
 }
 ```
 
-#### 3.4.4 结算虚拟通道（4 个修改点）
+#### 3.5.4 结算虚拟通道（4 个修改点）
 
-**修改点 1：扣款虚拟通道** — `DeductService.executeSingleDeduct`
+**修改点 1：扣款虚拟通道** — `DeductService.executeSingleDeduct`（`backend/settlement/service/deduct_service.go:193`）
 
 ```
 原流程: userIDConvert.GetPlatformUserID → platform.Debit → UpdateBillSuccess
@@ -746,7 +827,7 @@ type BillRecord struct {
   else: 原流程不变
 ```
 
-**修改点 2：入账虚拟通道** — `GameSettleService.executeSessionCredit`
+**修改点 2：入账虚拟通道** — `GameSettleService.executeSessionCredit`（`backend/settlement/service/game_settle_service.go:312`）
 
 ```
 原流程: userIDConvert.GetPlatformUserID → platform.Credit → UpdateBillSuccess
@@ -758,7 +839,7 @@ type BillRecord struct {
   else: 原流程不变
 ```
 
-**修改点 3：结算虚拟通道** — `GameSettleService.settlePlayer`
+**修改点 3：结算虚拟通道** — `GameSettleService.settlePlayer`（`backend/settlement/service/game_settle_service.go:158`）
 
 ```
 原流程: userIDConvert.GetPlatformUserID → platform.Settle → UpdateGameSettleStatus
@@ -769,7 +850,7 @@ type BillRecord struct {
   else: 原流程不变
 ```
 
-**修改点 4：余额查询虚拟通道** — `SettlementService.CheckBalance` / `GetUserBalance`
+**修改点 4：余额查询虚拟通道** — `SettlementService.CheckBalance` / `GetUserBalance`（`backend/settlement/service/settlement_service.go:351,372`）
 
 ```
 原流程: userIDConvert.GetPlatformUserID → platform.GetBalance
@@ -791,26 +872,144 @@ type BillRecord struct {
 
 ---
 
-## 4. 数据流路径
+## 4. 配置设计 (Configuration Design)
 
-### 4.1 机器人补位完整流程
+> **本章节为本次更新新增**。明确所有调度规则与行为参数的可配置性、配置来源、配置层级。
+
+### 4.1 配置来源与加载
+
+机器人配置统一由 `game.yaml` 的 `robot` 段管理，通过 Nacos 配置中心下发（与现有 `timeout`、`platform` 等段一致，`game.yaml:63-76` 已配置 Nacos）。启动时加载，运行时通过 Nacos 监听支持热更新。
+
+```yaml
+# game.yaml 新增 robot 段
+robot:
+  enabled: true                    # 机器人总开关，false 时调度器不启动
+  scheduler:
+    scan_interval: 5s              # 巡检间隔
+    min_real_players: 2            # 最少已准备真人数（全局默认）
+    max_robots_per_room: 3         # 单房间最大机器人数（全局默认）
+    robot_assign_lock_ttl: 10s     # 分配锁超时
+    room_assign_lock_ttl: 30s      # 房间限流锁超时
+    recycle_cooldown: 60s          # 回收冷却时间
+    reserve_count: 5               # 账号池保留数量
+    reserve_ratio_max: 0.3         # 保留数占总池最大比例（超过则告警）
+  behavior:
+    seat_delay_min: 2s
+    seat_delay_max: 5s
+    ready_delay_min: 1s
+    ready_delay_max: 3s
+    grab_delay_min: 1s
+    grab_delay_max: 8s
+    grab_skip_prob: 0.05
+    send_delay_min: 2s
+    send_delay_max: 5s
+    leave_after_game_min: 3s
+    leave_after_game_max: 10s
+  account:
+    initial_balance_multi: 1.5     # 初始余额 = 档位要求 × 此倍数
+    low_balance_threshold: 0.5     # 余额低于档位要求×此倍数时停用
+    sync_interval: 30s             # 虚拟余额同步DB间隔
 ```
-1. 真人进入房间 → 选座 → 点击准备 (Gateway WS → Game Service)
-2. 定时巡检扫描到该房间有已准备真人但人数不足开局
-3. RobotScheduler 从 RobotPool(Redis) 获取空闲机器人
-4. 检查机器人虚拟余额是否满足房间要求 (VirtualBalanceService.GetBalance)
-5. 调用 Game Service 内部方法执行: 入房 → 选座(延迟2-5s) → 准备(延迟1-3s)
-6. 机器人选座 → 房间玩家数增加 → 广播给真人
-7. 游戏开始后，行为引擎监听游戏事件：
-   a. 抢红包阶段(Grabbing) → 延迟1-8s后自动抢
-   b. 结算阶段(Settling) → 识别最小金额获得者
-   c. 等待发送阶段(WaitSend) → 若机器人为发送者，延迟2-5s后发红包
+
+### 4.2 配置结构定义
+
+```go
+// RobotConfig 机器人总配置
+type RobotConfig struct {
+    Enabled   bool            `yaml:"enabled"`
+    Scheduler SchedulerConfig `yaml:"scheduler"`
+    Behavior  BehaviorConfig  `yaml:"behavior"`
+    Account   AccountConfig   `yaml:"account"`
+}
+
+type SchedulerConfig struct {
+    ScanInterval       time.Duration `yaml:"scan_interval"`
+    MinRealPlayers     int           `yaml:"min_real_players"`
+    MaxRobotsPerRoom   int           `yaml:"max_robots_per_room"`
+    RobotAssignLockTTL time.Duration `yaml:"robot_assign_lock_ttl"`
+    RoomAssignLockTTL  time.Duration `yaml:"room_assign_lock_ttl"`
+    RecycleCooldown    time.Duration `yaml:"recycle_cooldown"`
+    ReserveCount       int           `yaml:"reserve_count"`
+    ReserveRatioMax    float64       `yaml:"reserve_ratio_max"`
+}
+
+type BehaviorConfig struct {
+    SeatDelayMin      time.Duration `yaml:"seat_delay_min"`
+    SeatDelayMax      time.Duration `yaml:"seat_delay_max"`
+    ReadyDelayMin     time.Duration `yaml:"ready_delay_min"`
+    ReadyDelayMax     time.Duration `yaml:"ready_delay_max"`
+    GrabDelayMin      time.Duration `yaml:"grab_delay_min"`
+    GrabDelayMax      time.Duration `yaml:"grab_delay_max"`
+    GrabSkipProb      float64       `yaml:"grab_skip_prob"`
+    SendDelayMin      time.Duration `yaml:"send_delay_min"`
+    SendDelayMax      time.Duration `yaml:"send_delay_max"`
+    LeaveAfterGameMin time.Duration `yaml:"leave_after_game_min"`
+    LeaveAfterGameMax time.Duration `yaml:"leave_after_game_max"`
+}
+
+type AccountConfig struct {
+    InitialBalanceMulti float64       `yaml:"initial_balance_multi"`
+    LowBalanceThreshold float64       `yaml:"low_balance_threshold"`
+    SyncInterval        time.Duration `yaml:"sync_interval"`
+}
+
+// 配置校验规则见 4.3
+```
+
+### 4.3 配置校验规则
+
+启动时对配置进行校验，不合法则启动失败并输出明确错误：
+
+| 校验项 | 规则 | 不合法处理 |
+|--------|------|-----------|
+| `MaxRobotsPerRoom + MinRealPlayers` | `<= MaxPlayers(5)` | 自动修正 MaxRobotsPerRoom 并告警 |
+| `ReserveCount / 总池数` | `<= ReserveRatioMax` | 告警（不阻断启动） |
+| 所有 DelayMin | `< 对应 DelayMax` | 交换 min/max 并告警 |
+| `SendDelayMax` | `< 现有 send 超时(30s)` | 告警，机器人可能超时 |
+| `GrabSkipProb` | `0 <= x <= 1` | clamp 到 [0,1] |
+| `InitialBalanceMulti` | `>= 1.0` | 设为 1.0 并告警 |
+
+### 4.4 可配置性总结
+
+| 配置项 | 全局默认 | 运行时热更新 |
+|--------|---------|-------------|
+| 机器人总开关 | - | ✅ |
+| ScanInterval | ✅ | ✅ |
+| MinRealPlayers | ✅(2) | ✅ |
+| MaxRobotsPerRoom | ✅(3) | ✅ |
+| 各锁 TTL | ✅ | ✅ |
+| RecycleCooldown | ✅ | ✅ |
+| ReserveCount | ✅ | ✅ |
+| 行为延迟 min/max | ✅ | ✅ |
+| GrabSkipProb | ✅ | ✅ |
+| 初始余额倍数 | ✅ | ✅ |
+| 低余额阈值 | ✅ | ✅ |
+
+> **不可配置项**（游戏规则约束，非机器人系统管辖）：MaxPlayers=5、房间费档位、余额要求公式。这些由游戏核心逻辑定义，机器人系统遵循即可。
+
+---
+
+## 5. 数据流路径
+
+### 5.1 机器人补位完整流程
+```
+1. 真人进入房间 → 选座（启动30s座位超时）→ 点击准备（清除超时）
+2. 定时巡检扫描到该房间有已准备真人且有空座（已选座 < 5）
+3. RobotScheduler 按空座数计算需要机器人数 = MaxPlayers - 已选座总人数
+4. RobotScheduler 从 RobotPool(Redis) 获取空闲机器人
+5. 检查机器人虚拟余额是否满足房间要求 (VirtualBalanceService.GetBalance)
+6. 调用 RobotPlayer.JoinAndReady: 入房为旁观者 → 调度延迟选座(2-5s) → 选座成功后链式调度延迟准备(1-3s)
+7. 机器人选座 → 房间占座数增加 → 广播给真人
+8. 游戏开始后，行为引擎监听游戏事件：
+   a. 抢红包阶段(PhaseGrabbing) → 延迟1-8s后自动抢
+   b. 结算阶段(PhaseSettling) → 识别最小金额获得者
+   c. 等待发送阶段(PhaseWaitSend) → 若机器人为发送者，延迟2-5s后发红包
    d. 结算走虚拟通道（不调用平台API）
-8. 游戏结束(PhaseGameEnd) → 延迟3-10s后自动离场，回到账号池
-9. 真人作为旁观者等待 → 游戏结束时机器人自动离场 → 真人选空座
+9. 游戏结束(PhaseGameEnd) → 延迟3-10s后自动离场，回到账号池
+10. 真人作为旁观者等待 → 游戏结束时机器人自动离场 → 真人主动选空座
 ```
 
-### 4.2 机器人扣款流程（虚拟通道）
+### 5.2 机器人扣款流程（虚拟通道）
 ```
 1. Game Service 触发扣款（首回合平摊 / 后续回合房费）
 2. DeductService.executeSingleDeduct 被调用
@@ -821,7 +1020,7 @@ type BillRecord struct {
 7. 更新 RoundSettlement 状态（与真人一致）
 ```
 
-### 4.3 机器人入账流程（虚拟通道）
+### 5.3 机器人入账流程（虚拟通道）
 ```
 1. Game Service 触发会话级入账
 2. GameSettleService.executeSessionCredit 被调用
@@ -831,7 +1030,7 @@ type BillRecord struct {
 6. BillMgr.UpdateBillSuccess(billID, 0, virtualBalanceAfter)
 ```
 
-### 4.4 机器人结算流程（虚拟通道）
+### 5.4 机器人结算流程（虚拟通道）
 ```
 1. GameSettleService.SettleGame 遍历所有玩家
 2. 对每个 userID:
@@ -840,11 +1039,11 @@ type BillRecord struct {
       → false: 正常调用 platform.Settle()
 3. 对每个有 payout 的玩家:
    a. RobotChecker.IsRobot(userID)?
-      → true: 走虚拟入账通道（见 4.3）
+      → true: 走虚拟入账通道（见 5.3）
       → false: 正常调用 platform.Credit()
 ```
 
-### 4.5 真人玩家流程（完全不变）
+### 5.5 真人玩家流程（完全不变）
 ```
 1. Debit: platform.Debit()  (不变)
 2. Credit: platform.Credit()  (不变)
@@ -854,64 +1053,72 @@ type BillRecord struct {
 
 ---
 
-## 5. 边界条件与异常处理
+## 6. 边界条件与异常处理
 
-### 5.1 机器人虚拟余额不足
+### 6.1 机器人虚拟余额不足
 - 选座前检查虚拟余额是否满足 `totalRequired`（调用 VirtualBalanceService.GetBalance）
 - 发红包前同样需检查虚拟余额（发送者需支付 roomFee）
 - 虚拟余额不足时机器人不参与该等级房间，调度器跳过该账号
-- 虚拟余额低于最低房间费用时自动停用，通过管理 API 调增虚拟余额后重新激活
+- 虚拟余额低于 `low_balance_threshold × 档位要求` 时自动停用，通过管理 API 调增虚拟余额后重新激活
 - "充值"为纯内部操作，不涉及资金平台
 
-### 5.2 Redis 宕机 / 数据丢失
+### 6.2 Redis 宕机 / 数据丢失
 - 虚拟余额以 Redis 为主存储，DB 为备份
 - Redis 重启后从 DB 加载虚拟余额
 - 若 Redis 和 DB 同时丢失，可通过 BillRecord 重算（从最后一笔同步点开始）
 - 严重情况：标记所有机器人为"待同步"状态，暂停机器人分配直到余额恢复
 
-### 5.3 机器人掉线/服务重启
+### 6.3 机器人掉线/服务重启
 - Game Service 重启时，从 Redis 恢复机器人状态
 - 机器人游戏中的状态持久化到 Redis（标记为 robot player）
-- 重启后恢复游戏中的机器人行为调度
+- 重启后恢复游戏中的机器人行为调度（复用 TimeoutScheduler 的 Redis ZSET 持久化）
 - 虚拟余额从 DB 加载到 Redis
 
-### 5.4 全机器人房间
-- 单房间最大机器人数限制，防止全机器人房间
-- 至少需要 1 个真人才允许开局（可配置）
+### 6.4 全机器人房间
+- 单房间最大机器人数限制（`MaxRobotsPerRoom`），防止全机器人房间
+- 至少需要 `MinRealPlayers` 个已准备真人才允许补位（可配置，默认 2）
 
-### 5.5 并发安全
+### 6.5 选座时序与竞态
+- 真人选座后 30s 内未准备会被踢出（`TimeoutTypeSeat`），机器人按占座数（非准备数）计算补位数量
+- 机器人选座前检查空座，无空座（真人抢先选座）则返回 `ErrNoEmptySeat`，机器人归还账号池
+- 房间限流锁（30s TTL）防止同一房间短时间内重复分配，下轮巡检重新评估空座
+- 机器人选座同样触发 30s 座位超时，但 1-3s 内准备即清除，不会触发踢出
+- 真人超时踢出后空出座位，下轮巡检自动补位
+
+### 6.6 并发安全
 - 机器人分配使用 Redis 分布式锁，防止同一机器人被分配到多个房间
 - 虚拟余额操作使用 Redis INCRBY（原子操作），多个机器人同时扣款/入账不会产生竞态条件
 - Lua 脚本选座复用现有原子操作逻辑
 
-### 5.6 机器人扣款失败
+### 6.7 机器人扣款失败
 - 虚拟余额不足时扣款失败（INCRBY 结果为负），BillRecord 标记 Failed
 - 走现有结算重试机制处理（与真人扣款失败流程一致）
 - 调度器在分配前检查虚拟余额，尽量避免此情况
 
-### 5.7 机器人发红包超时
-- 机器人必须在 WaitSend 超时（30秒）前完成发红包
+### 6.8 机器人发红包超时
+- 机器人必须在 WaitSend 超时（30秒，`game.yaml:10`）前完成发红包
 - 行为引擎保证机器人在 2-5 秒内发送，远小于超时时间，正常情况不会超时
 - 若行为引擎因故障未能触发，走系统代发逻辑
 - 机器人不会触发罚款流程（罚款仅针对真人玩家）
 
-### 5.8 账目一致性
+### 6.9 账目一致性
 - 机器人 BillRecord 与真人一样完整创建，包含金额、状态、时间等
 - 运营侧可通过 `is_robot` 字段分别统计机器人和真人的盈亏
 - 虚拟余额 = 初始余额 + 累计入账 - 累计扣款，可随时通过 BillRecord 验算
 
 ---
 
-## 6. 预期成果
+## 7. 预期成果
 
-### 6.1 功能成果
+### 7.1 功能成果
 - 完整的机器人补位系统，支持自动补位、行为模拟
 - 机器人能完整参与游戏流程：抢红包 + 发红包，与真人行为一致
 - **机器人扣款/入账/结算走虚拟通道，零资金平台 API 调用**
 - 真人玩家资金流程完全不变，零风险
 - 管理 API 支持机器人账号管理、虚拟余额管理和监控
+- **调度规则与行为参数全部可配置**，支持运行时热更新
 
-### 6.2 性能指标
+### 7.2 性能指标
 - **平台 API 调用减少**: 机器人相关调用从 4-5次/机器人/局 降至 **0次**
 - **10 个机器人 × 100 局/天**: 从 4000-5000次/天 降至 **0次/天**
 - 补位响应时间取决于巡检间隔，配合巡检周期（如5秒）可实现快速补位
@@ -919,54 +1126,9 @@ type BillRecord struct {
 - 单实例支持 500+ 机器人同时在线
 - 机器人操作延迟模拟真实度 > 95%（不可通过行为模式识别）
 
-### 6.3 可扩展性
+### 7.3 可扩展性
 - 行为引擎支持插件式扩展新的行为策略
 - 后续可增加事件驱动触发（如真人准备后即时触发）提升响应速度
-- 后续可增加策略配置中心和后台页面
+- 配置中心已支持热更新，后续可扩展后台可视化配置页面
 - 机器人数量可水平扩展
 - 虚拟账本架构为后续更多内部玩家类型（如NPC、测试账号）提供基础
-
----
-
-## 7. 人天计划表
-
-### 总计：约 21 人天
-
-| 序号 | 模块 | 任务 | 人天 | 说明 |
-|------|------|------|------|------|
-| 1 | 机器人账号管理 | 数据模型设计与建表 | 0.5 | robot_accounts 表（含虚拟余额字段） |
-| 2 | 机器人账号管理 | 账号 CRUD Repository 实现 | 1 | MySQL 读写 + 查询条件 |
-| 3 | 机器人账号管理 | 账号池 Redis 管理实现 | 1 | 空闲池/游戏中池/按等级分桶 + robot:user_ids SET |
-| 4 | 机器人账号管理 | 虚拟余额服务实现 | 1.5 | Redis INCRBY/GET + DB 同步 + VirtualBalanceService |
-| 5 | 机器人账号管理 | 账号管理 Service 实现 | 1.5 | 创建/激活/停用/虚拟余额检查/昵称生成 |
-| 6 | 机器人账号管理 | 批量创建脚本 | 0.5 | 初始化脚本，账号创建+加载到Redis+初始虚拟余额 |
-| 7 | 机器人调度系统 | 调度器核心框架（定时巡检） | 1.5 | 周期扫描 Waiting 房间 + 评估分配 |
-| 8 | 机器人调度系统 | 分配策略（余额检查/数量控制） | 1.5 | 等级匹配/虚拟余额检查/最大机器人数限制 |
-| 9 | 机器人调度系统 | 游戏结束后机器人回收 | 1 | 离场 + 虚拟余额同步 + 状态重置 + 回收至账号池 |
-| 10 | 机器人调度系统 | 调度状态 Redis 持久化与恢复 | 1 | 机器人-房间映射/服务重启恢复 |
-| 11 | 机器人行为引擎 | 行为引擎核心框架 | 2 | 延迟调度器 + 随机决策 + 事件驱动 |
-| 12 | 机器人行为引擎 | 入座/准备行为实现 | 1 | 随机选座 + 延迟准备 |
-| 13 | 机器人行为引擎 | 抢红包行为实现 | 1.5 | 延迟抢 + 概率跳过 + 事件监听 |
-| 14 | 机器人行为引擎 | 发红包行为实现 | 1 | WaitSend阶段识别发送者 + 延迟发送 |
-| 15 | 机器人行为引擎 | 游戏结束离场行为实现 | 0.5 | 延迟离场执行 |
-| 16 | 机器人行为引擎 | 与现有 TimeoutScheduler 集成 | 1 | 新增 TimeoutTypeRobot + Handler 注册 |
-| 17 | 机器人玩家 | RobotPlayer 核心实现 | 2 | JoinAndReady/SelectSeat/Ready/GrabPacket/SendPacket/LeaveRoom |
-| 18 | 机器人玩家 | GrabService 新增可用红包查询 | 0.5 | GetAvailablePacketID 供机器人抢红包使用 |
-| 19 | 机器人标识与虚拟结算通道 | Player/Room 扩展 is_robot 标记 | 0.5 | domain 模型 + Redis Lua 脚本适配 |
-| 20 | 机器人标识与虚拟结算通道 | BillRecord 新增 is_robot 字段 | 0.5 | 仅统计用途，不影响结算逻辑 |
-| 21 | 机器人标识与虚拟结算通道 | RobotChecker 机器人身份识别 | 0.5 | Redis SET + IsRobot 判断 |
-| 22 | 机器人标识与虚拟结算通道 | Settlement 虚拟通道（4个修改点） | 1.5 | 扣款/入账/结算/余额虚拟通道 |
-| 23 | 机器人标识与虚拟结算通道 | 虚拟余额同步与低余额下线 | 1 | 定时同步 + 低于阈值自动停用 |
-| 24 | 集成测试 | 机器人完整流程联调测试 | 2 | 补位→抢红包→发红包→虚拟结算→离场 全链路 |
-| 25 | 集成测试 | 边界条件与异常场景测试 | 1 | 虚拟余额不足/发红包超时/Redis宕机/并发 |
-| **合计** | | | **21** | |
-
-### 与原方案人天变化说明
-1. **新增虚拟余额服务（+1.5人天）**: VirtualBalanceService Redis + DB 双层管理
-2. **结算虚拟通道替代原结算模块（+0.5人天）**: 4 个修改点的虚拟通道分支
-3. **新增 RobotChecker（+0.5人天）**: 机器人身份识别服务
-4. **RobotPlayer 独立模块（+2.5人天）**: 封装内部调用 + GrabService 扩展
-5. **行为引擎与 TimeoutScheduler 集成（+1人天）**: 复用现有定时基础设施
-6. **管理 API 移除（-2人天）**: 暂不开发管理 API
-7. **集成测试调整（+0.5人天）**: 新增虚拟余额相关边界测试
-8. **总计从 18 人天调整至 21 人天**
