@@ -27,6 +27,7 @@ type PlayerInfo struct {
 	Avatar   string `json:"avatar"`
 	SeatNo   int    `json:"seat_no"`
 	IsOnline bool   `json:"is_online"`
+	IsRobot  bool   `json:"is_robot"`
 }
 
 type SpectatorInfo struct {
@@ -44,6 +45,7 @@ type SeatInfo struct {
 	Nickname string `json:"nickname"`
 	Avatar   string `json:"avatar"`
 	Ready    bool   `json:"ready"`
+	IsRobot  bool   `json:"is_robot"`
 }
 
 func BuildRoomState(meta *domain.RoomMeta) *RoomState {
@@ -74,6 +76,7 @@ func BuildPlayerInfo(p *domain.Player) *PlayerInfo {
 		Avatar:   p.Avatar,
 		SeatNo:   p.SeatNo,
 		IsOnline: p.IsOnline(),
+		IsRobot:  p.IsRobot,
 	}
 }
 
@@ -103,6 +106,7 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 			Avatar:   p.Avatar,
 			SeatNo:   p.SeatNo,
 			IsOnline: p.IsOnline(),
+			IsRobot:  p.IsRobot,
 		})
 		if p.SeatNo > 0 {
 			playerSeatMap[p.SeatNo] = p
@@ -138,6 +142,7 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 			seat.Nickname = p.Nickname
 			seat.Avatar = p.Avatar
 			seat.Ready = true
+			seat.IsRobot = p.IsRobot
 		} else if ownerID, ok := stateData.SeatOwners[i]; ok {
 			if spectator, ok := spectatorMap[ownerID]; ok {
 				seat.Occupied = true

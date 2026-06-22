@@ -76,6 +76,7 @@ local seatOwnerKey = KEYS[5]
 local userID = ARGV[1]
 local seatNo = tonumber(ARGV[2])
 local now = tonumber(ARGV[3])
+local isRobot = ARGV[4]
 
 if redis.call('EXISTS', roomHashKey) == 0 then
 	return {1, 0, 0, 0}
@@ -116,6 +117,11 @@ end
 
 spectator.seat_no = seatNo
 spectator.seat_selected_at = now
+if isRobot == '1' or isRobot == 'true' then
+	spectator.is_robot = true
+else
+	spectator.is_robot = false
+end
 redis.call('HSET', spectatorsKey, userID, cjson.encode(spectator))
 redis.call('SETBIT', seatsKey, seatNo, 1)
 redis.call('HSET', seatOwnerKey, tostring(seatNo), userID)
@@ -162,7 +168,8 @@ if playerData then
 		user_id = player.user_id,
 		nickname = player.nickname,
 		avatar = player.avatar,
-		seat_no = 0
+		seat_no = 0,
+		is_robot = player.is_robot or false
 	}
 	redis.call('HSET', spectatorsKey, userID, cjson.encode(spectator))
 	redis.call('HDEL', playersKey, userID)
@@ -360,7 +367,8 @@ elseif spectatorData then
 		nickname = spectator.nickname,
 		avatar = spectator.avatar,
 		seat_no = seatNo,
-		disconnected_at = nil
+		disconnected_at = nil,
+		is_robot = spectator.is_robot or false
 	}
 	
 	-- 从观众列表删除

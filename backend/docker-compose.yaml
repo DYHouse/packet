@@ -5,7 +5,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - /data/cashparty/redis:/data
+      - ./data/redis:/data
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -24,7 +24,7 @@ services:
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
     volumes:
-      - /data/cashparty/mysql:/var/lib/mysql
+      - ./data/mysql:/var/lib/mysql
       - ./sql/nacos_init.sql:/docker-entrypoint-initdb.d/nacos_init.sql:ro
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     healthcheck:
@@ -40,8 +40,8 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     volumes:
-      - /data/cashparty/zookeeper/data:/var/lib/zookeeper/data
-      - /data/cashparty/zookeeper/logs:/var/lib/zookeeper/log
+      - ./data/zookeeper/data:/var/lib/zookeeper/data
+      - ./data/zookeeper/logs:/var/lib/zookeeper/log
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -57,7 +57,7 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
-      - /data/cashparty/kafka:/var/lib/kafka/data
+      - ./data/kafka:/var/lib/kafka/data
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 10s
@@ -88,7 +88,7 @@ services:
       NACOS_AUTH_IDENTITY_KEY: serverIdentity
       NACOS_AUTH_IDENTITY_VALUE: security
     volumes:
-      - /data/cashparty/nacos/logs:/home/nacos/logs
+      - ./data/nacos/logs:/home/nacos/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/v1/console/health/readiness"]
       interval: 10s
@@ -106,7 +106,6 @@ services:
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
       - /dev/null:/etc/nginx/conf.d/default.conf:ro
-      - /data/cashparty/frontend:/usr/share/nginx/html:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

@@ -43,6 +43,18 @@ type GameAppService struct {
 	redis             *cRedis.Client
 	commissionCfg     *domain.CommissionConfig
 	timeoutCfg        *config.TimeoutConfig
+	gameEndCallback   GameEndCallback
+}
+
+// GameEndCallback is invoked from endGameWithOptions after a game ends. It is
+// used by the robot scheduler to recycle robots without introducing a circular
+// dependency between GameAppService and RobotSchedulerService.
+type GameEndCallback func(ctx context.Context, roomID string)
+
+// SetGameEndCallback injects the game end callback used to notify the robot
+// scheduler when a game ends.
+func (s *GameAppService) SetGameEndCallback(cb GameEndCallback) {
+	s.gameEndCallback = cb
 }
 
 func NewGameAppService(
@@ -394,6 +406,36 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 		Position: result.Position,
 		IsLast:   result.IsLast,
 	}, nil
+}
+
+// OnRobotGrabbed handles post-grab logic for robots: broadcast the grab event
+// to all players and trigger round settlement if this was the last packet.
+func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, userID string, result *domain.GrabResult) {
+	player, _ := s.repo.GetPlayer(ctx, roomID, userID)
+	nickname := ""
+	if player != nil {
+		nickname = player.Nickname
+	}
+
+	if s.broadcaster != nil {
+		s.broadcaster.Broadcast(roomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
+			RoomID:   roomID,
+			RoundID:  roundID,
+			PacketID: result.PacketID,
+			Position: int32(result.Position),
+			UserID:   userID,
+			Nickname: nickname,
+			Amount:   currency.NewMoneyFromFen(result.Amount),
+			IsLast:   result.IsLast,
+		}, userID)
+	}
+
+	if result.IsLast {
+		if s.scheduler != nil {
+			s.scheduler.ClearTimeout(ctx, scheduler.TimeoutTypeGrab, roomID, roundID)
+		}
+		go s.settleRound(context.Background(), roomID, roundID)
+	}
 }
 
 func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta *domain.RoomMeta) string {
@@ -1120,6 +1162,12 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 	}
 
 	logger.Info("game ended", "room_id", roomID, "player_count", len(results), "reason", opts.EndReason)
+
+	// Notify the robot scheduler so it can schedule delayed robot leaves.
+	// The callback runs in a goroutine to avoid blocking game end processing.
+	if s.gameEndCallback != nil {
+		go s.gameEndCallback(context.Background(), roomID)
+	}
 
 	return nil
 }

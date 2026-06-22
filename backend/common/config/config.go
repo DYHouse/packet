@@ -24,6 +24,47 @@ type Config struct {
 	Algorithm   AlgorithmConfig   `mapstructure:"algorithm"`
 	IDGenerator IDGeneratorConfig `mapstructure:"id_generator"`
 	Avatar      AvatarConfig      `mapstructure:"avatar"`
+	Robot       RobotConfig       `mapstructure:"robot"`
+}
+
+type RobotConfig struct {
+	Enabled   bool            `mapstructure:"enabled"`
+	Scheduler SchedulerConfig `mapstructure:"scheduler"`
+	Behavior  BehaviorConfig  `mapstructure:"behavior"`
+	Account   AccountConfig   `mapstructure:"account"`
+}
+
+type SchedulerConfig struct {
+	ScanInterval       time.Duration `mapstructure:"scan_interval"`
+	MinRealPlayers     int           `mapstructure:"min_real_players"`
+	MaxRobotsPerRoom   int           `mapstructure:"max_robots_per_room"`
+	RobotAssignLockTTL time.Duration `mapstructure:"robot_assign_lock_ttl"`
+	RoomAssignLockTTL  time.Duration `mapstructure:"room_assign_lock_ttl"`
+	RecycleCooldown    time.Duration `mapstructure:"recycle_cooldown"`
+	ReserveCount       int           `mapstructure:"reserve_count"`
+	ReserveRatioMax    float64       `mapstructure:"reserve_ratio_max"`
+}
+
+type BehaviorConfig struct {
+	SeatDelayMin      time.Duration `mapstructure:"seat_delay_min"`
+	SeatDelayMax      time.Duration `mapstructure:"seat_delay_max"`
+	ReadyDelayMin     time.Duration `mapstructure:"ready_delay_min"`
+	ReadyDelayMax     time.Duration `mapstructure:"ready_delay_max"`
+	GrabDelayMin      time.Duration `mapstructure:"grab_delay_min"`
+	GrabDelayMax      time.Duration `mapstructure:"grab_delay_max"`
+	GrabSkipProb      float64       `mapstructure:"grab_skip_prob"`
+	SendDelayMin      time.Duration `mapstructure:"send_delay_min"`
+	SendDelayMax      time.Duration `mapstructure:"send_delay_max"`
+	LeaveAfterGameMin time.Duration `mapstructure:"leave_after_game_min"`
+	LeaveAfterGameMax time.Duration `mapstructure:"leave_after_game_max"`
+	ActionRetryMax    int           `mapstructure:"action_retry_max"`
+	ActionRetryDelay  time.Duration `mapstructure:"action_retry_delay"`
+}
+
+type AccountConfig struct {
+	InitialBalanceMulti float64       `mapstructure:"initial_balance_multi"`
+	LowBalanceThreshold float64       `mapstructure:"low_balance_threshold"`
+	SyncInterval        time.Duration `mapstructure:"sync_interval"`
 }
 
 type ServerConfig struct {

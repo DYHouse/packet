@@ -28,6 +28,8 @@ type DeductService struct {
 	userIDConvert       *UserIDConvertService
 	callMgr             *PlatformCallManager
 	maxConcurrentDeduct int
+	robotChecker        RobotChecker
+	virtualBalance      *VirtualBalanceService
 }
 
 func NewDeductService(
@@ -39,6 +41,8 @@ func NewDeductService(
 	creditRetrySvc *CreditRetryService,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
+	robotChecker RobotChecker,
+	virtualBalance *VirtualBalanceService,
 ) *DeductService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -53,6 +57,8 @@ func NewDeductService(
 		userIDConvert:       userIDConvert,
 		callMgr:             callMgr,
 		maxConcurrentDeduct: defaultMaxConcurrentDeduct,
+		robotChecker:        robotChecker,
+		virtualBalance:      virtualBalance,
 	}
 }
 
@@ -191,6 +197,18 @@ func (s *DeductService) executeBatchDeduct(ctx context.Context, bills []*model.B
 }
 
 func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.BillRecord, amount int64) error {
+	// 机器人虚拟通道
+	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
+		if err := s.virtualBalance.Deduct(ctx, bill.UserID, amount); err != nil {
+			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+			return fmt.Errorf("robot virtual deduct failed: %w", err)
+		}
+		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
+		bill.IsRobot = true
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
+	}
+
+	// 原流程不变（真人玩家）
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
 		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())

@@ -118,4 +118,71 @@ func setDefaults(cfg *Config) {
 	if cfg.Nacos.ConfigGroup == "" {
 		cfg.Nacos.ConfigGroup = "DEFAULT_GROUP"
 	}
+
+	// Robot defaults
+	if cfg.Robot.Scheduler.ScanInterval == 0 {
+		cfg.Robot.Scheduler.ScanInterval = 5 * time.Second
+	}
+	if cfg.Robot.Scheduler.MinRealPlayers == 0 {
+		cfg.Robot.Scheduler.MinRealPlayers = 2
+	}
+	if cfg.Robot.Scheduler.MaxRobotsPerRoom == 0 {
+		cfg.Robot.Scheduler.MaxRobotsPerRoom = 3
+	}
+	if cfg.Robot.Scheduler.RobotAssignLockTTL == 0 {
+		cfg.Robot.Scheduler.RobotAssignLockTTL = 10 * time.Second
+	}
+	if cfg.Robot.Scheduler.RoomAssignLockTTL == 0 {
+		cfg.Robot.Scheduler.RoomAssignLockTTL = 30 * time.Second
+	}
+	if cfg.Robot.Scheduler.RecycleCooldown == 0 {
+		cfg.Robot.Scheduler.RecycleCooldown = 60 * time.Second
+	}
+	if cfg.Robot.Scheduler.ReserveCount == 0 {
+		cfg.Robot.Scheduler.ReserveCount = 5
+	}
+	if cfg.Robot.Scheduler.ReserveRatioMax == 0 {
+		cfg.Robot.Scheduler.ReserveRatioMax = 0.3
+	}
+
+	if cfg.Robot.Behavior.SeatDelayMin == 0 {
+		cfg.Robot.Behavior.SeatDelayMin = 2 * time.Second
+	}
+	if cfg.Robot.Behavior.SeatDelayMax == 0 {
+		cfg.Robot.Behavior.SeatDelayMax = 5 * time.Second
+	}
+	if cfg.Robot.Behavior.ReadyDelayMin == 0 {
+		cfg.Robot.Behavior.ReadyDelayMin = 1 * time.Second
+	}
+	if cfg.Robot.Behavior.ReadyDelayMax == 0 {
+		cfg.Robot.Behavior.ReadyDelayMax = 3 * time.Second
+	}
+	if cfg.Robot.Behavior.GrabDelayMin == 0 {
+		cfg.Robot.Behavior.GrabDelayMin = 1 * time.Second
+	}
+	if cfg.Robot.Behavior.GrabDelayMax == 0 {
+		cfg.Robot.Behavior.GrabDelayMax = 8 * time.Second
+	}
+	if cfg.Robot.Behavior.SendDelayMin == 0 {
+		cfg.Robot.Behavior.SendDelayMin = 2 * time.Second
+	}
+	if cfg.Robot.Behavior.SendDelayMax == 0 {
+		cfg.Robot.Behavior.SendDelayMax = 5 * time.Second
+	}
+	if cfg.Robot.Behavior.LeaveAfterGameMin == 0 {
+		cfg.Robot.Behavior.LeaveAfterGameMin = 3 * time.Second
+	}
+	if cfg.Robot.Behavior.LeaveAfterGameMax == 0 {
+		cfg.Robot.Behavior.LeaveAfterGameMax = 10 * time.Second
+	}
+
+	if cfg.Robot.Account.InitialBalanceMulti == 0 {
+		cfg.Robot.Account.InitialBalanceMulti = 1.5
+	}
+	if cfg.Robot.Account.LowBalanceThreshold == 0 {
+		cfg.Robot.Account.LowBalanceThreshold = 0.5
+	}
+	if cfg.Robot.Account.SyncInterval == 0 {
+		cfg.Robot.Account.SyncInterval = 30 * time.Second
+	}
 }

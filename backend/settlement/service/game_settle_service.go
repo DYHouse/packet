@@ -23,6 +23,8 @@ type GameSettleService struct {
 	cfg           *config.PlatformConfig
 	userIDConvert *UserIDConvertService
 	callMgr       *PlatformCallManager
+	robotChecker  RobotChecker
+	virtualBalance *VirtualBalanceService
 }
 
 func NewGameSettleService(
@@ -33,18 +35,22 @@ func NewGameSettleService(
 	cfg *config.PlatformConfig,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
+	robotChecker RobotChecker,
+	virtualBalance *VirtualBalanceService,
 ) *GameSettleService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
 	return &GameSettleService{
-		platform:      platformClient,
-		billMgr:       billMgr,
-		redis:         redis,
-		traceIDGen:    traceIDGen,
-		cfg:           cfg,
-		userIDConvert: userIDConvert,
-		callMgr:       callMgr,
+		platform:       platformClient,
+		billMgr:        billMgr,
+		redis:          redis,
+		traceIDGen:     traceIDGen,
+		cfg:            cfg,
+		userIDConvert:  userIDConvert,
+		callMgr:        callMgr,
+		robotChecker:   robotChecker,
+		virtualBalance: virtualBalance,
 	}
 }
 
@@ -156,6 +162,14 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 
 // settlePlayer calls platform.Settle(/settle) for a single player's game result
 func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, userID int64, betAmount int64, payOut int64, startTime, endTime time.Time) error {
+	// 机器人虚拟通道：跳过 platform.Settle，仅更新状态
+	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
+		if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleSettled); err != nil {
+			logger.Error("mark robot game settle status failed", "session_id", sessionID, "user_id", userID, "error", err)
+		}
+		return nil
+	}
+
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get platform user id failed: %w", err)
@@ -310,6 +324,17 @@ func (s *GameSettleService) creditSessionPayout(ctx context.Context, sessionID i
 // executeSessionCredit calls platform.Credit() for a session credit bill.
 // On success, marks bill as Success. On failure, marks as Failed and sets next_retry_at.
 func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *model.BillRecord) error {
+	// 机器人虚拟通道
+	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
+		if err := s.virtualBalance.Credit(ctx, bill.UserID, bill.Amount); err != nil {
+			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+			return fmt.Errorf("robot virtual credit failed: %w", err)
+		}
+		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
+		bill.IsRobot = true
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
+	}
+
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
 		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())

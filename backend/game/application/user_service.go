@@ -108,6 +108,20 @@ func (s *UserService) GetUserById(ctx context.Context, id string) (*model.User, 
 	return user, nil
 }
 
+// SetUserIsRobot marks a user as a robot account by primary key id.
+// It also invalidates the Redis cache so subsequent reads reflect the update.
+func (s *UserService) SetUserIsRobot(ctx context.Context, id int64) error {
+	if err := s.dbRepo.UserDBRepo().SetUserIsRobot(ctx, id); err != nil {
+		return err
+	}
+	// Invalidate both cache keys so the next read picks up is_robot=true from DB.
+	s.redis.Del(ctx, redis.UserByIdKey(strconv.FormatInt(id, 10)))
+	// Best-effort: we don't have the user_id string here, so we skip the
+	// user_id cache key. It will expire naturally (TTL 30min) and is only
+	// used during the initial SaveUser flow which happens before SetUserIsRobot.
+	return nil
+}
+
 // GetPendingCredit 获取玩家当前游戏的待入账金额（累计抢红包+奖励）
 func (s *UserService) GetPendingCredit(ctx context.Context, userID string) int64 {
 	// 1. 获取当前房间 ID

@@ -76,7 +76,12 @@ func (s *SeatAppService) SelectSeat(ctx context.Context, req *SelectSeatRequest)
 		return nil, message.NewError(message.CodeInvalidSeatNo)
 	}
 
-	err = s.repo.SelectSeat(ctx, req.RoomID, req.UserID, req.SeatNo)
+	isRobot := false
+	if user, userErr := s.dbRepo.UserDBRepo().GetUserById(ctx, req.UserID); userErr == nil && user != nil {
+		isRobot = user.IsRobot
+	}
+
+	err = s.repo.SelectSeat(ctx, req.RoomID, req.UserID, req.SeatNo, isRobot)
 	if err != nil {
 		return nil, err
 	}

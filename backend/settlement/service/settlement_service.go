@@ -16,16 +16,18 @@ import (
 )
 
 type SettlementService struct {
-	platform      platform.Client
-	billMgr       *BillManager
-	redis         *cRedis.Client
-	traceIDGen    *TraceIDGenerator
-	deductSvc     *DeductService
-	rewardSettler *RewardSettler
-	cfg           *config.PlatformConfig
-	userIDConvert *UserIDConvertService
-	gameSettleSvc *GameSettleService
-	callMgr       *PlatformCallManager
+	platform       platform.Client
+	billMgr        *BillManager
+	redis          *cRedis.Client
+	traceIDGen     *TraceIDGenerator
+	deductSvc      *DeductService
+	rewardSettler  *RewardSettler
+	cfg            *config.PlatformConfig
+	userIDConvert  *UserIDConvertService
+	gameSettleSvc  *GameSettleService
+	callMgr        *PlatformCallManager
+	robotChecker   RobotChecker
+	virtualBalance *VirtualBalanceService
 }
 
 func NewSettlementService(
@@ -39,22 +41,26 @@ func NewSettlementService(
 	gameSettleSvc *GameSettleService,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
+	robotChecker RobotChecker,
+	virtualBalance *VirtualBalanceService,
 ) *SettlementService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
 
 	return &SettlementService{
-		platform:      platformClient,
-		billMgr:       billMgr,
-		redis:         redis,
-		traceIDGen:    traceIDGen,
-		deductSvc:     deductSvc,
-		rewardSettler: rewardSettler,
-		cfg:           cfg,
-		userIDConvert: userIDConvert,
-		gameSettleSvc: gameSettleSvc,
-		callMgr:       callMgr,
+		platform:       platformClient,
+		billMgr:        billMgr,
+		redis:          redis,
+		traceIDGen:     traceIDGen,
+		deductSvc:      deductSvc,
+		rewardSettler:  rewardSettler,
+		cfg:            cfg,
+		userIDConvert:  userIDConvert,
+		gameSettleSvc:  gameSettleSvc,
+		callMgr:        callMgr,
+		robotChecker:   robotChecker,
+		virtualBalance: virtualBalance,
 	}
 }
 
@@ -144,6 +150,7 @@ func (s *SettlementService) creditRound(ctx context.Context, settlement *model.R
 			Amount:       player.Amount,
 			Status:       dto.BillStatusSuccess,
 			Remark:       fmt.Sprintf("抢红包收入(待会话级入账),局ID:%d", settlement.RoundID),
+			IsRobot:      s.robotChecker != nil && s.robotChecker.IsRobot(ctx, player.UserID),
 		}
 		bills = append(bills, bill)
 		totalSettleAmount += player.Amount
@@ -349,6 +356,15 @@ func (s *SettlementService) GetRoundSettlement(ctx context.Context, roundID int6
 }
 
 func (s *SettlementService) CheckBalance(ctx context.Context, userID int64, requiredAmount int64) (int64, bool, error) {
+	// 机器人虚拟通道
+	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
+		balance, err := s.virtualBalance.GetBalance(ctx, userID)
+		if err != nil {
+			return 0, false, fmt.Errorf("get robot virtual balance failed: %w", err)
+		}
+		return balance, balance >= requiredAmount, nil
+	}
+
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, userID)
 	if err != nil {
 		return 0, false, fmt.Errorf("get platform user id failed: %w", err)
@@ -370,6 +386,11 @@ func (s *SettlementService) CheckBalance(ctx context.Context, userID int64, requ
 }
 
 func (s *SettlementService) GetUserBalance(ctx context.Context, userID int64) (int64, error) {
+	// 机器人虚拟通道
+	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
+		return s.virtualBalance.GetBalance(ctx, userID)
+	}
+
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("get platform user id failed: %w", err)

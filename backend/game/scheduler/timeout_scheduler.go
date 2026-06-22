@@ -19,6 +19,7 @@ const (
 	TimeoutTypeGrab    TimeoutType = "grab"
 	TimeoutTypeSend    TimeoutType = "send"
 	TimeoutTypeReplace TimeoutType = "replace"
+	TimeoutTypeRobot   TimeoutType = "robot"
 )
 
 type TimeoutConfig struct {
@@ -32,6 +33,7 @@ type Config struct {
 	Grab    time.Duration
 	Send    time.Duration
 	Replace time.Duration
+	Robot   time.Duration
 }
 
 var defaultCheckIntervals = map[TimeoutType]time.Duration{
@@ -40,6 +42,7 @@ var defaultCheckIntervals = map[TimeoutType]time.Duration{
 	TimeoutTypeGrab:    500 * time.Millisecond,
 	TimeoutTypeSend:    1 * time.Second,
 	TimeoutTypeReplace: 1 * time.Second,
+	TimeoutTypeRobot:   500 * time.Millisecond,
 }
 
 type TimeoutHandler func(ctx context.Context, roomID string, data string)
@@ -87,6 +90,12 @@ func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
 		replaceDuration = 30 * time.Second
 	}
 	configs[TimeoutTypeReplace] = TimeoutConfig{Duration: replaceDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeReplace]}
+
+	robotDuration := cfg.Robot
+	if robotDuration == 0 {
+		robotDuration = 5 * time.Second
+	}
+	configs[TimeoutTypeRobot] = TimeoutConfig{Duration: robotDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeRobot]}
 
 	return &TimeoutScheduler{
 		redis:    redis,

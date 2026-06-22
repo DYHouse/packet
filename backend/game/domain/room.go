@@ -33,6 +33,7 @@ type Player struct {
 	Avatar         string `json:"avatar"`
 	SeatNo         int    `json:"seat_no"`
 	DisconnectedAt *int64 `json:"disconnected_at"`
+	IsRobot        bool   `json:"is_robot"`
 }
 
 type Spectator struct {
@@ -40,6 +41,7 @@ type Spectator struct {
 	Nickname string `json:"nickname"`
 	Avatar   string `json:"avatar"`
 	SeatNo   int    `json:"seat_no"`
+	IsRobot  bool   `json:"is_robot"`
 }
 
 func (p *Player) IsOnline() bool {

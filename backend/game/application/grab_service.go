@@ -3,10 +3,12 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
@@ -65,6 +67,71 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 	}
 
 	logger.Info("packet grabbed",
+		"room_id", roomID,
+		"round_id", roundID,
+		"user_id", userID,
+		"amount", result.Amount,
+		"position", result.Position,
+		"is_last", result.IsLast,
+	)
+
+	return result, nil
+}
+
+// GetAvailablePacketID 查询可用红包ID供机器人使用
+func (s *GrabService) GetAvailablePacketID(ctx context.Context, roomID, roundID string) (string, error) {
+	packetIDs, err := s.redis.LRange(ctx, redis.RoundAvailablePacketsKey(roundID), 0, -1).Result()
+	if err != nil {
+		logger.Error("get available packet ids failed", "error", err, "room_id", roomID, "round_id", roundID)
+		return "", err
+	}
+	if len(packetIDs) == 0 {
+		return "", message.NewError(message.CodeNoPacket)
+	}
+	return packetIDs[rand.Intn(len(packetIDs))], nil
+}
+
+// RobotGrabPacket atomically picks a random available packet and grabs it
+// for the robot in a single Lua call, avoiding the race condition between
+// GetAvailablePacketID and GrabPacket.
+func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, userID string) (*domain.GrabResult, error) {
+	keys := []string{
+		redis.RoundAvailablePacketsKey(roundID),
+		redis.UserGrabbedKey(roundID, userID),
+		redis.RoundGrabbersKey(roundID),
+		redis.RoundStateKey(roundID),
+		redis.RoomPlayersKey(roomID),
+	}
+
+	args := []interface{}{
+		userID,
+		time.Now().Unix(),
+		s.grabTimeout,
+		roomID,
+		"cashparty",
+	}
+
+	res, err := s.redis.Eval(ctx, redis.LuaRobotGrabPacket, keys, args...).Slice()
+	if err != nil {
+		logger.Error("robot grab packet lua failed", "error", err, "room_id", roomID, "round_id", roundID, "user_id", userID)
+		return nil, err
+	}
+
+	code := converter.ParseInt(res[0])
+	if code != 0 {
+		luaErr := domain.MapLuaError(code)
+		logger.Warn("robot grab packet failed", "lua_code", code, "room_id", roomID, "user_id", userID)
+		return nil, luaErr
+	}
+
+	result := &domain.GrabResult{
+		PacketID: converter.ParseString(res[1]),
+		Amount:   converter.ParseInt64(res[2]),
+		Position: converter.ParseInt(res[3]),
+		IsLast:   converter.ParseInt(res[5]) == 1,
+	}
+
+	logger.Info("robot packet grabbed",
 		"room_id", roomID,
 		"round_id", roundID,
 		"user_id", userID,

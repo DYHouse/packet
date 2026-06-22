@@ -1,0 +1,9 @@
+# Gateway Rate Limiter Configuration
+# 与 RateLimiterConfig 结构体对应
+
+ip_requests_per_second: 100
+ip_burst_size: 200
+user_requests_per_second: 50
+user_burst_size: 100
+global_requests_per_sec: 10000
+cleanup_interval: 1m

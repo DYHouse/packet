@@ -135,19 +135,28 @@ func NewApplicationWithConfig(cfg *config.Config) (*Application, error) {
 
 	callMgr := settlementService.NewPlatformCallManager(db)
 	creditRetrySvc := settlementService.NewCreditRetryService(settlementRecorder, platformClient, redisClient, traceIDGen, platformCfg, exceptionMgr, userIDConvert, callMgr)
-	deductSvc := settlementService.NewDeductService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, creditRetrySvc, userIDConvert, callMgr)
+
+	// Robot checker and settlement-layer virtual balance service (shared with
+	// game-layer robot services via the same Redis keys).
+	robotChecker := settlementService.NewRobotChecker(redisClient)
+	settlementVirtualBalance := settlementService.NewVirtualBalanceService(redisClient)
+
+	deductSvc := settlementService.NewDeductService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
 	refundSvc := settlementService.NewRefundService(platformClient, settlementRecorder, redisClient, traceIDGen, db, platformCfg, userIDConvert, callMgr)
 	rewardSettler := settlementService.NewRewardSettler(settlementService.DefaultRewardSettlementConfig(), settlementRecorder, traceIDGen)
-	gameSettleSvc := settlementService.NewGameSettleService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, userIDConvert, callMgr)
+	gameSettleSvc := settlementService.NewGameSettleService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
 
-	settlementSvc := settlementService.NewSettlementService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, deductSvc, rewardSettler, gameSettleSvc, userIDConvert, callMgr)
+	settlementSvc := settlementService.NewSettlementService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, deductSvc, rewardSettler, gameSettleSvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
 
 	algorithmConfig := convertAlgorithmConfig(&cfg.Algorithm)
 	logger.Info("algorithm config loaded", "room_configs_count", len(algorithmConfig.RewardControl.RoomConfigs))
 	roomRepo := redisRepo.NewRoomRepository(redisClient)
 	packetGenerator := algorithm.NewPacketGenerator(algorithmConfig, redisClient, db, roomRepo)
 
-	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
+	// Validate robot configuration before assembling robot services.
+	application.ValidateRobotConfig(&cfg.Robot)
+
+	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
 		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc)
 	container.InitAppServices()
 
@@ -172,7 +181,7 @@ func (a *Application) Start(ctx context.Context) error {
 	)
 	roomEventConsumer := a.Container.NewRoomEventConsumer(roomEventConsumerCfg)
 
-	gameEventConsumer := messaging.NewGameEventConsumer(a.Container.DB, a.Container.Redis, a.Container.SettlementSvc)
+	gameEventConsumer := messaging.NewGameEventConsumer(a.Container.DB, a.Container.Redis, a.Container.SettlementSvc, a.Container.GetRobotBehaviorEngine())
 	gameEventKafkaConsumer := kafka.NewConsumer(
 		a.config.Kafka.Brokers,
 		kafka.TopicGameEvents,

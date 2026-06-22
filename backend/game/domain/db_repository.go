@@ -37,6 +37,7 @@ type UserDBRepository interface {
 	CreateOrUpdateUser(ctx context.Context, user *model.User) error
 	GetUser(ctx context.Context, userID string) (*model.User, error)
 	GetUserById(ctx context.Context, id string) (*model.User, error)
+	SetUserIsRobot(ctx context.Context, id int64) error
 }
 
 type RoundDBRepository interface {

@@ -18,17 +18,33 @@ import (
 	"gorm.io/gorm"
 )
 
-type GameEventConsumer struct {
-	db                *gorm.DB
-	redis             *cRedis.Client
-	settlementService *settlementService.SettlementService
+// RobotBehaviorEngineInterface defines the behavior engine methods used by
+// the game event consumer. The application.RobotBehaviorEngine implements
+// this interface.
+type RobotBehaviorEngineInterface interface {
+	OnPacketCreated(ctx context.Context, roomID string, roundID string)
+	OnRoundSettle(ctx context.Context, roomID string, minPlayerID int64)
+	OnSessionEnd(ctx context.Context, roomID string)
 }
 
-func NewGameEventConsumer(db *gorm.DB, redis *cRedis.Client, settlementService *settlementService.SettlementService) *GameEventConsumer {
+type GameEventConsumer struct {
+	db                  *gorm.DB
+	redis               *cRedis.Client
+	settlementService   *settlementService.SettlementService
+	robotBehaviorEngine RobotBehaviorEngineInterface
+}
+
+func NewGameEventConsumer(
+	db *gorm.DB,
+	redis *cRedis.Client,
+	settlementService *settlementService.SettlementService,
+	robotBehaviorEngine RobotBehaviorEngineInterface,
+) *GameEventConsumer {
 	return &GameEventConsumer{
-		db:                db,
-		redis:             redis,
-		settlementService: settlementService,
+		db:                  db,
+		redis:               redis,
+		settlementService:   settlementService,
+		robotBehaviorEngine: robotBehaviorEngine,
 	}
 }
 
@@ -152,7 +168,7 @@ func (c *GameEventConsumer) handlePacketCreated(ctx context.Context, event *doma
 
 	now := time.Now()
 
-	return c.db.Transaction(func(tx *gorm.DB) error {
+	if err := c.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Round{}).
 			Where("round_id = ?", parseInt64(event.RoundID)).
 			Updates(map[string]interface{}{
@@ -182,7 +198,16 @@ func (c *GameEventConsumer) handlePacketCreated(ctx context.Context, event *doma
 			"session_id", sessionIDInt64,
 			"packet_count", len(data.Packets))
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Trigger robot grab behavior
+	if c.robotBehaviorEngine != nil {
+		c.robotBehaviorEngine.OnPacketCreated(ctx, event.RoomID, event.RoundID)
+	}
+
+	return nil
 }
 
 func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain.GameEvent) error {
@@ -207,7 +232,7 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 		return fmt.Errorf("invalid trace_id: %w", err)
 	}
 
-	return c.db.Transaction(func(tx *gorm.DB) error {
+	if err := c.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Round{}).
 			Where("round_id = ?", parseInt64(event.RoundID)).
 			Updates(map[string]interface{}{
@@ -324,7 +349,16 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Trigger robot send behavior
+	if c.robotBehaviorEngine != nil {
+		c.robotBehaviorEngine.OnRoundSettle(ctx, event.RoomID, parseInt64(data.MinPlayerID))
+	}
+
+	return nil
 }
 
 func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.GameEvent) error {
@@ -355,7 +389,7 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 
 	now := time.Now()
 
-	return c.db.Transaction(func(tx *gorm.DB) error {
+	if err := c.db.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]interface{}{
 			"status":        model.SessionStatusCompleted,
 			"actual_rounds": data.ActualRounds,
@@ -393,7 +427,16 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Trigger robot leave behavior
+	if c.robotBehaviorEngine != nil {
+		c.robotBehaviorEngine.OnSessionEnd(ctx, event.RoomID)
+	}
+
+	return nil
 }
 
 func (c *GameEventConsumer) isProcessed(ctx context.Context, traceID string) bool {

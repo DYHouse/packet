@@ -45,3 +45,9 @@ func (r *GormUserRepository) GetUserById(ctx context.Context, id string) (*model
 	}
 	return &user, nil
 }
+
+func (r *GormUserRepository) SetUserIsRobot(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Model(&model.User{}).
+		Where("id = ?", id).
+		Update("is_robot", true).Error
+}

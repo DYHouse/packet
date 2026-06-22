@@ -17,7 +17,7 @@ type RoomRepository interface {
 
 	GetSpectator(ctx context.Context, roomID, userID string) (*Spectator, error)
 
-	SelectSeat(ctx context.Context, roomID, userID string, seatNo int) error
+	SelectSeat(ctx context.Context, roomID, userID string, seatNo int, isRobot bool) error
 	CancelSeat(ctx context.Context, roomID, userID string) error
 
 	JoinAsSpectator(ctx context.Context, roomID string, spectator *Spectator) (*JoinResult, error)

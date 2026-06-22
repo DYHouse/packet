@@ -95,6 +95,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 		UserID:   req.UserID,
 		Nickname: userInfo.Nickname,
 		Avatar:   userInfo.Avatar,
+		IsRobot:  userInfo.IsRobot,
 	}
 
 	result, err := s.repo.JoinAsSpectator(ctx, req.RoomID, spectator)

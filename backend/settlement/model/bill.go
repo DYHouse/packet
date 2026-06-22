@@ -33,7 +33,9 @@ type BillRecord struct {
 	ErrorMessage     string     `gorm:"size:512" json:"error_message"`
 	ExceptionID      int64      `gorm:"index" json:"exception_id"`
 	GameSettleStatus int        `gorm:"default:0;index" json:"game_settle_status"`
+	GameSettledAt    *time.Time `gorm:"index" json:"game_settled_at"`
 	Remark           string     `gorm:"size:256" json:"remark"`
+	IsRobot          bool       `gorm:"default:false;index" json:"is_robot"`
 	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
@@ -72,7 +74,7 @@ type RoundSettlement struct {
 	RefundReason       string     `gorm:"size:256" json:"refund_reason"`
 	ErrorMessage       string     `gorm:"size:512" json:"error_message"`
 	GameSettleStatus   int        `gorm:"default:0;index" json:"game_settle_status"`
-	GameSettledAt      *time.Time `json:"game_settled_at"`
+	GameSettledAt      *time.Time `gorm:"index" json:"game_settled_at"`
 	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }

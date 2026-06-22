@@ -168,7 +168,7 @@ func (r *RoomRepository) GetSpectator(ctx context.Context, roomID, userID string
 	return &spectator, nil
 }
 
-func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, seatNo int) error {
+func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, seatNo int, isRobot bool) error {
 	keys := []string{
 		RoomHashKey(roomID),
 		RoomPlayersKey(roomID),
@@ -180,6 +180,7 @@ func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, 
 		userID,
 		seatNo,
 		fmt.Sprintf("%d", time.Now().Unix()),
+		isRobot,
 	}
 
 	result, err := r.client.Eval(ctx, LuaSelectSeat, keys, args...).Slice()
@@ -383,6 +384,7 @@ func (r *RoomRepository) ResetRoomForNextGame(ctx context.Context, roomID string
 			JoinedAt       int64  `json:"joined_at"`
 			LastActiveAt   int64  `json:"last_active_at"`
 			DisconnectedAt *int64 `json:"disconnected_at"`
+			IsRobot        bool   `json:"is_robot"`
 		}
 		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
 			continue

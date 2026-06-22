@@ -13,6 +13,7 @@ type User struct {
 	Avatar    string    `json:"avatar" gorm:"size:512"`
 	IP        string    `json:"ip" gorm:"size:64"`
 	DeviceID  string    `json:"device_id" gorm:"size:128"`
+	IsRobot   bool      `json:"is_robot" gorm:"default:false;index"`
 	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }

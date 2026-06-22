@@ -50,3 +50,4 @@ protoc.zip
 *.test
 *.out
 go.work
+data/

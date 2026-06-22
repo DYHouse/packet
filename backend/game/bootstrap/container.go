@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"context"
+
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/kafka"
@@ -11,6 +13,7 @@ import (
 	"github.com/cashparty/backend/game/infrastructure/broadcast"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
+	redisRepo "github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/scheduler"
 	settlementConfig "github.com/cashparty/backend/settlement/config"
 	settlementScheduler "github.com/cashparty/backend/settlement/scheduler"
@@ -49,6 +52,17 @@ type Container struct {
 	GameSettleRetryScheduler *settlementScheduler.GameSettleRetryScheduler
 	GameSettleTimeoutScheduler *settlementScheduler.GameSettleTimeoutScheduler
 
+	// Robot system services
+	RobotCfg                    *config.RobotConfig
+	VirtualBalanceService       *redisRepo.VirtualBalanceService
+	RobotPoolService            *redisRepo.RobotPoolService
+	RobotSchedulerRedis         *redisRepo.RobotSchedulerRedis
+	RobotAccountService         *application.RobotAccountService
+	RobotPlayer                 *application.RobotPlayer
+	RobotBehaviorEngine         *application.RobotBehaviorEngine
+	RobotSchedulerService       *application.RobotSchedulerService
+	VirtualBalanceSyncScheduler *scheduler.VirtualBalanceSyncScheduler
+
 	// Shared settlement service instances (created in app.go, not recreated)
 	platformClient  platform.Client
 	billMgr         *settlementService.BillManager
@@ -66,6 +80,7 @@ func NewContainer(
 	platformCfg *config.PlatformConfig,
 	timeoutCfg *config.TimeoutConfig,
 	avatarCfg *config.AvatarConfig,
+	robotCfg *config.RobotConfig,
 	broadcastCfg *config.BroadcastConfig,
 	db *gorm.DB,
 	redis *cRedis.Client,
@@ -105,6 +120,7 @@ func NewContainer(
 		PlatformCfg:     platformCfg,
 		TimeoutCfg:      timeoutCfg,
 		AvatarCfg:       avatarCfg,
+		RobotCfg:        robotCfg,
 		DB:              db,
 		Redis:           redis,
 		KafkaProducer:   kafkaProducer,
@@ -190,6 +206,60 @@ func (c *Container) InitAppServices() {
 	}
 
 	c.initSettlementSchedulers()
+	c.initRobotServices()
+}
+
+func (c *Container) initRobotServices() {
+	if c.RobotCfg == nil {
+		return
+	}
+
+	// Create robot account repository
+	robotAccountRepo := mysqlRepo.NewRobotAccountRepository(c.DB)
+
+	// Create Redis services (game layer)
+	c.VirtualBalanceService = redisRepo.NewVirtualBalanceService(c.Redis, robotAccountRepo)
+	c.RobotPoolService = redisRepo.NewRobotPoolService(c.Redis)
+	c.RobotSchedulerRedis = redisRepo.NewRobotSchedulerRedis(c.Redis)
+
+	// Create account service
+	c.RobotAccountService = application.NewRobotAccountService(
+		robotAccountRepo, c.UserService, c.VirtualBalanceService, c.RobotPoolService, c.AvatarCfg,
+	)
+
+	// Create robot player
+	c.RobotPlayer = application.NewRobotPlayer(
+		c.SeatAppService, c.GameAppService, c.RoomAppService,
+		c.RobotAccountService, c.GrabService, c.RoomRepo, c.RobotCfg,
+	)
+
+	// Create behavior engine
+	c.RobotBehaviorEngine = application.NewRobotBehaviorEngine(
+		c.RobotCfg, c.RobotPlayer, c.TimeoutScheduler,
+		c.RobotAccountService, c.GrabService, c.Redis, c.RobotSchedulerRedis,
+	)
+
+	// Wire behavior engine to robot player (breaks circular dependency)
+	c.RobotPlayer.SetBehaviorEngine(c.RobotBehaviorEngine)
+
+	// Register robot timeout handler
+	c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeRobot, c.RobotBehaviorEngine.HandleRobotTimeout)
+
+	// Create scheduler service
+	c.RobotSchedulerService = application.NewRobotSchedulerService(
+		c.RobotAccountService, c.RobotPlayer, c.RoomRepo, c.DBRepo,
+		c.Redis, c.RobotSchedulerRedis, c.RobotPoolService, c.RobotCfg,
+	)
+
+	// Set game end callback so the robot scheduler can recycle robots on game end
+	c.GameAppService.SetGameEndCallback(func(ctx context.Context, roomID string) {
+		c.RobotSchedulerService.OnGameEnd(ctx, roomID)
+	})
+
+	// Create virtual balance sync scheduler
+	c.VirtualBalanceSyncScheduler = scheduler.NewVirtualBalanceSyncScheduler(
+		c.VirtualBalanceService, c.RobotCfg.Account.SyncInterval,
+	)
 }
 
 func (c *Container) initSettlementSchedulers() {
@@ -212,7 +282,18 @@ func (c *Container) NewRoomEventConsumer(cfg *kafka.ConsumerConfig) *messaging.R
 }
 
 func (c *Container) NewGameEventConsumer(cfg *kafka.ConsumerConfig) *messaging.GameEventConsumer {
-	return messaging.NewGameEventConsumer(c.DB, c.Redis, c.SettlementSvc)
+	return messaging.NewGameEventConsumer(c.DB, c.Redis, c.SettlementSvc, c.GetRobotBehaviorEngine())
+}
+
+// GetRobotBehaviorEngine returns the robot behavior engine as the messaging
+// interface, or nil when the robot system is not initialized. This avoids
+// passing a non-nil interface wrapping a nil pointer to the game event
+// consumer.
+func (c *Container) GetRobotBehaviorEngine() messaging.RobotBehaviorEngineInterface {
+	if c.RobotBehaviorEngine == nil {
+		return nil
+	}
+	return c.RobotBehaviorEngine
 }
 
 func (c *Container) StartSchedulers() {
@@ -234,9 +315,28 @@ func (c *Container) StartSchedulers() {
 	if c.GameSettleTimeoutScheduler != nil {
 		c.GameSettleTimeoutScheduler.Start()
 	}
+
+	// Start robot schedulers only when robot is enabled
+	if c.RobotCfg != nil && c.RobotCfg.Enabled {
+		if c.RobotSchedulerService != nil {
+			c.RobotSchedulerService.Start()
+		}
+		if c.VirtualBalanceSyncScheduler != nil {
+			c.VirtualBalanceSyncScheduler.Start()
+		}
+		if c.RobotSchedulerService != nil {
+			c.RobotSchedulerService.ValidateReserveRatio(context.Background())
+		}
+	}
 }
 
 func (c *Container) Stop() {
+	if c.VirtualBalanceSyncScheduler != nil {
+		c.VirtualBalanceSyncScheduler.Stop()
+	}
+	if c.RobotSchedulerService != nil {
+		c.RobotSchedulerService.Stop()
+	}
 	if c.TimeoutScheduler != nil {
 		c.TimeoutScheduler.Stop()
 	}

@@ -66,6 +66,7 @@ func main() {
 		&model.Packet{},
 		&model.SpecialReward{},
 		&model.User{},
+		&model.RobotAccount{},
 		&settlementModel.BillRecord{},
 		&settlementModel.RoundSettlement{},
 		&settlementModel.RefundAudit{},

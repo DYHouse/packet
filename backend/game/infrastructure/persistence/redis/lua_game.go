@@ -74,6 +74,106 @@ end
 return {0, tonumber(packetID), amount, position, '', isLast}
 `
 
+// LuaRobotGrabPacket 机器人抢红包脚本（原子操作：从可用列表随机选+抢）
+// KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey]
+// ARGV: [userID, now, grabTimeout, roomID, keyPrefix]
+// 返回: {code, packetID, amount, position, errMsg, isLast}
+const LuaRobotGrabPacket = `
+local availablePacketsKey = KEYS[1]
+local userGrabKey = KEYS[2]
+local grabbersKey = KEYS[3]
+local roundStateKey = KEYS[4]
+local playersKey = KEYS[5]
+
+local userID = ARGV[1]
+local now = tonumber(ARGV[2])
+local grabTimeout = tonumber(ARGV[3])
+local roomID = ARGV[4]
+local keyPrefix = ARGV[5]
+
+local playerData = redis.call('HGET', playersKey, userID)
+if not playerData then
+	return {60, 0, 0, 0, 'only player can grab packet', 0}
+end
+
+local phase = redis.call('HGET', roundStateKey, 'phase')
+if not phase or phase ~= 'GRABBING' then
+	return {40, 0, 0, 0, 'not in grabbing phase', 0}
+end
+
+local grabEndTime = tonumber(redis.call('HGET', roundStateKey, 'grab_end_time') or 0)
+if grabEndTime > 0 and now > grabEndTime then
+	return {41, 0, 0, 0, 'grab timeout', 0}
+end
+
+if redis.call('EXISTS', userGrabKey) == 1 then
+	return {21, 0, 0, 0, 'already grabbed', 0}
+end
+
+-- Atomically pick a random available packet from the list
+local packetIDs = redis.call('LRANGE', availablePacketsKey, 0, -1)
+if not packetIDs or #packetIDs == 0 then
+	return {22, 0, 0, 0, 'no available packets', 0}
+end
+
+local chosenPacketID = nil
+local availableKey = nil
+local available = nil
+
+-- Shuffle and find the first actually available packet
+math.randomseed(now)
+local shuffled = {}
+for i, pid in ipairs(packetIDs) do
+	shuffled[i] = pid
+end
+for i = #shuffled, 2, -1 do
+	local j = math.random(1, i)
+	shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+end
+
+for _, pid in ipairs(shuffled) do
+	availableKey = keyPrefix .. ':packet:available:' .. pid
+	available = redis.call('GET', availableKey)
+	if available and available == '1' then
+		chosenPacketID = pid
+		break
+	end
+end
+
+if not chosenPacketID then
+	return {22, 0, 0, 0, 'packet not available', 0}
+end
+
+local packetKey = keyPrefix .. ':packet:info:' .. chosenPacketID
+local packetData = redis.call('GET', packetKey)
+if not packetData then
+	return {23, 0, 0, 0, 'packet info not found', 0}
+end
+
+local packet = cjson.decode(packetData)
+local amount = packet.amount
+local position = packet.position
+
+redis.call('DEL', availableKey)
+redis.call('SET', userGrabKey, '1', 'EX', 86400)
+redis.call('SADD', grabbersKey, userID)
+
+packet.is_grabbed = true
+packet.grabber_id = userID
+packet.grabbed_at = now
+redis.call('SET', packetKey, cjson.encode(packet), 'EX', 86400)
+
+local grabbedCount = redis.call('SCARD', grabbersKey)
+local totalPackets = tonumber(redis.call('HGET', roundStateKey, 'packet_count') or 5)
+local isLast = 0
+if grabbedCount >= totalPackets then
+	isLast = 1
+	redis.call('HSET', roundStateKey, 'phase', 'SETTLING')
+end
+
+return {0, tonumber(chosenPacketID), amount, position, '', isLast}
+`
+
 // LuaAutoDistributePackets 自动分配未抢红包
 // KEYS: [availablePacketsKey, grabbersKey, roundStateKey, playersKey, roomHashKey]
 // ARGV: [now, keyPrefix, roundID]
