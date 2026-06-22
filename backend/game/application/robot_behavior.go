@@ -159,8 +159,8 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 			"retry_count", retryCount,
 			"error", err,
 		)
-		// Schedule retry for seat and ready actions (transient failures)
-		if action == "seat" || action == "ready" {
+		// Schedule retry for transient failures (seat, ready, grab)
+		if action == "seat" || action == "ready" || action == "grab" {
 			e.scheduleRetry(roomID, robotUserID, action, retryCount)
 		}
 	}
