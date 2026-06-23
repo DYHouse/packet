@@ -23,8 +23,7 @@ import (
 // this interface.
 type RobotBehaviorEngineInterface interface {
 	OnPacketCreated(ctx context.Context, roomID string, roundID string)
-	OnRoundSettle(ctx context.Context, roomID string, minPlayerID int64)
-	OnSessionEnd(ctx context.Context, roomID string)
+	OnRoundSettle(ctx context.Context, roomID string, minPlayerID int64, isGameEnd bool)
 }
 
 type GameEventConsumer struct {
@@ -355,7 +354,7 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 
 	// Trigger robot send behavior
 	if c.robotBehaviorEngine != nil {
-		c.robotBehaviorEngine.OnRoundSettle(ctx, event.RoomID, parseInt64(data.MinPlayerID))
+		c.robotBehaviorEngine.OnRoundSettle(ctx, event.RoomID, parseInt64(data.MinPlayerID), data.IsGameEnd)
 	}
 
 	return nil
@@ -429,11 +428,6 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 		return nil
 	}); err != nil {
 		return err
-	}
-
-	// Trigger robot leave behavior
-	if c.robotBehaviorEngine != nil {
-		c.robotBehaviorEngine.OnSessionEnd(ctx, event.RoomID)
 	}
 
 	return nil

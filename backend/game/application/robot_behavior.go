@@ -11,6 +11,7 @@ import (
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/scheduler"
@@ -169,7 +170,7 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 // handleLeaveAction makes the robot leave the room and returns it to the
 // available pool with idle status. It is idempotent: if the robot is no
 // longer in the room robot set, the action is skipped to avoid duplicate
-// leave processing from both OnGameEnd and OnSessionEnd.
+// leave processing from OnGameEnd.
 func (e *RobotBehaviorEngine) handleLeaveAction(ctx context.Context, roomID string, robotUserID string) error {
 	userID := converter.ParseID(robotUserID)
 
@@ -195,7 +196,13 @@ func (e *RobotBehaviorEngine) handleLeaveAction(ctx context.Context, roomID stri
 	}
 
 	err := e.robotPlayer.LeaveRoom(ctx, roomID, robotUserID)
+
+	// Always clean up room robot set and active set, even if LeaveRoom failed
+	// (e.g. code 14 "not_found" means the robot was already removed from the
+	// room by LuaEndGame, but the robot set wasn't cleaned up yet).
 	if userID != 0 {
+		e.robotSchedulerRedis.RemoveRobotFromRoom(ctx, roomID, userID)
+		e.robotSchedulerRedis.RemoveFromActiveSet(ctx, userID)
 		if markErr := e.accountSvc.MarkRobotIdle(ctx, userID); markErr != nil {
 			logger.Error("failed to mark robot idle after leave",
 				"room_id", roomID,
@@ -203,6 +210,17 @@ func (e *RobotBehaviorEngine) handleLeaveAction(ctx context.Context, roomID stri
 				"error", markErr,
 			)
 		}
+	}
+
+	// Code 14 "not_found" means the robot is already out of the room
+	// (e.g. removed by LuaEndGame). This is expected and not an error
+	// since the cleanup above has already been performed.
+	if err != nil && message.IsErrorCode(err, message.CodeNotInRoom) {
+		logger.Debug("robot already left room, cleanup done",
+			"room_id", roomID,
+			"user_id", userID,
+		)
+		return nil
 	}
 	return err
 }
@@ -233,7 +251,12 @@ func (e *RobotBehaviorEngine) OnPacketCreated(ctx context.Context, roomID string
 
 // OnRoundSettle handles the round settled event by scheduling a send
 // action when the next sender (minPlayerID) is a robot in the room.
-func (e *RobotBehaviorEngine) OnRoundSettle(ctx context.Context, roomID string, minPlayerID int64) {
+// If isGameEnd is true, no send action is scheduled since the game is over.
+func (e *RobotBehaviorEngine) OnRoundSettle(ctx context.Context, roomID string, minPlayerID int64, isGameEnd bool) {
+	if isGameEnd {
+		return
+	}
+
 	robotIDs, err := e.robotSchedulerRedis.GetRoomRobots(ctx, roomID)
 	if err != nil {
 		logger.Error("failed to get room robots for round settle event",
@@ -260,23 +283,16 @@ func (e *RobotBehaviorEngine) OnRoundSettle(ctx context.Context, roomID string, 
 	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 }
 
-// OnSessionEnd handles the session ended event by scheduling leave
-// actions for every robot still in the room.
-func (e *RobotBehaviorEngine) OnSessionEnd(ctx context.Context, roomID string) {
-	robotIDs, err := e.robotSchedulerRedis.GetRoomRobots(ctx, roomID)
-	if err != nil {
-		logger.Error("failed to get room robots for session end event",
+// LeaveRoomNow makes the robot leave the room immediately without going
+// through the timeout scheduler. It is used by OnGameEnd and
+// cleanupEndedRooms where no delay is needed.
+func (e *RobotBehaviorEngine) LeaveRoomNow(ctx context.Context, roomID string, robotUserID string) {
+	if err := e.handleLeaveAction(ctx, roomID, robotUserID); err != nil {
+		logger.Error("robot leave room now failed",
 			"room_id", roomID,
+			"robot_user_id", robotUserID,
 			"error", err,
 		)
-		return
-	}
-
-	for _, robotID := range robotIDs {
-		delay := e.randomDelay(e.config.Behavior.LeaveAfterGameMin, e.config.Behavior.LeaveAfterGameMax)
-		robotUserID := converter.FormatID(robotID)
-		data := fmt.Sprintf("%s:leave:%s:0", robotUserID, uuid.New().String()[:8])
-		e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 	}
 }
 

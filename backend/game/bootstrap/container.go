@@ -251,6 +251,9 @@ func (c *Container) initRobotServices() {
 		c.Redis, c.RobotSchedulerRedis, c.RobotPoolService, c.RobotCfg,
 	)
 
+	// Wire behavior engine to scheduler service (breaks circular dependency)
+	c.RobotSchedulerService.SetBehaviorEngine(c.RobotBehaviorEngine)
+
 	// Set game end callback so the robot scheduler can recycle robots on game end
 	c.GameAppService.SetGameEndCallback(func(ctx context.Context, roomID string) {
 		c.RobotSchedulerService.OnGameEnd(ctx, roomID)

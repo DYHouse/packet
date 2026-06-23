@@ -32,6 +32,7 @@ type roomCandidate struct {
 type RobotSchedulerService struct {
 	accountSvc          *RobotAccountService
 	robotPlayer         *RobotPlayer
+	behaviorEngine      *RobotBehaviorEngine
 	repo                domain.RoomRepository
 	dbRepo              domain.DBRepository
 	redis               *cRedis.Client
@@ -63,6 +64,12 @@ func NewRobotSchedulerService(
 		robotPool:           robotPool,
 		config:              cfg,
 	}
+}
+
+// SetBehaviorEngine injects the behavior engine after construction to
+// break the circular dependency.
+func (s *RobotSchedulerService) SetBehaviorEngine(engine *RobotBehaviorEngine) {
+	s.behaviorEngine = engine
 }
 
 // Start launches the scan loop in a background goroutine. The scan interval
@@ -401,20 +408,22 @@ func (s *RobotSchedulerService) cleanupEndedRooms(ctx context.Context) {
 	}
 }
 
-// recycleRoomRobots schedules a leave action for every robot in the room. The
-// actual cleanup (MarkRobotIdle, RemoveRobotFromRoom, etc.) is performed by
-// the behavior engine's handleLeaveAction handler when the leave action fires.
+// recycleRoomRobots makes every robot leave the room immediately.
+// The cleanup (MarkRobotIdle, RemoveRobotFromRoom, etc.) is performed
+// by the behavior engine's handleLeaveAction handler.
 func (s *RobotSchedulerService) recycleRoomRobots(ctx context.Context, roomID string, robotIDs []int64) {
 	for _, robotID := range robotIDs {
-		delay := s.randomDelay(s.config.Behavior.LeaveAfterGameMin, s.config.Behavior.LeaveAfterGameMax)
 		robotUserID := converter.FormatID(robotID)
-		s.robotPlayer.ScheduleLeave(ctx, roomID, robotUserID, delay)
+		if s.behaviorEngine != nil {
+			s.behaviorEngine.LeaveRoomNow(ctx, roomID, robotUserID)
+		} else {
+			s.robotPlayer.ScheduleLeave(ctx, roomID, robotUserID, 0)
+		}
 	}
 }
 
-// OnGameEnd is called when a game ends. It schedules a delayed leave for
-// every robot still associated with the room. The leave action performs the
-// actual cleanup via the behavior engine.
+// OnGameEnd is called when a game ends. It makes every robot leave the
+// room immediately. The cleanup is performed by the behavior engine.
 func (s *RobotSchedulerService) OnGameEnd(ctx context.Context, roomID string) {
 	robotIDs, err := s.robotSchedulerRedis.GetRoomRobots(ctx, roomID)
 	if err != nil {
@@ -428,14 +437,17 @@ func (s *RobotSchedulerService) OnGameEnd(ctx context.Context, roomID string) {
 		return
 	}
 
-	logger.Info("scheduling robot leave on game end",
+	logger.Info("robots leaving on game end",
 		"room_id", roomID,
 		"robot_count", len(robotIDs),
 	)
 	for _, robotID := range robotIDs {
-		delay := s.randomDelay(s.config.Behavior.LeaveAfterGameMin, s.config.Behavior.LeaveAfterGameMax)
 		robotUserID := converter.FormatID(robotID)
-		s.robotPlayer.ScheduleLeave(ctx, roomID, robotUserID, delay)
+		if s.behaviorEngine != nil {
+			s.behaviorEngine.LeaveRoomNow(ctx, roomID, robotUserID)
+		} else {
+			s.robotPlayer.ScheduleLeave(ctx, roomID, robotUserID, 0)
+		}
 	}
 }
 
