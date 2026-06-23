@@ -19,6 +19,7 @@ type RoomState struct {
 	Players        []*PlayerInfo    `json:"players"`
 	Spectators     []*SpectatorInfo `json:"spectators"`
 	Seats          []*SeatInfo      `json:"seats"`
+	QueueList      []*QueueInfo     `json:"queue_list"`
 }
 
 type PlayerInfo struct {
@@ -46,6 +47,14 @@ type SeatInfo struct {
 	Avatar   string `json:"avatar"`
 	Ready    bool   `json:"ready"`
 	IsRobot  bool   `json:"is_robot"`
+}
+
+type QueueInfo struct {
+	UserID      string `json:"user_id"`
+	Nickname    string `json:"nickname"`
+	Avatar      string `json:"avatar"`
+	QueuePosition int   `json:"queue_position"`
+	QueuedAt    int64  `json:"queued_at"`
 }
 
 func BuildRoomState(meta *domain.RoomMeta) *RoomState {
@@ -155,6 +164,17 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 		seats = append(seats, seat)
 	}
 
+	queueList := make([]*QueueInfo, 0, len(stateData.QueueList))
+	for i, q := range stateData.QueueList {
+		queueList = append(queueList, &QueueInfo{
+			UserID:        q.UserID,
+			Nickname:      q.Nickname,
+			Avatar:        q.Avatar,
+			QueuePosition: i + 1,
+			QueuedAt:      q.QueuedAt,
+		})
+	}
+
 	return &RoomState{
 		RoomID:         stateData.RoomID,
 		RoomNo:         stateData.RoomNo,
@@ -169,5 +189,6 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 		Players:        players,
 		Spectators:     spectators,
 		Seats:          seats,
+		QueueList:      queueList,
 	}
 }

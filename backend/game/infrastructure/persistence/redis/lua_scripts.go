@@ -474,3 +474,258 @@ redis.call('DEL', userRoomKey)
 
 return {1, seatNo, 'success'}
 `
+
+// LuaJoinAndAutoSeat 加入房间并自动上座
+// KEYS: [roomHashKey, spectatorsKey, playersKey, userRoomKey, seatsKey, seatOwnerKey]
+// ARGV: [userID, spectatorData, now, roomIDStr, isRobot]
+// 返回: {code, roomID, roomNo, configID, seatNo}
+// code: 0=成功上座, 1=房间不存在, 4=已在房间, 15=房间满, 3=观战满, 100=仅观战(满座或游戏中或余额不足)
+const LuaJoinAndAutoSeat = `
+local roomHashKey = KEYS[1]
+local spectatorsKey = KEYS[2]
+local playersKey = KEYS[3]
+local userRoomKey = KEYS[4]
+local seatsKey = KEYS[5]
+local seatOwnerKey = KEYS[6]
+
+local userID = ARGV[1]
+local spectatorData = ARGV[2]
+local now = tonumber(ARGV[3])
+local roomIDStr = ARGV[4]
+local isRobot = ARGV[5]
+
+local roomExists = redis.call('EXISTS', roomHashKey)
+if roomExists == 0 then
+	return {1, '', '', 0, 0}
+end
+
+local existingRoom = redis.call('GET', userRoomKey)
+if existingRoom and existingRoom ~= '' and existingRoom ~= '0' then
+	return {4, '', '', 0, 0}
+end
+
+local alreadySpectator = redis.call('HEXISTS', spectatorsKey, userID)
+if alreadySpectator == 1 then
+	return {4, '', '', 0, 0}
+end
+
+local alreadyPlayer = redis.call('HEXISTS', playersKey, userID)
+if alreadyPlayer == 1 then
+	return {4, '', '', 0, 0}
+end
+
+local playerCount = redis.call('HLEN', playersKey)
+local spectatorCount = redis.call('HLEN', spectatorsKey)
+local maxPlayers = tonumber(redis.call('HGET', roomHashKey, 'max_players') or 0)
+local maxSpectators = tonumber(redis.call('HGET', roomHashKey, 'max_spectators') or 100)
+
+local totalInRoom = playerCount + spectatorCount
+local maxTotal = maxPlayers + maxSpectators
+
+if totalInRoom >= maxTotal then
+	return {15, '', '', 0, 0}
+end
+
+if spectatorCount >= maxSpectators then
+	return {3, '', '', 0, 0}
+end
+
+local roomNo = redis.call('HGET', roomHashKey, 'room_no') or ''
+local configID = tonumber(redis.call('HGET', roomHashKey, 'config_id') or 0)
+local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
+
+-- 检查是否有空座位
+local emptySeatNo = 0
+local occupiedSeats = 0
+for i = 1, maxPlayers do
+	local occupied = redis.call('GETBIT', seatsKey, i)
+	if occupied == 1 then
+		occupiedSeats = occupiedSeats + 1
+	end
+end
+
+-- 计算已入座人数(包括观战者中已选座的)
+for i = 1, maxPlayers do
+	local occupied = redis.call('GETBIT', seatsKey, i)
+	if occupied == 0 then
+		emptySeatNo = i
+		break
+	end
+end
+
+-- 条件: 空座 + 房间状态为Waiting + 非机器人(机器人由上层判断余额)
+local canAutoSeat = (emptySeatNo > 0) and (status == 1)
+
+if canAutoSeat then
+	-- 自动上座: 先加入观战者(带seat_no)，然后转为玩家
+	local spectator = cjson.decode(spectatorData)
+	spectator.seat_no = emptySeatNo
+	spectator.seat_selected_at = now
+	if isRobot == '1' or isRobot == 'true' then
+		spectator.is_robot = true
+	else
+		spectator.is_robot = false
+	end
+
+	-- 直接创建为玩家(已准备状态)
+	local player = {
+		user_id = spectator.user_id,
+		nickname = spectator.nickname,
+		avatar = spectator.avatar,
+		seat_no = emptySeatNo,
+		disconnected_at = nil,
+		is_robot = spectator.is_robot or false,
+		ready_at = now
+	}
+
+	redis.call('HSET', playersKey, userID, cjson.encode(player))
+	redis.call('SETBIT', seatsKey, emptySeatNo, 1)
+	redis.call('HSET', seatOwnerKey, tostring(emptySeatNo), userID)
+
+	redis.call('SET', userRoomKey, roomIDStr, 'EX', 86400)
+
+	if status == 0 then
+		redis.call('HSET', roomHashKey, 'status', 1)
+	end
+
+	redis.call('EXPIRE', roomHashKey, 86400)
+	redis.call('EXPIRE', spectatorsKey, 86400)
+	redis.call('EXPIRE', playersKey, 86400)
+	redis.call('EXPIRE', seatsKey, 86400)
+	redis.call('EXPIRE', seatOwnerKey, 86400)
+
+	return {0, roomIDStr, roomNo, configID, emptySeatNo}
+else
+	-- 仅加入观战者
+	redis.call('HSET', spectatorsKey, userID, spectatorData)
+	redis.call('SET', userRoomKey, roomIDStr, 'EX', 86400)
+
+	if status == 0 then
+		redis.call('HSET', roomHashKey, 'status', 1)
+	end
+
+	redis.call('EXPIRE', roomHashKey, 86400)
+	redis.call('EXPIRE', spectatorsKey, 86400)
+	redis.call('EXPIRE', playersKey, 86400)
+
+	return {100, roomIDStr, roomNo, configID, 0}
+end
+`
+
+// LuaEnqueue 将观战者加入排队有序集合
+// KEYS: [queueKey, spectatorsKey]
+// ARGV: [userID, nickname, avatar, now]
+// 返回: {code, position}
+// code: 0=成功, 70=已在队列中, 14=不在房间中
+const LuaEnqueue = `
+local queueKey = KEYS[1]
+local spectatorsKey = KEYS[2]
+
+local userID = ARGV[1]
+local nickname = ARGV[2]
+local avatar = ARGV[3]
+local now = tonumber(ARGV[4])
+
+-- 检查是否在房间中
+local isSpectator = redis.call('HEXISTS', spectatorsKey, userID)
+if isSpectator == 0 then
+	return {14, 0}
+end
+
+-- 检查是否已在队列中
+local score = redis.call('ZSCORE', queueKey, userID)
+if score then
+	return {70, redis.call('ZRANK', queueKey, userID)}
+end
+
+-- 加入队列
+redis.call('ZADD', queueKey, now, userID)
+redis.call('EXPIRE', queueKey, 86400)
+
+local position = redis.call('ZRANK', queueKey, userID)
+return {0, position}
+`
+
+// LuaDequeue 将观战者从排队队列中移除
+// KEYS: [queueKey]
+// ARGV: [userID]
+// 返回: {code}
+// code: 0=成功, 71=不在队列中
+const LuaDequeue = `
+local queueKey = KEYS[1]
+local userID = ARGV[1]
+
+local removed = redis.call('ZREM', queueKey, userID)
+if removed == 0 then
+	return {71}
+end
+
+return {0}
+`
+
+// LuaAutoSubstitute 从队列头部取出排队者，分配指定座位，转为player，从队列移除
+// KEYS: [queueKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey]
+// ARGV: [seatNo, now]
+// 返回: {code, userID, nickname, avatar}
+// code: 0=替补成功, 1=队列为空
+const LuaAutoSubstitute = `
+local queueKey = KEYS[1]
+local playersKey = KEYS[2]
+local spectatorsKey = KEYS[3]
+local seatsKey = KEYS[4]
+local seatOwnerKey = KEYS[5]
+
+local seatNo = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+
+-- 获取队首用户
+local firstMembers = redis.call('ZRANGE', queueKey, 0, 0)
+if #firstMembers == 0 then
+	return {1, '', '', ''}
+end
+
+local userID = firstMembers[1]
+
+-- 检查该用户是否还在观战者列表中
+local spectatorData = redis.call('HGET', spectatorsKey, userID)
+if not spectatorData then
+	-- 用户已不在房间，从队列移除，递归处理下一个
+	redis.call('ZREM', queueKey, userID)
+	return {1, '', '', ''}
+end
+
+local spectator = cjson.decode(spectatorData)
+
+-- 从队列移除
+redis.call('ZREM', queueKey, userID)
+
+-- 从观战者列表移除
+redis.call('HDEL', spectatorsKey, userID)
+
+-- 清理旧座位
+local oldSeatNo = spectator.seat_no or 0
+if oldSeatNo > 0 then
+	redis.call('SETBIT', seatsKey, oldSeatNo, 0)
+	redis.call('HDEL', seatOwnerKey, tostring(oldSeatNo))
+end
+
+-- 创建为玩家
+local player = {
+	user_id = spectator.user_id,
+	nickname = spectator.nickname,
+	avatar = spectator.avatar,
+	seat_no = seatNo,
+	disconnected_at = nil,
+	is_robot = spectator.is_robot or false,
+	ready_at = now
+}
+
+redis.call('HSET', playersKey, userID, cjson.encode(player))
+redis.call('SETBIT', seatsKey, seatNo, 1)
+redis.call('HSET', seatOwnerKey, tostring(seatNo), userID)
+
+redis.call('EXPIRE', seatsKey, 86400)
+redis.call('EXPIRE', seatOwnerKey, 86400)
+
+return {0, userID, spectator.nickname, spectator.avatar}
+`

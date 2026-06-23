@@ -50,6 +50,7 @@ const (
 
 	KeyRoomEventProcessed = keyPrefix + ":room:event:processed:%s"
 	KeyGameEventProcessed = keyPrefix + ":game:event:processed:%s"
+	KeyRoomQueue          = keyPrefix + ":room:queue:%s"
 
 	KeyRewardCycleStraight = keyPrefix + ":reward:cycle:%s:%s:straight"
 	KeyRewardCycleLeopard  = keyPrefix + ":reward:cycle:%s:%s:leopard"
@@ -219,4 +220,8 @@ func ProfitDailyKey(date string) string {
 
 func SessionPlayerTotalsKey(sessionID string) string {
 	return fmt.Sprintf(KeySessionPlayerTotals, sessionID)
+}
+
+func RoomQueueKey(roomID string) string {
+	return fmt.Sprintf(KeyRoomQueue, roomID)
 }

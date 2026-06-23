@@ -150,3 +150,17 @@ type GameInterruptedPush struct {
 	PenaltyShare currency.Money `json:"penalty_share"`
 	Recipients   []string       `json:"recipients"`
 }
+
+// SubstitutePush 替补成功推送
+type SubstitutePush struct {
+	RoomID   string `json:"room_id"`
+	SeatNo   int    `json:"seat_no"`
+	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar"`
+}
+
+// ErrorPush 错误推送
+type ErrorPush struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}

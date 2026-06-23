@@ -139,7 +139,7 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 		return nil, message.NewError(message.CodeGameInProgress)
 	}
 
-	err = s.repo.CancelSeat(ctx, req.RoomID, req.UserID)
+	seatNo, err := s.repo.CancelSeat(ctx, req.RoomID, req.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,12 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, 0, nickname))
+		s.publisher.Publish(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, seatNo, nickname))
+	}
+
+	// 触发排队替补逻辑
+	if seatNo > 0 {
+		s.triggerAutoSubstitute(ctx, req.RoomID, seatNo)
 	}
 
 	var roomState *RoomState
@@ -170,11 +175,81 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 	logger.Info("seat cancelled",
 		"room_id", req.RoomID,
 		"user_id", req.UserID,
+		"seat_no", seatNo,
 	)
 
 	return &CancelSeatResult{
 		RoomState: roomState,
 	}, nil
+}
+
+// triggerAutoSubstitute 触发排队替补逻辑
+func (s *SeatAppService) triggerAutoSubstitute(ctx context.Context, roomID string, seatNo int) {
+	for {
+		subResult, err := s.repo.AutoSubstitute(ctx, roomID, seatNo)
+		if err != nil {
+			logger.Error("auto substitute failed", "room_id", roomID, "seat_no", seatNo, "error", err)
+			return
+		}
+		if !subResult.Success {
+			// 队列为空，无需替补
+			return
+		}
+
+		// 替补成功后检查余额
+		if s.balanceService != nil {
+			meta, metaErr := s.repo.GetRoomMeta(ctx, roomID)
+			if metaErr == nil && meta != nil {
+				userIDInt := converter.ParseID(subResult.UserID)
+				balanceResult, balanceErr := s.balanceService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
+					UserID:     userIDInt,
+					RoomFee:    meta.RoomFee,
+					MaxPlayers: meta.MaxPlayers,
+					MaxRounds:  meta.MaxRounds,
+				})
+				if balanceErr != nil || !balanceResult.IsSufficient {
+					// 余额不足，撤销替补，通知用户，继续下一位
+					logger.Warn("substitute user insufficient balance, skipping",
+						"room_id", roomID,
+						"user_id", subResult.UserID,
+					)
+					// 撤销替补：取消座位
+					s.repo.CancelSeat(ctx, roomID, subResult.UserID)
+					// 通知用户余额不足
+					if s.broadcaster != nil {
+						s.broadcaster.BroadcastToUser(subResult.UserID, message.PushError, &message.ErrorPush{
+							Code: message.CodeInsufficientBalance,
+							Msg:  message.GetErrorMsg(message.CodeInsufficientBalance),
+						})
+					}
+					// 继续替补下一位
+					continue
+				}
+			}
+		}
+
+		// 替补成功，发布替补事件
+		if s.publisher != nil {
+			s.publisher.Publish(ctx, domain.NewSubstituteEvent(roomID, subResult.UserID, seatNo, subResult.Nickname, subResult.Avatar))
+		}
+
+		// 推送替补事件给替补者
+		if s.broadcaster != nil {
+			s.broadcaster.BroadcastToUser(subResult.UserID, message.PushSubstitute, &message.SubstitutePush{
+				RoomID:   roomID,
+				SeatNo:   seatNo,
+				Nickname: subResult.Nickname,
+				Avatar:   subResult.Avatar,
+			})
+		}
+
+		logger.Info("auto substitute success",
+			"room_id", roomID,
+			"seat_no", seatNo,
+			"user_id", subResult.UserID,
+		)
+		return
+	}
 }
 
 type SetReadyRequest struct {

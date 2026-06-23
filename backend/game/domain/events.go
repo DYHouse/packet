@@ -21,6 +21,9 @@ const (
 	RoomEventSpectatorKick
 	RoomEventPlayerDisconnect
 	RoomEventPlayerReconnect
+	RoomEventEnqueue
+	RoomEventDequeue
+	RoomEventSubstitute
 )
 
 type RoomEvent struct {
@@ -74,6 +77,19 @@ type PlayerDisconnectPayload struct {
 
 type PlayerReconnectPayload struct {
 	SeatNo int `json:"seat_no"`
+}
+
+type EnqueuePayload struct {
+	Position int64 `json:"position"`
+}
+
+type DequeuePayload struct {
+}
+
+type SubstitutePayload struct {
+	SeatNo   int    `json:"seat_no"`
+	Nickname string `json:"nickname,omitempty"`
+	Avatar   string `json:"avatar,omitempty"`
 }
 
 type GameEventType string
@@ -307,6 +323,45 @@ func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
 		UserID:    userID,
 		Payload: PlayerReconnectPayload{
 			SeatNo: seatNo,
+		},
+		OccurredAt: time.Now(),
+	}
+}
+
+func NewEnqueueEvent(roomID, userID string, position int64) *RoomEvent {
+	return &RoomEvent{
+		EventID:   generateEventID(),
+		EventType: RoomEventEnqueue,
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload: EnqueuePayload{
+			Position: position,
+		},
+		OccurredAt: time.Now(),
+	}
+}
+
+func NewDequeueEvent(roomID, userID string) *RoomEvent {
+	return &RoomEvent{
+		EventID:   generateEventID(),
+		EventType: RoomEventDequeue,
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload:   DequeuePayload{},
+		OccurredAt: time.Now(),
+	}
+}
+
+func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
+	return &RoomEvent{
+		EventID:   generateEventID(),
+		EventType: RoomEventSubstitute,
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload: SubstitutePayload{
+			SeatNo:   seatNo,
+			Nickname: nickname,
+			Avatar:   avatar,
 		},
 		OccurredAt: time.Now(),
 	}

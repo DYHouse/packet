@@ -42,6 +42,16 @@ func parseInt(val interface{}) int {
 	return 0
 }
 
+func parseInt64(val interface{}) int64 {
+	switch v := val.(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
 func (r *RoomRepository) GetRoomMeta(ctx context.Context, roomID string) (*domain.RoomMeta, error) {
 	key := RoomHashKey(roomID)
 	data, err := r.client.HGetAll(ctx, key).Result()
@@ -195,7 +205,7 @@ func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, 
 	return nil
 }
 
-func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) error {
+func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) (int, error) {
 	keys := []string{
 		RoomHashKey(roomID),
 		RoomPlayersKey(roomID),
@@ -209,14 +219,16 @@ func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) 
 
 	result, err := r.client.Eval(ctx, LuaCancelSeat, keys, args...).Slice()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	code := parseLuaCode(result[0])
 	if code != domain.LuaSuccess {
-		return domain.MapLuaError(code)
+		return 0, domain.MapLuaError(code)
 	}
-	return nil
+
+	seatNo := parseInt(result[3])
+	return seatNo, nil
 }
 
 func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spectator *domain.Spectator) (*domain.JoinResult, error) {
@@ -259,7 +271,53 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 	}, nil
 }
 
-func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) error {
+func (r *RoomRepository) JoinAndAutoSeat(ctx context.Context, roomID string, spectator *domain.Spectator, isRobot bool) (*domain.JoinAndAutoSeatResult, error) {
+	spectatorData, err := json.Marshal(spectator)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomPlayersKey(roomID),
+		PlayerRoomKey(spectator.UserID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+	}
+	args := []interface{}{
+		spectator.UserID,
+		string(spectatorData),
+		fmt.Sprintf("%d", time.Now().Unix()),
+		roomID,
+		isRobot,
+	}
+
+	result, err := r.client.Eval(ctx, LuaJoinAndAutoSeat, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess && code != domain.LuaCodeSpectatorOnly {
+		return nil, domain.MapLuaError(code)
+	}
+
+	resultRoomID := result[1].(string)
+	roomNo := result[2].(string)
+	configID := parseInt64(result[3])
+	seatNo := parseInt(result[4])
+
+	return &domain.JoinAndAutoSeatResult{
+		RoomID:      resultRoomID,
+		RoomNo:      roomNo,
+		ConfigID:    configID,
+		SeatNo:      seatNo,
+		IsSpectator: code == domain.LuaCodeSpectatorOnly,
+	}, nil
+}
+
+func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) (*domain.LeaveRoomResult, error) {
 	keys := []string{
 		RoomHashKey(roomID),
 		RoomPlayersKey(roomID),
@@ -276,24 +334,29 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 	result, err := r.client.Eval(ctx, LuaLeaveRoom, keys, args...).Slice()
 	if err != nil {
 		logger.Error("LuaLeaveRoom execution failed", "room_id", roomID, "user_id", userID, "error", err)
-		return err
+		return nil, err
 	}
 
 	code := parseLuaCode(result[0])
 	if code != domain.LuaSuccess {
 		logger.Error("LuaLeaveRoom returned error code", "room_id", roomID, "user_id", userID, "code", code)
-		return domain.MapLuaError(code)
+		return nil, domain.MapLuaError(code)
 	}
 
+	seatNo := 0
 	if len(result) >= 3 {
-		logger.Info("LeaveRoom success", "room_id", roomID, "user_id", userID, "type", result[1], "seat_no", result[2])
+		seatNo = parseInt(result[2])
+		logger.Info("LeaveRoom success", "room_id", roomID, "user_id", userID, "type", result[1], "seat_no", seatNo)
 	}
 
-	return nil
+	return &domain.LeaveRoomResult{
+		SeatNo: seatNo,
+	}, nil
 }
 
 func (r *RoomRepository) KickPlayer(ctx context.Context, roomID, userID string, reason string) error {
-	return r.LeaveRoom(ctx, roomID, userID)
+	_, err := r.LeaveRoom(ctx, roomID, userID)
+	return err
 }
 
 func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*domain.KickPlayerResult, error) {
@@ -497,6 +560,12 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 		seatOwners[seatNo] = userID
 	}
 
+	// 获取排队列表
+	queueList, _ := r.GetQueueList(ctx, roomID)
+	if queueList == nil {
+		queueList = make([]*domain.Queuer, 0)
+	}
+
 	return &domain.RoomStateData{
 		RoomID:         meta.RoomID,
 		RoomNo:         meta.RoomNo,
@@ -513,6 +582,7 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 		Spectators:     spectators,
 		SeatOwners:     seatOwners,
 		Meta:           meta,
+		QueueList:      queueList,
 	}, nil
 }
 
@@ -608,4 +678,134 @@ func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string
 	}
 
 	return result, nil
+}
+
+func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID, nickname, avatar string) (*domain.EnqueueResult, error) {
+	keys := []string{
+		RoomQueueKey(roomID),
+		RoomSpectatorsKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+		nickname,
+		avatar,
+		fmt.Sprintf("%d", time.Now().UnixMilli()),
+	}
+
+	result, err := r.client.Eval(ctx, LuaEnqueue, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return nil, domain.MapLuaError(code)
+	}
+
+	position := parseInt64(result[1])
+
+	return &domain.EnqueueResult{
+		Position: position,
+	}, nil
+}
+
+func (r *RoomRepository) Dequeue(ctx context.Context, roomID, userID string) error {
+	keys := []string{
+		RoomQueueKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+	}
+
+	result, err := r.client.Eval(ctx, LuaDequeue, keys, args...).Slice()
+	if err != nil {
+		return err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return domain.MapLuaError(code)
+	}
+
+	return nil
+}
+
+func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seatNo int) (*domain.AutoSubstituteResult, error) {
+	keys := []string{
+		RoomQueueKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+	}
+	args := []interface{}{
+		seatNo,
+		fmt.Sprintf("%d", time.Now().Unix()),
+	}
+
+	result, err := r.client.Eval(ctx, LuaAutoSubstitute, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != 0 {
+		// 队列为空，返回空结果
+		return &domain.AutoSubstituteResult{Success: false}, nil
+	}
+
+	userID := result[1].(string)
+	nickname := result[2].(string)
+	avatar := result[3].(string)
+
+	return &domain.AutoSubstituteResult{
+		UserID:   userID,
+		Nickname: nickname,
+		Avatar:   avatar,
+		SeatNo:   seatNo,
+		Success:  true,
+	}, nil
+}
+
+func (r *RoomRepository) RemoveFromQueue(ctx context.Context, roomID, userID string) error {
+	queueKey := RoomQueueKey(roomID)
+	return r.client.ZRem(ctx, queueKey, userID).Err()
+}
+
+func (r *RoomRepository) GetQueueList(ctx context.Context, roomID string) ([]*domain.Queuer, error) {
+	queueKey := RoomQueueKey(roomID)
+	spectatorsKey := RoomSpectatorsKey(roomID)
+
+	// 获取队列中所有用户ID及其分数(入队时间)
+	members, err := r.client.Raw().ZRangeWithScores(ctx, queueKey, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	queuers := make([]*domain.Queuer, 0, len(members))
+	for _, member := range members {
+		userID, ok := member.Member.(string)
+		if !ok {
+			continue
+		}
+
+		queuer := &domain.Queuer{
+			UserID:   userID,
+			QueuedAt: int64(member.Score),
+		}
+
+		// 从观战者列表获取昵称和头像
+		spectatorData, err := r.client.HGet(ctx, spectatorsKey, userID).Result()
+		if err == nil {
+			var spectator domain.Spectator
+			if json.Unmarshal([]byte(spectatorData), &spectator) == nil {
+				queuer.Nickname = spectator.Nickname
+				queuer.Avatar = spectator.Avatar
+			}
+		}
+
+		queuers = append(queuers, queuer)
+	}
+
+	return queuers, nil
 }

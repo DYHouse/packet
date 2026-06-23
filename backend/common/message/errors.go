@@ -83,6 +83,8 @@ const (
 	CodeReconnectExpired     = 3030
 	CodeGameResumed          = 3031
 	CodePlayerAlreadySent    = 3032
+	CodeAlreadyInQueue      = 3033
+	CodeNotInQueue          = 3034
 )
 
 // ==================== Códigos de error del sistema (5000-5999) ====================
@@ -193,6 +195,8 @@ var codeMessages = map[int]string{
 	CodeNotAllPlayersReady:   "No todos los jugadores están listos",
 	CodeGameResumed:          "Juego reanudado, el sistema envía sobre rojo",
 	CodePlayerAlreadySent:    "El jugador ya envió un sobre rojo, no se puede expulsar",
+	CodeAlreadyInQueue:      "Ya está en la cola de espera",
+	CodeNotInQueue:          "No está en la cola de espera",
 	CodeRedisError:           "Operación Redis fallida",
 	CodeMySQLError:           "Operación de base de datos fallida",
 	CodeKafkaError:           "Error de cola de mensajes",

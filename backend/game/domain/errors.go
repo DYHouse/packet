@@ -60,6 +60,10 @@ func MapLuaError(code int) *message.Error {
 		return message.NewError(message.CodeNotYourTurn)
 	case LuaErrNoPlayers:
 		return message.NewError(message.CodeNoPlayers)
+	case LuaErrAlreadyInQueue:
+		return message.NewError(message.CodeAlreadyInQueue)
+	case LuaErrNotInQueue:
+		return message.NewError(message.CodeNotInQueue)
 	default:
 		return message.NewError(message.CodeSystemError)
 	}

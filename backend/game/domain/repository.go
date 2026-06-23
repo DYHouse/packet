@@ -18,10 +18,11 @@ type RoomRepository interface {
 	GetSpectator(ctx context.Context, roomID, userID string) (*Spectator, error)
 
 	SelectSeat(ctx context.Context, roomID, userID string, seatNo int, isRobot bool) error
-	CancelSeat(ctx context.Context, roomID, userID string) error
+	CancelSeat(ctx context.Context, roomID, userID string) (int, error)
 
 	JoinAsSpectator(ctx context.Context, roomID string, spectator *Spectator) (*JoinResult, error)
-	LeaveRoom(ctx context.Context, roomID, userID string) error
+	JoinAndAutoSeat(ctx context.Context, roomID string, spectator *Spectator, isRobot bool) (*JoinAndAutoSeatResult, error)
+	LeaveRoom(ctx context.Context, roomID, userID string) (*LeaveRoomResult, error)
 	KickPlayer(ctx context.Context, roomID, userID string, reason string) error
 	KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*KickPlayerResult, error)
 
@@ -29,6 +30,12 @@ type RoomRepository interface {
 
 	GetRoomStateData(ctx context.Context, roomID string) (*RoomStateData, error)
 	GetRoomSeatsBatch(ctx context.Context, roomIDs []string) (map[string]*RoomStateData, error)
+
+	Enqueue(ctx context.Context, roomID, userID, nickname, avatar string) (*EnqueueResult, error)
+	Dequeue(ctx context.Context, roomID, userID string) error
+	AutoSubstitute(ctx context.Context, roomID string, seatNo int) (*AutoSubstituteResult, error)
+	RemoveFromQueue(ctx context.Context, roomID, userID string) error
+	GetQueueList(ctx context.Context, roomID string) ([]*Queuer, error)
 }
 
 type RoomStateData struct {
@@ -47,6 +54,7 @@ type RoomStateData struct {
 	Spectators     map[string]*Spectator
 	SeatOwners     map[int]string
 	Meta           *RoomMeta
+	QueueList      []*Queuer
 }
 
 type EventPublisher interface {
@@ -67,4 +75,28 @@ type JoinResult struct {
 type KickPlayerResult struct {
 	SeatNo     int
 	RoomStatus int
+}
+
+type JoinAndAutoSeatResult struct {
+	RoomID      string
+	RoomNo      string
+	ConfigID    int64
+	SeatNo      int
+	IsSpectator bool
+}
+
+type EnqueueResult struct {
+	Position int64
+}
+
+type AutoSubstituteResult struct {
+	UserID    string
+	Nickname  string
+	Avatar    string
+	SeatNo    int
+	Success   bool
+}
+
+type LeaveRoomResult struct {
+	SeatNo int
 }

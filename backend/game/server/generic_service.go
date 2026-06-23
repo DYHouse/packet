@@ -95,6 +95,10 @@ func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.Forwar
 		resp, err = s.handleReconnect(ctx, req)
 	case message.CmdGetUserBalance:
 		resp, err = s.handleGetUserBalance(ctx, req)
+	case message.CmdEnqueue:
+		resp, err = s.handleEnqueue(ctx, req)
+	case message.CmdDequeue:
+		resp, err = s.handleDequeue(ctx, req)
 	default:
 		resp = &commonPb.ForwardResponse{
 			Cmd:       req.Cmd,
@@ -144,6 +148,7 @@ func (s *GenericServiceServer) handleJoinRoom(ctx context.Context, req *commonPb
 		"room_no":      result.RoomNo,
 		"room_state":   result.RoomState,
 		"is_spectator": result.IsSpectator,
+		"seat_no":      result.SeatNo,
 	}), nil
 }
 
@@ -160,6 +165,7 @@ func (s *GenericServiceServer) handleAutoMatch(ctx context.Context, req *commonP
 		"room_no":      result.RoomNo,
 		"room_state":   result.RoomState,
 		"is_spectator": result.IsSpectator,
+		"seat_no":      result.SeatNo,
 	}), nil
 }
 
@@ -446,6 +452,46 @@ func (s *GenericServiceServer) handleGetUserBalance(ctx context.Context, req *co
 		"balance":        currency.NewMoneyFromFen(balance),
 		"pending_credit": currency.NewMoneyFromFen(pendingCredit),
 	}), nil
+}
+
+func (s *GenericServiceServer) handleEnqueue(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	var data struct {
+		RoomID string `json:"room_id"`
+	}
+	if len(req.Data) > 0 {
+		json.Unmarshal(req.Data, &data)
+	}
+
+	result, err := s.roomAppSvc.Enqueue(ctx, &application.EnqueueRequest{
+		RoomID: data.RoomID,
+		UserID: req.UserId,
+	})
+	if err != nil {
+		return s.handleError(req, err), nil
+	}
+
+	return s.successResponse(req, map[string]interface{}{
+		"position": result.Position,
+	}), nil
+}
+
+func (s *GenericServiceServer) handleDequeue(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	var data struct {
+		RoomID string `json:"room_id"`
+	}
+	if len(req.Data) > 0 {
+		json.Unmarshal(req.Data, &data)
+	}
+
+	_, err := s.roomAppSvc.Dequeue(ctx, &application.DequeueRequest{
+		RoomID: data.RoomID,
+		UserID: req.UserId,
+	})
+	if err != nil {
+		return s.handleError(req, err), nil
+	}
+
+	return s.successResponse(req, nil), nil
 }
 
 func (s *GenericServiceServer) parseUserID(userIDStr string) (int64, error) {

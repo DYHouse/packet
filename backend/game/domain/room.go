@@ -51,3 +51,10 @@ func (p *Player) IsOnline() bool {
 func (p *Player) CanGrab() bool {
 	return p.IsOnline()
 }
+
+type Queuer struct {
+	UserID   string `json:"user_id"`
+	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar"`
+	QueuedAt int64  `json:"queued_at"`
+}

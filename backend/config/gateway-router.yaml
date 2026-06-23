@@ -40,3 +40,9 @@ routes:
 
   - cmd_prefix: "get_user_balance"
     service: "game-service"
+
+  - cmd_prefix: "enqueue"
+    service: "game-service"
+
+  - cmd_prefix: "dequeue"
+    service: "game-service"

@@ -65,11 +65,12 @@ func (p *RobotPlayer) SetBehaviorEngine(engine RobotActionScheduler) {
 	p.behaviorEngine = engine
 }
 
-// JoinAndReady makes the robot join the room as a spectator and schedules a
-// delayed seat selection. The ready action is chained after the seat is
-// selected via SelectSeat.
+// JoinAndReady makes the robot join the room. If auto-seat is successful
+// (IsSpectator=false), the robot is already seated and ready — no further
+// seat/ready scheduling is needed. If the room is full (IsSpectator=true),
+// it returns ErrNoEmptySeat.
 func (p *RobotPlayer) JoinAndReady(ctx context.Context, roomID string, robotUserID string) error {
-	_, err := p.roomAppService.JoinRoom(ctx, &JoinRoomRequest{
+	result, err := p.roomAppService.JoinRoom(ctx, &JoinRoomRequest{
 		RoomID: roomID,
 		UserID: robotUserID,
 	})
@@ -77,17 +78,18 @@ func (p *RobotPlayer) JoinAndReady(ctx context.Context, roomID string, robotUser
 		return err
 	}
 
-	roomState, err := p.repo.GetRoomStateData(ctx, roomID)
-	if err != nil {
-		return err
-	}
-	if !p.hasEmptySeat(roomState) {
-		return ErrNoEmptySeat
+	// 自动上座成功，机器人已入座并准备
+	if !result.IsSpectator {
+		logger.Info("robot auto seated and ready",
+			"room_id", roomID,
+			"robot_user_id", robotUserID,
+			"seat_no", result.SeatNo,
+		)
+		return nil
 	}
 
-	delay := p.randomDelay(p.config.Behavior.SeatDelayMin, p.config.Behavior.SeatDelayMax)
-	p.behaviorEngine.ScheduleAction(roomID, robotUserID, "seat", delay)
-	return nil
+	// 满座，返回错误
+	return ErrNoEmptySeat
 }
 
 // SelectSeat picks a random empty seat and schedules a delayed ready action.

@@ -44,4 +44,11 @@ const (
 
 	// 权限错误 (60-69)
 	LuaErrNotPlayer = 60
+
+	// 排队相关错误 (70-79)
+	LuaErrAlreadyInQueue = 70
+	LuaErrNotInQueue     = 71
+
+	// 特殊返回码
+	LuaCodeSpectatorOnly = 100 // 仅成为观战者(非错误)
 )
