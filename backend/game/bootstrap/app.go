@@ -202,6 +202,7 @@ func (a *Application) Start(ctx context.Context) error {
 		a.Container.GrabService,
 		a.Container.UserService,
 		a.Container.BalanceService,
+		a.Container.HistoryService,
 		a.Container.Redis,
 		nil,
 		a.Container.Broadcaster.Broadcast,

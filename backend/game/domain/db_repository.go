@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/cashparty/backend/game/model"
 )
@@ -66,12 +67,58 @@ type PlayerStatsUpdate struct {
 	GrabCount   int
 }
 
+// PlayerSessionRow 是 session_players + game_sessions 关联查询的行
+type PlayerSessionRow struct {
+	// session_players 字段
+	SessionID int64
+	Nickname  string
+	Avatar    string
+	SeatNo    int
+	SendCount int
+	GrabCount int
+	TotalSend int64 // 分
+	TotalGrab int64 // 分
+	JoinedAt  time.Time
+	LeftAt    *time.Time
+	// game_sessions 字段
+	RoomNo       string
+	ConfigName   string
+	RoomFee      int64 // 分
+	MaxRounds    int
+	ActualRounds int
+	Status       int
+	StartedAt    *time.Time
+	EndedAt      *time.Time
+	EndReason    string
+}
+
+// PlayerStatsAggregate 玩家累计统计聚合
+type PlayerStatsAggregate struct {
+	TotalGames     int64
+	WinCount       int64
+	TotalSend      int64 // 分
+	TotalGrab      int64 // 分
+	TotalSendCount int64
+	TotalGrabCount int64
+}
+
+// HistoryDBRepository 玩家历史记录查询仓储
+type HistoryDBRepository interface {
+	ListPlayerSessions(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]PlayerSessionRow, int64, error)
+	GetSessionRounds(sessionID int64) ([]model.Round, error)
+	ListPlayerGrabRecords(sessionID, userID int64) ([]model.RoundGrabRecord, error)
+	AggregatePlayerStats(userID int64) (*PlayerStatsAggregate, error)
+	GetPlayerSession(userID, sessionID int64) (*model.SessionPlayer, error)
+	GetSession(sessionID int64) (*model.GameSession, error)
+}
+
 type DBRepository interface {
 	RoomDBRepo() RoomDBRepository
 	SessionDBRepo() SessionDBRepository
 	UserDBRepo() UserDBRepository
 	RoomConfigDBRepo() RoomConfigDBRepository
 	RoundDBRepo() RoundDBRepository
+	HistoryDBRepo() HistoryDBRepository
 	WithTransaction(ctx context.Context, fn func(tx Transaction) error) error
 }
 

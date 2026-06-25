@@ -45,6 +45,7 @@ type Container struct {
 	DeductSvc                *settlementService.DeductService
 	RefundSvc                *settlementService.RefundService
 	BalanceService           *settlementService.BalanceService
+	HistoryService           *application.HistoryService
 	PacketGenerator          *algorithm.PacketGenerator
 	CreditRetryScheduler     *settlementScheduler.CreditRetryScheduler
 	RefundProcessScheduler   *settlementScheduler.RefundProcessScheduler
@@ -154,6 +155,8 @@ func (c *Container) InitAppServices() {
 	c.UserService = application.NewUserService(c.DBRepo, c.Redis, c.AvatarCfg)
 
 	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert)
+
+	c.HistoryService = application.NewHistoryService(c.DBRepo, c.billMgr)
 
 	c.RoomAppService = application.NewRoomAppService(
 		c.RoomRepo,

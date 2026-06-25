@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/cashparty/backend/common/currency"
@@ -29,6 +30,7 @@ type GenericServiceServer struct {
 	grabSvc     *application.GrabService
 	userSvc     *application.UserService
 	balanceSvc  *settlementService.BalanceService
+	historySvc  *application.HistoryService
 	redis       *cRedis.Client
 	userLimiter *limiter.UserLimiter
 	broadcastFn BroadcastFunc
@@ -41,6 +43,7 @@ func NewGenericServiceServer(
 	grabSvc *application.GrabService,
 	userSvc *application.UserService,
 	balanceSvc *settlementService.BalanceService,
+	historySvc *application.HistoryService,
 	redis *cRedis.Client,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
@@ -52,6 +55,7 @@ func NewGenericServiceServer(
 		grabSvc:     grabSvc,
 		userSvc:     userSvc,
 		balanceSvc:  balanceSvc,
+		historySvc:  historySvc,
 		redis:       redis,
 		userLimiter: userLimiter,
 		broadcastFn: broadcastFn,
@@ -99,6 +103,12 @@ func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.Forwar
 		resp, err = s.handleEnqueue(ctx, req)
 	case message.CmdDequeue:
 		resp, err = s.handleDequeue(ctx, req)
+	case message.CmdGetPlayerHistory:
+		resp, err = s.handleGetPlayerHistory(ctx, req)
+	case message.CmdGetPlayerSessionDetail:
+		resp, err = s.handleGetPlayerSessionDetail(ctx, req)
+	case message.CmdGetPlayerStats:
+		resp, err = s.handleGetPlayerStats(ctx, req)
 	default:
 		resp = &commonPb.ForwardResponse{
 			Cmd:       req.Cmd,
@@ -499,6 +509,76 @@ func (s *GenericServiceServer) handleDequeue(ctx context.Context, req *commonPb.
 	}), nil
 }
 
+func (s *GenericServiceServer) handleGetPlayerHistory(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	userID, err := s.parseUserID(req.UserId)
+	if err != nil {
+		return s.errorResponse(req, message.CodeInvalidParams, "invalid user_id"), nil
+	}
+
+	var historyReq application.PlayerHistoryReq
+	if len(req.Data) > 0 {
+		if err := json.Unmarshal(req.Data, &historyReq); err != nil {
+			return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+		}
+	}
+
+	if historyReq.Page < 1 {
+		historyReq.Page = 1
+	}
+	if historyReq.PageSize < 1 || historyReq.PageSize > 50 {
+		return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+	}
+
+	resp, err := s.historySvc.GetPlayerHistory(ctx, userID, historyReq)
+	if err != nil {
+		return s.handleError(req, err), nil
+	}
+
+	return s.successResponse(req, resp), nil
+}
+
+func (s *GenericServiceServer) handleGetPlayerSessionDetail(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	userID, err := s.parseUserID(req.UserId)
+	if err != nil {
+		return s.errorResponse(req, message.CodeInvalidParams, "invalid user_id"), nil
+	}
+
+	var data struct {
+		SessionID string `json:"session_id"`
+	}
+	if len(req.Data) > 0 {
+		if err := json.Unmarshal(req.Data, &data); err != nil {
+			return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+		}
+	}
+
+	sessionID, err := strconv.ParseInt(data.SessionID, 10, 64)
+	if err != nil || sessionID <= 0 {
+		return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+	}
+
+	resp, err := s.historySvc.GetPlayerSessionDetail(ctx, userID, sessionID)
+	if err != nil {
+		return s.handleError(req, err), nil
+	}
+
+	return s.successResponse(req, resp), nil
+}
+
+func (s *GenericServiceServer) handleGetPlayerStats(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	userID, err := s.parseUserID(req.UserId)
+	if err != nil {
+		return s.errorResponse(req, message.CodeInvalidParams, "invalid user_id"), nil
+	}
+
+	resp, err := s.historySvc.GetPlayerStats(ctx, userID)
+	if err != nil {
+		return s.handleError(req, err), nil
+	}
+
+	return s.successResponse(req, resp), nil
+}
+
 func (s *GenericServiceServer) parseUserID(userIDStr string) (int64, error) {
 	var userID int64
 	_, err := fmt.Sscanf(userIDStr, "%d", &userID)
@@ -575,6 +655,7 @@ func NewGRPCServer(
 	grabSvc *application.GrabService,
 	userSvc *application.UserService,
 	balanceSvc *settlementService.BalanceService,
+	historySvc *application.HistoryService,
 	redis *cRedis.Client,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
@@ -598,6 +679,7 @@ func NewGRPCServer(
 		grabSvc,
 		userSvc,
 		balanceSvc,
+		historySvc,
 		redis,
 		userLimiter,
 		broadcastFn,

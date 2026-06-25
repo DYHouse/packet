@@ -100,6 +100,14 @@ const (
 	CodeLockFailed       = 5005
 )
 
+// ==================== Códigos de error de historial de jugador (6000-6999) ====================
+const (
+	CodeHistoryQueryFailed  = 6001 // 历史查询失败
+	CodeSessionNotFound     = 6002 // 会话不存在
+	CodePlayerNotInSession  = 6003 // 玩家不在该会话中
+	CodeHistoryParamInvalid = 6004 // 参数校验失败
+)
+
 // ==================== Razones de expulsión ====================
 const (
 	ReasonSeatTimeout       = "seat_timeout"

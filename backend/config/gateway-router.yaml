@@ -46,3 +46,12 @@ routes:
 
   - cmd_prefix: "dequeue"
     service: "game-service"
+
+  - cmd_prefix: "get_player_history"
+    service: "game-service"
+
+  - cmd_prefix: "get_player_session_detail"
+    service: "game-service"
+
+  - cmd_prefix: "get_player_stats"
+    service: "game-service"

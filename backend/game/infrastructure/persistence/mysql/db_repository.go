@@ -14,6 +14,7 @@ type DBRepositoryImpl struct {
 	userRepo       domain.UserDBRepository
 	roomConfigRepo domain.RoomConfigDBRepository
 	roundRepo      domain.RoundDBRepository
+	historyRepo    domain.HistoryDBRepository
 }
 
 func NewDBRepository(db *gorm.DB) domain.DBRepository {
@@ -53,6 +54,13 @@ func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository {
 		r.roundRepo = NewGormRoundRepository(r.db)
 	}
 	return r.roundRepo
+}
+
+func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository {
+	if r.historyRepo == nil {
+		r.historyRepo = NewGormHistoryRepository(r.db)
+	}
+	return r.historyRepo
 }
 
 func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx domain.Transaction) error) error {
