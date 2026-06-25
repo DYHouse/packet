@@ -51,3 +51,4 @@ protoc.zip
 *.out
 go.work
 data/
+bin/
