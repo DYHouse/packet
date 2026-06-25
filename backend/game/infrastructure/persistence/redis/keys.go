@@ -18,6 +18,7 @@ const (
 	KeyReconcileLock     = keyPrefix + ":lock:reconcile:rooms"
 	KeyRoomSeats         = keyPrefix + ":room:seats:%s"
 	KeyRoomSeatOwner     = keyPrefix + ":room:seat:owner:%s"
+	KeyRoomQueue         = keyPrefix + ":room:queue:%s"
 	KeySeatTimeout       = keyPrefix + ":room:seat:timeout"
 	KeyReadyTimeout      = keyPrefix + ":room:ready:timeout"
 	KeyDisconnectTimeout = keyPrefix + ":room:disconnect:timeout"
@@ -95,6 +96,10 @@ func RoomSeatsKey(roomID string) string {
 
 func RoomSeatOwnerKey(roomID string) string {
 	return fmt.Sprintf(KeyRoomSeatOwner, roomID)
+}
+
+func RoomQueueKey(roomID string) string {
+	return fmt.Sprintf(KeyRoomQueue, roomID)
 }
 
 func SeatTimeoutKey() string {

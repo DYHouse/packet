@@ -17,6 +17,8 @@ const (
 	CmdReconnect       = "reconnect"
 	CmdDisconnect      = "disconnect"
 	CmdGetUserBalance  = "get_user_balance"
+	CmdEnqueue         = "enqueue"
+	CmdDequeue         = "dequeue"
 )
 
 // ==================== 推送类型 ====================
@@ -44,10 +46,12 @@ const (
 	PushPenalty         = "penalty"
 	PushWaitReplacement = "wait_replacement"
 	PushGameInterrupted = "game_interrupted"
+	PushSubstitute      = "substitute"
 
 	PushKicked           = "kicked"
 	PushReconnectSuccess = "reconnect_success"
 	PushError            = "error"
+	PushDequeued         = "dequeued"
 )
 
 // ==================== 房间状态常量 ====================

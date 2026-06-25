@@ -3,12 +3,15 @@ package application
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/scheduler"
+	"github.com/cashparty/backend/settlement/dto"
 	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
@@ -20,6 +23,16 @@ type RoomAppService struct {
 	publisher         domain.EventPublisher
 	scheduler         *scheduler.TimeoutScheduler
 	settlementService *settlementService.SettlementService
+	balanceService    *settlementService.BalanceService
+	resumeGameCallback ResumeGameCallback
+}
+
+// ResumeGameCallback 由 GameAppService 注入，用于自动上座补满后恢复中断游戏
+type ResumeGameCallback func(ctx context.Context, roomID string, currentRound int)
+
+// SetResumeGameCallback 注入恢复游戏回调（避免与 GameAppService 循环依赖）
+func (s *RoomAppService) SetResumeGameCallback(cb ResumeGameCallback) {
+	s.resumeGameCallback = cb
 }
 
 func NewRoomAppService(
@@ -30,6 +43,7 @@ func NewRoomAppService(
 	publisher domain.EventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
 	settlementSvc *settlementService.SettlementService,
+	balanceSvc *settlementService.BalanceService,
 ) *RoomAppService {
 	return &RoomAppService{
 		repo:              repo,
@@ -37,8 +51,9 @@ func NewRoomAppService(
 		userService:       userService,
 		broadcaster:       broadcaster,
 		publisher:         publisher,
-		scheduler:         scheduler,
+		scheduler:          scheduler,
 		settlementService: settlementSvc,
+		balanceService:    balanceSvc,
 	}
 }
 
@@ -52,6 +67,8 @@ type JoinRoomResult struct {
 	RoomNo      string
 	RoomState   *RoomState
 	IsSpectator bool
+	SeatNo      int  // 自动上座成功时的座位号，0 表示未上座
+	AutoSeated  bool // 是否自动上座并准备
 }
 
 type AutoMatchRequest struct {
@@ -130,6 +147,315 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 	}, nil
 }
 
+// JoinAndAutoSeat 真实玩家入房：先以观战者身份加入，再尝试自动选座并准备。
+// 座位未满 → 自动上座并准备；座位已满 → 纯观战（可后续排队）。
+func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomRequest) (*JoinRoomResult, error) {
+	joinResult, err := s.JoinRoom(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	meta, metaErr := s.repo.GetRoomMeta(ctx, joinResult.RoomID)
+	if metaErr != nil || meta == nil {
+		logger.Warn("auto seat: failed to get room meta, remain spectator",
+			"room_id", joinResult.RoomID, "error", metaErr)
+		return joinResult, nil
+	}
+
+	// 游戏进行中（非中断态）不自动上座
+	if meta.Status == domain.RoomStatusPlaying {
+		return joinResult, nil
+	}
+
+	// 余额校验：不足则保持观战
+	userInfo, err := s.userService.GetUserById(ctx, req.UserID)
+	if err != nil {
+		return joinResult, nil
+	}
+	if s.balanceService != nil {
+		balanceResult, balErr := s.balanceService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
+			UserID:     userInfo.ID,
+			RoomFee:    meta.RoomFee,
+			MaxPlayers: meta.MaxPlayers,
+			MaxRounds:  meta.MaxRounds,
+		})
+		if balErr != nil {
+			logger.Warn("auto seat: balance check failed, remain spectator",
+				"room_id", joinResult.RoomID, "user_id", req.UserID, "error", balErr)
+			return joinResult, nil
+		}
+		if !balanceResult.IsSufficient {
+			logger.Info("auto seat: insufficient balance, remain spectator",
+				"room_id", joinResult.RoomID, "user_id", req.UserID)
+			return joinResult, nil
+		}
+	}
+
+	autoResult, autoErr := s.repo.AutoSeatAndReady(ctx, joinResult.RoomID, req.UserID, userInfo.IsRobot)
+	if autoErr != nil {
+		logger.Info("auto seat: no empty seat or failed, remain spectator",
+			"room_id", joinResult.RoomID, "user_id", req.UserID, "error", autoErr)
+		return joinResult, nil
+	}
+
+	if s.scheduler != nil {
+		s.scheduler.ClearTimeout(ctx, scheduler.TimeoutTypeSeat, joinResult.RoomID, req.UserID)
+	}
+
+	if s.publisher != nil && autoResult.Player != nil {
+		s.publisher.Publish(ctx, domain.NewPlayerReadyEvent(
+			joinResult.RoomID, req.UserID, autoResult.SeatNo,
+			autoResult.Player.Nickname, autoResult.Player.Avatar))
+	}
+
+	var roomState *RoomState
+	if s.broadcaster != nil {
+		stateData, _ := s.repo.GetRoomStateData(ctx, joinResult.RoomID)
+		if stateData != nil {
+			roomState = BuildFullRoomState(stateData)
+			s.broadcaster.Broadcast(joinResult.RoomID, message.PushRoomState, roomState, req.UserID)
+		}
+	}
+
+	s.handleCountdownAfterSeat(ctx, joinResult.RoomID, autoResult.ShouldStartCountdown,
+		autoResult.CountdownEndTime, autoResult.CurrentRound)
+
+	logger.Info("user auto seated and ready",
+		"room_id", joinResult.RoomID,
+		"user_id", req.UserID,
+		"seat_no", autoResult.SeatNo,
+		"player_count", autoResult.PlayerCount,
+	)
+
+	return &JoinRoomResult{
+		RoomID:      joinResult.RoomID,
+		RoomNo:      joinResult.RoomNo,
+		RoomState:   roomState,
+		IsSpectator: false,
+		SeatNo:      autoResult.SeatNo,
+		AutoSeated:  true,
+	}, nil
+}
+
+// handleCountdownAfterSeat 处理上座/替补后的倒计时与游戏恢复逻辑
+func (s *RoomAppService) handleCountdownAfterSeat(ctx context.Context, roomID string,
+	shouldStartCountdown int, countdownEndTime int64, currentRound int) {
+	if shouldStartCountdown == 1 {
+		countdownDuration := int(countdownEndTime - time.Now().Unix())
+		if countdownDuration <= 0 {
+			countdownDuration = 3
+		}
+		if s.broadcaster != nil {
+			s.broadcaster.Broadcast(roomID, message.PushCountdownStart, &message.CountdownStartPush{
+				RoomID:    roomID,
+				Countdown: int32(countdownDuration),
+			}, "")
+		}
+		if s.scheduler != nil {
+			s.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeReady, roomID,
+				converter.FormatID(countdownEndTime))
+		}
+		logger.Info("game countdown started (auto seat)",
+			"room_id", roomID, "countdown_end_time", countdownEndTime)
+	} else if shouldStartCountdown == 2 {
+		if s.resumeGameCallback != nil {
+			go s.resumeGameCallback(context.Background(), roomID, currentRound)
+		}
+		logger.Info("game resume triggered (auto seat substitute)",
+			"room_id", roomID, "current_round", currentRound)
+	}
+}
+
+// tryAutoSubstitute 座位释放后尝试从排队队列自动替补。
+// 替补前会逐个校验排队者余额，余额不足者被移出队列并通知，继续下一位。
+// 返回替补结果（nil 表示无替补）。
+func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *domain.SubstituteResult {
+	// 取房间元信息用于余额校验
+	meta, metaErr := s.repo.GetRoomMeta(ctx, roomID)
+	if metaErr != nil || meta == nil {
+		logger.Warn("auto substitute: failed to get room meta",
+			"room_id", roomID, "seat_no", seatNo, "error", metaErr)
+		return nil
+	}
+
+	// 余额校验：逐个检查排队者，余额不足者移出队列并通知
+	if s.balanceService != nil {
+		queueList, _ := s.repo.GetQueueList(ctx, roomID)
+		for _, q := range queueList {
+			if q == nil {
+				continue
+			}
+			userInfo, err := s.userService.GetUserById(ctx, q.UserID)
+			if err != nil {
+				continue
+			}
+			balanceResult, balErr := s.balanceService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
+				UserID:     userInfo.ID,
+				RoomFee:    meta.RoomFee,
+				MaxPlayers: meta.MaxPlayers,
+				MaxRounds:  meta.MaxRounds,
+			})
+			if balErr != nil || balanceResult == nil || !balanceResult.IsSufficient {
+				// 余额不足：移出队列并通知
+				s.repo.Dequeue(ctx, roomID, q.UserID)
+				if s.broadcaster != nil {
+					s.broadcaster.BroadcastToUser(q.UserID, message.PushDequeued, &message.DequeuedPush{
+						RoomID:  roomID,
+						UserID:  q.UserID,
+						Reason:  "insufficient_balance",
+						Message: "余额不足，已移出排队队列",
+					})
+				}
+				logger.Info("auto substitute: dequeue insufficient balance user",
+					"room_id", roomID, "user_id", q.UserID)
+				continue
+			}
+			// 找到余额充足的候选者，停止校验
+			break
+		}
+	}
+
+	subResult, err := s.repo.AutoSubstitute(ctx, roomID, seatNo)
+	if err != nil {
+		logger.Warn("auto substitute failed",
+			"room_id", roomID, "seat_no", seatNo, "error", err)
+		return nil
+	}
+	if subResult == nil {
+		logger.Info("auto substitute: no one in queue, skip",
+			"room_id", roomID, "seat_no", seatNo)
+		return nil
+	}
+
+	if s.publisher != nil && subResult.Player != nil {
+		s.publisher.Publish(ctx, domain.NewSubstituteEvent(
+			roomID, subResult.SubstituteUserID, subResult.SeatNo,
+			subResult.Player.Nickname, subResult.Player.Avatar))
+	}
+
+	if s.broadcaster != nil {
+		s.broadcaster.Broadcast(roomID, message.PushSubstitute, &message.SubstitutePush{
+			RoomID: roomID,
+			UserID: subResult.SubstituteUserID,
+			SeatNo: int32(subResult.SeatNo),
+		}, "")
+
+		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
+		if stateData != nil {
+			s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
+		}
+	}
+
+	s.handleCountdownAfterSeat(ctx, roomID, subResult.ShouldStartCountdown,
+		subResult.CountdownEndTime, subResult.CurrentRound)
+
+	logger.Info("auto substitute success",
+		"room_id", roomID,
+		"seat_no", subResult.SeatNo,
+		"substitute_user_id", subResult.SubstituteUserID,
+		"player_count", subResult.PlayerCount,
+	)
+
+	return subResult
+}
+
+// EnqueueRequest 排队入队请求
+type EnqueueRequest struct {
+	RoomID string
+	UserID string
+}
+
+// EnqueueResult 排队入队结果
+type EnqueueResult struct {
+	QueuePosition int        `json:"queue_position"`
+	RoomState     *RoomState `json:"room_state"`
+}
+
+// Enqueue 真实玩家加入排队队列
+func (s *RoomAppService) Enqueue(ctx context.Context, req *EnqueueRequest) (*EnqueueResult, error) {
+	position, err := s.repo.Enqueue(ctx, req.RoomID, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	spectator, _ := s.repo.GetSpectator(ctx, req.RoomID, req.UserID)
+	nickname := ""
+	avatar := ""
+	if spectator != nil {
+		nickname = spectator.Nickname
+		avatar = spectator.Avatar
+	}
+
+	if s.publisher != nil {
+		s.publisher.Publish(ctx, domain.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar))
+	}
+
+	var roomState *RoomState
+	if s.broadcaster != nil {
+		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
+		if stateData != nil {
+			roomState = BuildFullRoomState(stateData)
+			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, roomState, req.UserID)
+		}
+	}
+
+	logger.Info("user enqueued",
+		"room_id", req.RoomID,
+		"user_id", req.UserID,
+		"position", position,
+	)
+
+	return &EnqueueResult{
+		QueuePosition: position,
+		RoomState:     roomState,
+	}, nil
+}
+
+// DequeueRequest 排队出队请求
+type DequeueRequest struct {
+	RoomID string
+	UserID string
+}
+
+// DequeueResult 排队出队结果
+type DequeueResult struct {
+	RoomState *RoomState `json:"room_state"`
+}
+
+// Dequeue 从排队队列移除
+func (s *RoomAppService) Dequeue(ctx context.Context, req *DequeueRequest) (*DequeueResult, error) {
+	if err := s.repo.Dequeue(ctx, req.RoomID, req.UserID); err != nil {
+		return nil, err
+	}
+
+	if s.publisher != nil {
+		s.publisher.Publish(ctx, domain.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel"))
+	}
+
+	var roomState *RoomState
+	if s.broadcaster != nil {
+		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
+		if stateData != nil {
+			roomState = BuildFullRoomState(stateData)
+			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, roomState, req.UserID)
+		}
+	}
+
+	logger.Info("user dequeued",
+		"room_id", req.RoomID,
+		"user_id", req.UserID,
+	)
+
+	return &DequeueResult{
+		RoomState: roomState,
+	}, nil
+}
+
+// TryAutoSubstitute 暴露给其他应用服务调用的替补入口
+func (s *RoomAppService) TryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *domain.SubstituteResult {
+	return s.tryAutoSubstitute(ctx, roomID, seatNo)
+}
+
 func (s *RoomAppService) AutoMatchAndJoin(ctx context.Context, req *AutoMatchRequest) (*JoinRoomResult, error) {
 	userInfo, err := s.userService.GetUserById(ctx, req.UserID)
 	if err != nil {
@@ -147,7 +473,7 @@ func (s *RoomAppService) AutoMatchAndJoin(ctx context.Context, req *AutoMatchReq
 		return nil, err
 	}
 
-	return s.JoinRoom(ctx, &JoinRoomRequest{
+	return s.JoinAndAutoSeat(ctx, &JoinRoomRequest{
 		RoomID: roomID,
 		UserID: req.UserID,
 	})
@@ -162,6 +488,16 @@ type LeaveRoomRequest struct {
 type LeaveRoomResult struct{}
 
 func (s *RoomAppService) LeaveRoom(ctx context.Context, req *LeaveRoomRequest) (*LeaveRoomResult, error) {
+	// 先判断离开者是否为玩家（拥有座位），以便离开后触发自动替补
+	player, _ := s.repo.GetPlayer(ctx, req.RoomID, req.UserID)
+	var freedSeatNo int
+	if player != nil {
+		freedSeatNo = player.SeatNo
+	}
+
+	// 从排队队列中移除（若存在，best-effort）
+	s.repo.RemoveFromQueue(ctx, req.RoomID, req.UserID)
+
 	spectator, _ := s.repo.GetSpectator(ctx, req.RoomID, req.UserID)
 
 	err := s.repo.LeaveRoom(ctx, req.RoomID, req.UserID)
@@ -186,10 +522,18 @@ func (s *RoomAppService) LeaveRoom(ctx context.Context, req *LeaveRoomRequest) (
 		}
 	}
 
+	// 玩家离开释放座位 → 尝试从排队队列自动替补
+	if freedSeatNo > 0 {
+		go func() {
+			s.tryAutoSubstitute(context.Background(), req.RoomID, freedSeatNo)
+		}()
+	}
+
 	logger.Info("user left room",
 		"room_id", req.RoomID,
 		"user_id", req.UserID,
 		"reason", req.Reason,
+		"freed_seat_no", freedSeatNo,
 	)
 
 	return &LeaveRoomResult{}, nil

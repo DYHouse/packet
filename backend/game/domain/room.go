@@ -44,6 +44,14 @@ type Spectator struct {
 	IsRobot  bool   `json:"is_robot"`
 }
 
+type QueueInfo struct {
+	UserID        string `json:"user_id"`
+	Nickname      string `json:"nickname"`
+	Avatar        string `json:"avatar"`
+	QueuePosition int    `json:"queue_position"`
+	QueuedAt      int64  `json:"queued_at"`
+}
+
 func (p *Player) IsOnline() bool {
 	return p.DisconnectedAt == nil
 }

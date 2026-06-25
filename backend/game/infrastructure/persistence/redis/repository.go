@@ -328,6 +328,212 @@ func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, use
 	}, nil
 }
 
+func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID string, isRobot bool) (*domain.AutoSeatResult, error) {
+	keys := []string{
+		RoomHashKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+		fmt.Sprintf("%d", time.Now().Unix()),
+		isRobot,
+	}
+
+	result, err := r.client.Eval(ctx, LuaAutoSeatAndReady, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return nil, domain.MapLuaError(code)
+	}
+
+	autoResult := &domain.AutoSeatResult{
+		SeatNo:               parseInt(result[1]),
+		PlayerCount:          parseInt(result[2]),
+		MaxPlayers:           parseInt(result[3]),
+		ShouldStartCountdown: parseInt(result[4]),
+		CountdownEndTime:     parseLuaInt64(result[5]),
+		CurrentRound:         parseInt(result[6]),
+	}
+
+	if len(result) >= 8 {
+		playerDataStr, ok := result[7].(string)
+		if ok && playerDataStr != "" {
+			var player domain.Player
+			if err := json.Unmarshal([]byte(playerDataStr), &player); err == nil {
+				autoResult.Player = &player
+			}
+		}
+	}
+
+	return autoResult, nil
+}
+
+func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID string) (int, error) {
+	keys := []string{
+		RoomQueueKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomHashKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+		fmt.Sprintf("%d", time.Now().UnixMilli()),
+	}
+
+	result, err := r.client.Eval(ctx, LuaEnqueue, keys, args...).Slice()
+	if err != nil {
+		return 0, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return 0, domain.MapLuaError(code)
+	}
+
+	return parseInt(result[1]), nil
+}
+
+func (r *RoomRepository) Dequeue(ctx context.Context, roomID, userID string) error {
+	keys := []string{
+		RoomQueueKey(roomID),
+		RoomHashKey(roomID),
+	}
+	args := []interface{}{
+		userID,
+	}
+
+	result, err := r.client.Eval(ctx, LuaDequeue, keys, args...).Slice()
+	if err != nil {
+		return err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		return domain.MapLuaError(code)
+	}
+
+	return nil
+}
+
+func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seatNo int) (*domain.SubstituteResult, error) {
+	keys := []string{
+		RoomQueueKey(roomID),
+		RoomHashKey(roomID),
+		RoomPlayersKey(roomID),
+		RoomSpectatorsKey(roomID),
+		RoomSeatsKey(roomID),
+		RoomSeatOwnerKey(roomID),
+	}
+	args := []interface{}{
+		seatNo,
+		fmt.Sprintf("%d", time.Now().Unix()),
+	}
+
+	result, err := r.client.Eval(ctx, LuaAutoSubstitute, keys, args...).Slice()
+	if err != nil {
+		return nil, err
+	}
+
+	code := parseLuaCode(result[0])
+	if code != domain.LuaSuccess {
+		if code == domain.LuaErrQueueEmpty || code == domain.LuaErrSubstituteFail || code == domain.LuaErrNoEmptySeat {
+			return nil, nil
+		}
+		return nil, domain.MapLuaError(code)
+	}
+
+	subResult := &domain.SubstituteResult{
+		SubstituteUserID:     parseLuaString(result[1]),
+		PlayerCount:          parseInt(result[2]),
+		MaxPlayers:           parseInt(result[3]),
+		ShouldStartCountdown: parseInt(result[4]),
+		CountdownEndTime:     parseLuaInt64(result[5]),
+		CurrentRound:         parseInt(result[6]),
+		SeatNo:               seatNo,
+	}
+
+	if len(result) >= 8 {
+		playerDataStr, ok := result[7].(string)
+		if ok && playerDataStr != "" {
+			var player domain.Player
+			if err := json.Unmarshal([]byte(playerDataStr), &player); err == nil {
+				subResult.Player = &player
+			}
+		}
+	}
+
+	return subResult, nil
+}
+
+func (r *RoomRepository) GetQueueList(ctx context.Context, roomID string) ([]*domain.QueueInfo, error) {
+	queueKey := RoomQueueKey(roomID)
+	spectatorsKey := RoomSpectatorsKey(roomID)
+
+	members, err := r.client.Raw().ZRangeWithScores(ctx, queueKey, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	queueList := make([]*domain.QueueInfo, 0, len(members))
+	for idx, m := range members {
+		userID, ok := m.Member.(string)
+		if !ok || userID == "" {
+			continue
+		}
+
+		spectatorData, err := r.client.HGet(ctx, spectatorsKey, userID).Result()
+		if err != nil || spectatorData == "" {
+			continue
+		}
+
+		var spectator domain.Spectator
+		if err := json.Unmarshal([]byte(spectatorData), &spectator); err != nil {
+			continue
+		}
+
+		queueList = append(queueList, &domain.QueueInfo{
+			UserID:        spectator.UserID,
+			Nickname:      spectator.Nickname,
+			Avatar:        spectator.Avatar,
+			QueuePosition: idx + 1,
+			QueuedAt:      int64(m.Score),
+		})
+	}
+
+	return queueList, nil
+}
+
+func (r *RoomRepository) RemoveFromQueue(ctx context.Context, roomID, userID string) error {
+	queueKey := RoomQueueKey(roomID)
+	if err := r.client.ZRem(ctx, queueKey, userID).Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseLuaString(val interface{}) string {
+	if v, ok := val.(string); ok {
+		return v
+	}
+	return ""
+}
+
+func parseLuaInt64(val interface{}) int64 {
+	switch v := val.(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
 func (r *RoomRepository) UpdateRoomStatus(ctx context.Context, roomID string, status domain.RoomStatus) error {
 	key := RoomHashKey(roomID)
 	return r.client.HSet(ctx, key, "status", int(status)).Err()
@@ -497,6 +703,8 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 		seatOwners[seatNo] = userID
 	}
 
+	queueList, _ := r.GetQueueList(ctx, roomID)
+
 	return &domain.RoomStateData{
 		RoomID:         meta.RoomID,
 		RoomNo:         meta.RoomNo,
@@ -512,6 +720,7 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 		Players:        players,
 		Spectators:     spectators,
 		SeatOwners:     seatOwners,
+		Queue:          queueList,
 		Meta:           meta,
 	}, nil
 }

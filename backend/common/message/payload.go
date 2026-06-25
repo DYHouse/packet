@@ -143,10 +143,26 @@ type WaitReplacementPush struct {
 	Recipients []string `json:"recipients,omitempty"`
 }
 
+// SubstitutePush 自动替补上座推送
+type SubstitutePush struct {
+	RoomID    string      `json:"room_id"`
+	UserID    string      `json:"user_id"`
+	SeatNo    int32       `json:"seat_no"`
+	RoomState interface{} `json:"room_state,omitempty"`
+}
+
 // GameInterruptedPush 游戏中断推送
 type GameInterruptedPush struct {
 	RoomID       string         `json:"room_id"`
 	Reason       string         `json:"reason"`
 	PenaltyShare currency.Money `json:"penalty_share"`
 	Recipients   []string       `json:"recipients"`
+}
+
+// DequeuedPush 被移出排队队列推送（余额不足被自动移除等场景）
+type DequeuedPush struct {
+	RoomID  string `json:"room_id"`
+	UserID  string `json:"user_id"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }

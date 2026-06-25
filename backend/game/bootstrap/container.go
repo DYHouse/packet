@@ -153,6 +153,8 @@ func NewContainer(
 func (c *Container) InitAppServices() {
 	c.UserService = application.NewUserService(c.DBRepo, c.Redis, c.AvatarCfg)
 
+	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert)
+
 	c.RoomAppService = application.NewRoomAppService(
 		c.RoomRepo,
 		c.DBRepo,
@@ -161,9 +163,8 @@ func (c *Container) InitAppServices() {
 		c.EventPublisher,
 		c.TimeoutScheduler,
 		c.SettlementSvc,
+		c.BalanceService,
 	)
-
-	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert)
 
 	c.GameAppService = application.NewGameAppService(
 		c.RoomRepo,
@@ -197,6 +198,10 @@ func (c *Container) InitAppServices() {
 		c.TimeoutCfg.Ready,
 	)
 
+	// 注入 RoomAppService 引用（用于 CancelSeat/Kick 后触发自动替补）
+	c.SeatAppService.SetRoomAppService(c.RoomAppService)
+	c.GameAppService.SetRoomAppService(c.RoomAppService)
+
 	if c.TimeoutScheduler != nil {
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeSeat, c.SeatAppService.HandleSeatTimeout)
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeReady, c.SeatAppService.HandleReadyTimeout)
@@ -204,6 +209,14 @@ func (c *Container) InitAppServices() {
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeSend, c.GameAppService.OnSendTimeout)
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeReplace, c.GameAppService.OnReplaceTimeout)
 	}
+
+	// 注入 ResumeGame 回调（避免 RoomAppService 与 GameAppService 循环依赖）
+	c.RoomAppService.SetResumeGameCallback(func(ctx context.Context, roomID string, currentRound int) {
+		c.GameAppService.ResumeGame(ctx, &application.ResumeGameRequest{
+			RoomID:       roomID,
+			CurrentRound: currentRound,
+		})
+	})
 
 	c.initSettlementSchedulers()
 	c.initRobotServices()

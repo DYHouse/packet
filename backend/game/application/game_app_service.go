@@ -44,6 +44,12 @@ type GameAppService struct {
 	commissionCfg     *domain.CommissionConfig
 	timeoutCfg        *config.TimeoutConfig
 	gameEndCallback   GameEndCallback
+	roomAppService    *RoomAppService
+}
+
+// SetRoomAppService 注入 RoomAppService（用于踢人后触发自动替补）
+func (s *GameAppService) SetRoomAppService(svc *RoomAppService) {
+	s.roomAppService = svc
 }
 
 // GameEndCallback is invoked from endGameWithOptions after a game ends. It is
@@ -1200,18 +1206,30 @@ func (s *GameAppService) handleKickAndReplace(ctx context.Context, roomID, userI
 			Reason:  message.ReasonPenaltyKick,
 			Message: message.GetKickMessage(message.ReasonPenaltyKick),
 		})
+	}
 
-		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
-		if stateData != nil {
-			s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
+	// 尝试从排队队列自动替补
+	substituted := false
+	if s.roomAppService != nil && result.SeatNo > 0 {
+		subResult := s.roomAppService.TryAutoSubstitute(ctx, roomID, result.SeatNo)
+		substituted = subResult != nil
+	}
+
+	// 无替补时走原有 wait_replacement 流程
+	if !substituted {
+		if s.broadcaster != nil {
+			stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
+			if stateData != nil {
+				s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
+			}
+
+			s.broadcaster.Broadcast(roomID, message.PushWaitReplacement, &message.WaitReplacementPush{
+				RoomID:     roomID,
+				VacantSeat: int32(result.SeatNo),
+				LeftUserID: userID,
+				WaitTime:   int32(s.timeoutCfg.Replace.Seconds()),
+			}, "")
 		}
-
-		s.broadcaster.Broadcast(roomID, message.PushWaitReplacement, &message.WaitReplacementPush{
-			RoomID:     roomID,
-			VacantSeat: int32(result.SeatNo),
-			LeftUserID: userID,
-			WaitTime:   int32(s.timeoutCfg.Replace.Seconds()),
-		}, "")
 	}
 }
 

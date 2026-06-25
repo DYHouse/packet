@@ -54,6 +54,16 @@ func MapLuaError(code int) *message.Error {
 		return message.NewError(message.CodeGrabTimeout)
 	case LuaErrNotPlayer:
 		return message.NewError(message.CodeNotPlayer)
+	case LuaErrAlreadyQueued:
+		return message.NewError(message.CodeAlreadyQueued)
+	case LuaErrNotQueued:
+		return message.NewError(message.CodeNotQueued)
+	case LuaErrRobotNotAllowed:
+		return message.NewError(message.CodeRobotNotAllowed)
+	case LuaErrNoEmptySeat:
+		return message.NewError(message.CodeRoomFull)
+	case LuaErrSubstituteFail:
+		return message.NewError(message.CodeReplacementFailed)
 	case LuaErrInvalidRoundNumber:
 		return message.NewError(message.CodeInvalidRoundNumber)
 	case LuaErrNotYourTurn:

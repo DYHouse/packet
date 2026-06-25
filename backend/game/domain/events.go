@@ -21,6 +21,9 @@ const (
 	RoomEventSpectatorKick
 	RoomEventPlayerDisconnect
 	RoomEventPlayerReconnect
+	RoomEventQueueJoin
+	RoomEventQueueLeave
+	RoomEventSubstitute
 )
 
 type RoomEvent struct {
@@ -74,6 +77,22 @@ type PlayerDisconnectPayload struct {
 
 type PlayerReconnectPayload struct {
 	SeatNo int `json:"seat_no"`
+}
+
+type QueueJoinPayload struct {
+	QueuePosition int `json:"queue_position"`
+	Nickname      string `json:"nickname,omitempty"`
+	Avatar        string `json:"avatar,omitempty"`
+}
+
+type QueueLeavePayload struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+type SubstitutePayload struct {
+	SeatNo   int    `json:"seat_no"`
+	Nickname string `json:"nickname,omitempty"`
+	Avatar   string `json:"avatar,omitempty"`
 }
 
 type GameEventType string
@@ -307,6 +326,49 @@ func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
 		UserID:    userID,
 		Payload: PlayerReconnectPayload{
 			SeatNo: seatNo,
+		},
+		OccurredAt: time.Now(),
+	}
+}
+
+func NewQueueJoinEvent(roomID, userID string, queuePosition int, nickname, avatar string) *RoomEvent {
+	return &RoomEvent{
+		EventID:   generateEventID(),
+		EventType: RoomEventQueueJoin,
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload: QueueJoinPayload{
+			QueuePosition: queuePosition,
+			Nickname:      nickname,
+			Avatar:        avatar,
+		},
+		OccurredAt: time.Now(),
+	}
+}
+
+func NewQueueLeaveEvent(roomID, userID string, reason string) *RoomEvent {
+	return &RoomEvent{
+		EventID:   generateEventID(),
+		EventType: RoomEventQueueLeave,
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload: QueueLeavePayload{
+			Reason: reason,
+		},
+		OccurredAt: time.Now(),
+	}
+}
+
+func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
+	return &RoomEvent{
+		EventID:   generateEventID(),
+		EventType: RoomEventSubstitute,
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload: SubstitutePayload{
+			SeatNo:   seatNo,
+			Nickname: nickname,
+			Avatar:   avatar,
 		},
 		OccurredAt: time.Now(),
 	}

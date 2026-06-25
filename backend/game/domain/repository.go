@@ -29,6 +29,13 @@ type RoomRepository interface {
 
 	GetRoomStateData(ctx context.Context, roomID string) (*RoomStateData, error)
 	GetRoomSeatsBatch(ctx context.Context, roomIDs []string) (map[string]*RoomStateData, error)
+
+	AutoSeatAndReady(ctx context.Context, roomID, userID string, isRobot bool) (*AutoSeatResult, error)
+	Enqueue(ctx context.Context, roomID, userID string) (int, error)
+	Dequeue(ctx context.Context, roomID, userID string) error
+	AutoSubstitute(ctx context.Context, roomID string, seatNo int) (*SubstituteResult, error)
+	GetQueueList(ctx context.Context, roomID string) ([]*QueueInfo, error)
+	RemoveFromQueue(ctx context.Context, roomID, userID string) error
 }
 
 type RoomStateData struct {
@@ -46,7 +53,29 @@ type RoomStateData struct {
 	Players        map[string]*Player
 	Spectators     map[string]*Spectator
 	SeatOwners     map[int]string
+	Queue          []*QueueInfo
 	Meta           *RoomMeta
+}
+
+type AutoSeatResult struct {
+	SeatNo              int
+	PlayerCount         int
+	MaxPlayers          int
+	ShouldStartCountdown int
+	CountdownEndTime    int64
+	CurrentRound        int
+	Player              *Player
+}
+
+type SubstituteResult struct {
+	SubstituteUserID    string
+	SeatNo              int
+	PlayerCount         int
+	MaxPlayers          int
+	ShouldStartCountdown int
+	CountdownEndTime    int64
+	CurrentRound        int
+	Player              *Player
 }
 
 type EventPublisher interface {

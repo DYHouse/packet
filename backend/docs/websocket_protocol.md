@@ -703,6 +703,88 @@ Gateway 提取 URL 参数中的 token
 
 ---
 
+### 4.16 enqueue - 排队预约
+
+座位已满时，真实玩家加入排队队列等待替补。
+
+**请求:**
+```json
+{
+    "cmd": "enqueue",
+    "data": {
+        "room_id": "123456789"
+    }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| room_id | string | 是 | 房间ID |
+
+**响应:**
+```json
+{
+    "cmd": "enqueue",
+    "code": 0,
+    "msg": "成功",
+    "data": {
+        "queue_position": 2,
+        "room_state": { /* RoomState 结构 */ }
+    }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| queue_position | int32 | 排队位置（1-based） |
+| room_state | RoomState | 最新房间状态（含 queue_list） |
+
+**触发场景:** 座位已满，玩家点击「预约排队」按钮
+
+**错误码:** 1001=未加入房间、1003=余额不足、1071=已在队列中、1072=有空座无需排队
+
+---
+
+### 4.17 dequeue - 取消排队
+
+从排队队列中退出。
+
+**请求:**
+```json
+{
+    "cmd": "dequeue",
+    "data": {
+        "room_id": "123456789"
+    }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| room_id | string | 是 | 房间ID |
+
+**响应:**
+```json
+{
+    "cmd": "dequeue",
+    "code": 0,
+    "msg": "成功",
+    "data": {
+        "room_state": { /* RoomState 结构 */ }
+    }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| room_state | RoomState | 最新房间状态（含 queue_list） |
+
+**触发场景:** 玩家点击「取消排队」按钮
+
+**错误码:** 1001=未加入房间、1073=不在队列中
+
+---
+
 ## 五、推送列表(服务端 → 客户端)
 
 ### 5.1 room_state - 房间状态更新
@@ -1097,9 +1179,45 @@ Gateway 提取 URL 参数中的 token
 
 **触发场景:** 游戏进行中有玩家离开,等待观众补位
 
+> **与 substitute 的关系:** 当房间有排队队列时,座位释放由 `substitute` 接管（自动从队首替补上座）,不再推送 `wait_replacement`;仅当队列空时才走 `wait_replacement` 手动抢座流程。
+
 ---
 
-### 5.14 game_interrupted - 游戏中断
+### 5.14 substitute - 自动替补上座
+
+排队队列中的玩家被自动替补到释放的座位上。
+
+```json
+{
+    "type": "substitute",
+    "data": {
+        "room_id": "123456789",
+        "seat_no": 3,
+        "left_user_id": "123",
+        "substitute_user_id": "456",
+        "substitute_nickname": "玩家2",
+        "auto_ready": true,
+        "room_state": { /* RoomState 结构 */ }
+    },
+    "timestamp": 1234567890
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| room_id | string | 房间ID |
+| seat_no | int32 | 被替补的座位号(1-5) |
+| left_user_id | string | 离开座位的玩家ID |
+| substitute_user_id | string | 替补上座的玩家ID（来自排队队列队首） |
+| substitute_nickname | string | 替补玩家昵称 |
+| auto_ready | bool | 是否已自动准备 |
+| room_state | RoomState | 最新房间状态 |
+
+**触发场景:** 座位释放（玩家离开/离座/被踢）且排队队列非空时,自动从队首取人替补上座。与 `wait_replacement` 互斥。
+
+---
+
+### 5.15 game_interrupted - 游戏中断
 
 ```json
 {
@@ -1123,7 +1241,7 @@ Gateway 提取 URL 参数中的 token
 
 ---
 
-### 5.15 game_end - 游戏结束
+### 5.16 game_end - 游戏结束
 
 ```json
 {
@@ -1161,7 +1279,7 @@ Gateway 提取 URL 参数中的 token
 
 ---
 
-### 5.16 kicked - 被踢出房间
+### 5.17 kicked - 被踢出房间
 
 ```json
 {
@@ -1185,7 +1303,35 @@ Gateway 提取 URL 参数中的 token
 
 ---
 
-### 5.17 error - 错误推送
+### 5.18 dequeued - 被移出排队队列
+
+排队者因余额不足等原因被自动移出排队队列时，向该用户单播推送。
+
+```json
+{
+    "type": "dequeued",
+    "data": {
+        "room_id": "123456789",
+        "user_id": "456",
+        "reason": "insufficient_balance",
+        "message": "余额不足，已移出排队队列"
+    },
+    "timestamp": 1234567890
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| room_id | string | 房间ID |
+| user_id | string | 被移出队列的用户ID |
+| reason | string | 移出原因:`insufficient_balance`（余额不足） |
+| message | string | 提示消息 |
+
+**触发场景:** 自动替补时校验排队者余额，余额不足者被移出队列。仅推送给被移出者本人。
+
+---
+
+### 5.19 error - 错误推送
 
 ```json
 {
@@ -1219,7 +1365,8 @@ Gateway 提取 URL 参数中的 token
     "max_spectators": 100,
     "players": [ /* PlayerInfo 结构 */ ],
     "spectators": [ /* SpectatorInfo 结构 */ ],
-    "seats": [ /* SeatInfo 结构 */ ]
+    "seats": [ /* SeatInfo 结构 */ ],
+    "queue_list": [ /* QueueInfo 结构 */ ]
 }
 ```
 
@@ -1239,6 +1386,7 @@ Gateway 提取 URL 参数中的 token
 | players | PlayerInfo[] | 玩家列表 |
 | spectators | SpectatorInfo[] | 观众列表 |
 | seats | SeatInfo[] | 座位列表 |
+| queue_list | QueueInfo[] | 排队预约列表（座位满时才有数据） |
 
 ### 6.2 PlayerInfo 结构
 
@@ -1302,6 +1450,26 @@ Gateway 提取 URL 参数中的 token
 | avatar | string | 占用玩家头像 |
 | ready | bool | 是否已准备 |
 
+### 6.5 QueueInfo 结构
+
+```json
+{
+    "user_id": "456",
+    "nickname": "玩家2",
+    "avatar": "https://...",
+    "queue_position": 1,
+    "queued_at": 1234567890
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| user_id | string | 排队玩家ID |
+| nickname | string | 排队玩家昵称 |
+| avatar | string | 排队玩家头像URL |
+| queue_position | int32 | 排队位置(1-based,1为队首) |
+| queued_at | int64 | 入队时间戳(秒) |
+
 ---
 
 ## 七、错误码表
@@ -1343,6 +1511,11 @@ Gateway 提取 URL 参数中的 token
 | 1022 | 玩家已准备 |
 | 1023 | 玩家无法离开房间 |
 | 1024 | 只有玩家才能操作 |
+| 1071 | 已在排队队列中 |
+| 1072 | 有空座位，无需排队 |
+| 1073 | 不在排队队列中 |
+| 1074 | 替补失败（座位已被占用） |
+| 1075 | 排队队列为空 |
 
 ### 7.3 连接相关错误码 (2000-2999)
 

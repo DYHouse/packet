@@ -24,9 +24,15 @@ type SeatAppService struct {
 	scheduler         *scheduler.TimeoutScheduler
 	settlementService *settlementService.SettlementService
 	gameService       *GameAppService
+	roomAppService    *RoomAppService
 	redis             *cRedis.Client
 	balanceService    *settlementService.BalanceService
 	readyCountdown    time.Duration
+}
+
+// SetRoomAppService 注入 RoomAppService（用于 CancelSeat 后触发自动替补）
+func (s *SeatAppService) SetRoomAppService(svc *RoomAppService) {
+	s.roomAppService = svc
 }
 
 func NewSeatAppService(
@@ -139,6 +145,13 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 		return nil, message.NewError(message.CodeGameInProgress)
 	}
 
+	// 记录释放前的座位号，用于后续自动替补
+	spectator, _ := s.repo.GetSpectator(ctx, req.RoomID, req.UserID)
+	freedSeatNo := 0
+	if spectator != nil {
+		freedSeatNo = spectator.SeatNo
+	}
+
 	err = s.repo.CancelSeat(ctx, req.RoomID, req.UserID)
 	if err != nil {
 		return nil, err
@@ -148,14 +161,13 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 		s.scheduler.ClearTimeout(ctx, scheduler.TimeoutTypeSeat, req.RoomID, req.UserID)
 	}
 
-	spectator, _ := s.repo.GetSpectator(ctx, req.RoomID, req.UserID)
 	nickname := ""
 	if spectator != nil {
 		nickname = spectator.Nickname
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, 0, nickname))
+		s.publisher.Publish(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname))
 	}
 
 	var roomState *RoomState
@@ -167,9 +179,17 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 		}
 	}
 
+	// 座位释放后从排队队列自动替补
+	if freedSeatNo > 0 && s.roomAppService != nil {
+		go func() {
+			s.roomAppService.TryAutoSubstitute(context.Background(), req.RoomID, freedSeatNo)
+		}()
+	}
+
 	logger.Info("seat cancelled",
 		"room_id", req.RoomID,
 		"user_id", req.UserID,
+		"freed_seat_no", freedSeatNo,
 	)
 
 	return &CancelSeatResult{

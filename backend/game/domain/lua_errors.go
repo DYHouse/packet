@@ -44,4 +44,12 @@ const (
 
 	// 权限错误 (60-69)
 	LuaErrNotPlayer = 60
+
+	// 排队相关错误 (70-79)
+	LuaErrAlreadyQueued   = 70
+	LuaErrNotQueued       = 71
+	LuaErrRobotNotAllowed = 72
+	LuaErrNoEmptySeat     = 73
+	LuaErrSubstituteFail  = 74
+	LuaErrQueueEmpty      = 75
 )
