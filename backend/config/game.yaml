@@ -79,7 +79,7 @@ id_generator:
   enabled: true
 
 avatar:
-  base_url: "http://43.135.35.31/avatars"
+  base_url: "https://opc.narrytech.cn/avatars"
   default_count: 60
 
 robot:

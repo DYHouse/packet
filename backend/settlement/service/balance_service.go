@@ -11,25 +11,50 @@ import (
 )
 
 type BalanceService struct {
-	platform      platform.Client
-	cfg           *config.PlatformConfig
-	userIDConvert *UserIDConvertService
+	platform          platform.Client
+	cfg               *config.PlatformConfig
+	userIDConvert     *UserIDConvertService
+	virtualBalanceSvc *VirtualBalanceService
+	robotChecker      RobotChecker
 }
 
-func NewBalanceService(platformClient platform.Client, cfg *config.PlatformConfig, userIDConvert *UserIDConvertService) *BalanceService {
+func NewBalanceService(platformClient platform.Client, cfg *config.PlatformConfig, userIDConvert *UserIDConvertService, virtualBalanceSvc *VirtualBalanceService, robotChecker RobotChecker) *BalanceService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
 	return &BalanceService{
-		platform:      platformClient,
-		cfg:           cfg,
-		userIDConvert: userIDConvert,
+		platform:          platformClient,
+		cfg:               cfg,
+		userIDConvert:     userIDConvert,
+		virtualBalanceSvc: virtualBalanceSvc,
+		robotChecker:      robotChecker,
 	}
 }
 
 func (s *BalanceService) CheckBalanceForReady(ctx context.Context, req *dto.BalanceCheckRequest) (*dto.BalanceCheckResult, error) {
 	requiredFee := s.CalculateRequiredFee(req.RoomFee, req.MaxPlayers, req.MaxRounds)
 
+	// 检查是否为机器人，使用虚拟余额
+	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID) {
+		if s.virtualBalanceSvc != nil {
+			balance, err := s.virtualBalanceSvc.GetBalance(ctx, req.UserID)
+			if err != nil {
+				logger.Error("get virtual balance failed",
+					"user_id", req.UserID,
+					"required_fee", requiredFee,
+					"error", err)
+				return nil, fmt.Errorf("get virtual balance failed: %w", err)
+			}
+			return &dto.BalanceCheckResult{
+				UserID:       req.UserID,
+				Balance:      balance,
+				RequiredFee:  requiredFee,
+				IsSufficient: balance >= requiredFee,
+			}, nil
+		}
+	}
+
+	// 真实玩家使用平台余额
 	balance, err := s.CheckUserBalance(ctx, req.UserID)
 	if err != nil {
 		logger.Error("check balance failed",

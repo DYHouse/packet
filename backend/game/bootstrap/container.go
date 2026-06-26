@@ -22,35 +22,35 @@ import (
 )
 
 type Container struct {
-	PlatformCfg              *config.PlatformConfig
-	TimeoutCfg               *config.TimeoutConfig
-	AvatarCfg                *config.AvatarConfig
-	DB                       *gorm.DB
-	Redis                    *cRedis.Client
-	KafkaProducer            *kafka.Producer
-	DBRepo                   domain.DBRepository
-	RoomRepo                 domain.RoomRepository
-	Broadcaster              domain.Broadcaster
-	EventPublisher           domain.EventPublisher
-	GameEventPublisher       *messaging.GameEventPublisher
-	EventConsumer            *messaging.RoomEventConsumer
-	TimeoutScheduler         *scheduler.TimeoutScheduler
-	GrabService              *application.GrabService
-	PenaltyService           *application.PenaltyService
-	RoomAppService           *application.RoomAppService
-	SeatAppService           *application.SeatAppService
-	GameAppService           *application.GameAppService
-	UserService              *application.UserService
-	SettlementSvc            *settlementService.SettlementService
-	DeductSvc                *settlementService.DeductService
-	RefundSvc                *settlementService.RefundService
-	BalanceService           *settlementService.BalanceService
-	HistoryService           *application.HistoryService
-	PacketGenerator          *algorithm.PacketGenerator
-	CreditRetryScheduler     *settlementScheduler.CreditRetryScheduler
-	RefundProcessScheduler   *settlementScheduler.RefundProcessScheduler
-	SettlementCheckScheduler *settlementScheduler.SettlementCheckScheduler
-	GameSettleRetryScheduler *settlementScheduler.GameSettleRetryScheduler
+	PlatformCfg                *config.PlatformConfig
+	TimeoutCfg                 *config.TimeoutConfig
+	AvatarCfg                  *config.AvatarConfig
+	DB                         *gorm.DB
+	Redis                      *cRedis.Client
+	KafkaProducer              *kafka.Producer
+	DBRepo                     domain.DBRepository
+	RoomRepo                   domain.RoomRepository
+	Broadcaster                domain.Broadcaster
+	EventPublisher             domain.EventPublisher
+	GameEventPublisher         *messaging.GameEventPublisher
+	EventConsumer              *messaging.RoomEventConsumer
+	TimeoutScheduler           *scheduler.TimeoutScheduler
+	GrabService                *application.GrabService
+	PenaltyService             *application.PenaltyService
+	RoomAppService             *application.RoomAppService
+	SeatAppService             *application.SeatAppService
+	GameAppService             *application.GameAppService
+	UserService                *application.UserService
+	SettlementSvc              *settlementService.SettlementService
+	DeductSvc                  *settlementService.DeductService
+	RefundSvc                  *settlementService.RefundService
+	BalanceService             *settlementService.BalanceService
+	HistoryService             *application.HistoryService
+	PacketGenerator            *algorithm.PacketGenerator
+	CreditRetryScheduler       *settlementScheduler.CreditRetryScheduler
+	RefundProcessScheduler     *settlementScheduler.RefundProcessScheduler
+	SettlementCheckScheduler   *settlementScheduler.SettlementCheckScheduler
+	GameSettleRetryScheduler   *settlementScheduler.GameSettleRetryScheduler
 	GameSettleTimeoutScheduler *settlementScheduler.GameSettleTimeoutScheduler
 
 	// Robot system services
@@ -65,16 +65,18 @@ type Container struct {
 	VirtualBalanceSyncScheduler *scheduler.VirtualBalanceSyncScheduler
 
 	// Shared settlement service instances (created in app.go, not recreated)
-	platformClient  platform.Client
-	billMgr         *settlementService.BillManager
-	traceIDGen      *settlementService.TraceIDGenerator
-	platformCfg     *settlementConfig.PlatformConfig
-	userIDConvert   *settlementService.UserIDConvertService
-	exceptionMgr    *settlementService.ExceptionManager
-	creditRetrySvc  *settlementService.CreditRetryService
-	rewardSettler   *settlementService.RewardSettler
-	callMgr         *settlementService.PlatformCallManager
-	gameSettleSvc   *settlementService.GameSettleService
+	platformClient           platform.Client
+	billMgr                  *settlementService.BillManager
+	traceIDGen               *settlementService.TraceIDGenerator
+	platformCfg              *settlementConfig.PlatformConfig
+	userIDConvert            *settlementService.UserIDConvertService
+	exceptionMgr             *settlementService.ExceptionManager
+	creditRetrySvc           *settlementService.CreditRetryService
+	rewardSettler            *settlementService.RewardSettler
+	callMgr                  *settlementService.PlatformCallManager
+	gameSettleSvc            *settlementService.GameSettleService
+	robotChecker             settlementService.RobotChecker
+	settlementVirtualBalance *settlementService.VirtualBalanceService
 }
 
 func NewContainer(
@@ -101,6 +103,8 @@ func NewContainer(
 	rewardSettler *settlementService.RewardSettler,
 	callMgr *settlementService.PlatformCallManager,
 	gameSettleSvc *settlementService.GameSettleService,
+	robotChecker settlementService.RobotChecker,
+	settlementVirtualBalance *settlementService.VirtualBalanceService,
 ) *Container {
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	broadcaster := broadcast.NewGameBroadcaster(broadcastCfg, kafkaProducer, redis)
@@ -118,43 +122,45 @@ func NewContainer(
 	penaltyService := application.NewPenaltyService(redis, nil, settlementSvc)
 
 	return &Container{
-		PlatformCfg:     platformCfg,
-		TimeoutCfg:      timeoutCfg,
-		AvatarCfg:       avatarCfg,
-		RobotCfg:        robotCfg,
-		DB:              db,
-		Redis:           redis,
-		KafkaProducer:   kafkaProducer,
-		DBRepo:          dbRepo,
-		RoomRepo:        roomRepo,
-		Broadcaster:     broadcaster,
-		EventPublisher:  eventPublisher,
+		PlatformCfg:        platformCfg,
+		TimeoutCfg:         timeoutCfg,
+		AvatarCfg:          avatarCfg,
+		RobotCfg:           robotCfg,
+		DB:                 db,
+		Redis:              redis,
+		KafkaProducer:      kafkaProducer,
+		DBRepo:             dbRepo,
+		RoomRepo:           roomRepo,
+		Broadcaster:        broadcaster,
+		EventPublisher:     eventPublisher,
 		GameEventPublisher: gameEventPublisher,
-		TimeoutScheduler: timeoutScheduler,
-		GrabService:     grabService,
-		PenaltyService:  penaltyService,
-		SettlementSvc:   settlementSvc,
-		DeductSvc:       deductSvc,
-		RefundSvc:       refundSvc,
-		PacketGenerator: packetGenerator,
+		TimeoutScheduler:   timeoutScheduler,
+		GrabService:        grabService,
+		PenaltyService:     penaltyService,
+		SettlementSvc:      settlementSvc,
+		DeductSvc:          deductSvc,
+		RefundSvc:          refundSvc,
+		PacketGenerator:    packetGenerator,
 
-		platformClient:  platformClient,
-		billMgr:         billMgr,
-		traceIDGen:      traceIDGen,
-		platformCfg:     settlementPlatformCfg,
-		userIDConvert:   userIDConvert,
-		exceptionMgr:    exceptionMgr,
-		creditRetrySvc:  creditRetrySvc,
-		rewardSettler:   rewardSettler,
-		callMgr:         callMgr,
-		gameSettleSvc:   gameSettleSvc,
+		platformClient:           platformClient,
+		billMgr:                  billMgr,
+		traceIDGen:               traceIDGen,
+		platformCfg:              settlementPlatformCfg,
+		userIDConvert:            userIDConvert,
+		exceptionMgr:             exceptionMgr,
+		creditRetrySvc:           creditRetrySvc,
+		rewardSettler:            rewardSettler,
+		callMgr:                  callMgr,
+		gameSettleSvc:            gameSettleSvc,
+		robotChecker:             robotChecker,
+		settlementVirtualBalance: settlementVirtualBalance,
 	}
 }
 
 func (c *Container) InitAppServices() {
 	c.UserService = application.NewUserService(c.DBRepo, c.Redis, c.AvatarCfg)
 
-	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert)
+	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert, c.settlementVirtualBalance, c.robotChecker)
 
 	c.HistoryService = application.NewHistoryService(c.DBRepo, c.billMgr)
 
