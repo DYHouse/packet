@@ -31,6 +31,9 @@ type PlayerHistoryItem struct {
 	SendCount    int            `json:"send_count"`
 	GrabCount    int            `json:"grab_count"`
 	TotalSend    currency.Money `json:"total_send"`
+	FirstRoundFee currency.Money `json:"first_round_fee"`
+	Penalty       currency.Money `json:"penalty"`
+	TotalBet      currency.Money `json:"total_bet"`
 	TotalGrab    currency.Money `json:"total_grab"`
 	Profit       currency.Money `json:"profit"`
 	JoinedAt     int64          `json:"joined_at"`
@@ -68,6 +71,12 @@ type GrabDetail struct {
 	GrabbedAt      int64          `json:"grabbed_at"`
 }
 
+// SendDetail 发包明细（玩家作为发包者时的发出金额）
+type SendDetail struct {
+	TotalAmount currency.Money `json:"total_amount"`
+	StartedAt   int64          `json:"started_at"`
+}
+
 // RoundDetail 回合明细
 type RoundDetail struct {
 	RoundID     string         `json:"round_id"`
@@ -79,6 +88,7 @@ type RoundDetail struct {
 	EndedAt     int64          `json:"ended_at"`
 	Status      int            `json:"status"`
 	MyGrab      *GrabDetail    `json:"my_grab,omitempty"`
+	MySend      *SendDetail    `json:"my_send,omitempty"`
 }
 
 // PlayerSessionDetailResp 单局详情响应
@@ -96,6 +106,9 @@ type PlayerStatsResp struct {
 	WinRate        float64        `json:"win_rate"`
 	TotalProfit    currency.Money `json:"total_profit"`
 	TotalSend      currency.Money `json:"total_send"`
+	FirstRoundFee  currency.Money `json:"first_round_fee"`
+	Penalty        currency.Money `json:"penalty"`
+	TotalBet       currency.Money `json:"total_bet"`
 	TotalGrab      currency.Money `json:"total_grab"`
 	TotalSendCount int64          `json:"total_send_count"`
 	TotalGrabCount int64          `json:"total_grab_count"`

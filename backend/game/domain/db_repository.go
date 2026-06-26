@@ -102,6 +102,59 @@ type PlayerStatsAggregate struct {
 	TotalGrabCount int64
 }
 
+// PlayerSessionBillRow 列表项（含 bill_record 聚合的盈亏数据）
+type PlayerSessionBillRow struct {
+	// game_sessions 字段
+	SessionID    int64
+	RoomNo       string
+	ConfigName   string
+	RoomFee      int64
+	MaxRounds    int
+	ActualRounds int
+	Status       int
+	StartedAt    *time.Time
+	EndedAt      *time.Time
+	EndReason    string
+	// bill_record 聚合字段（分）
+	TotalGrab     int64 // bill_type=3 求和
+	TotalSend     int64 // bill_type=4 求和（ABS）
+	FirstRoundFee int64 // bill_type=2 求和（ABS）
+	Penalty       int64 // bill_type=8 求和（ABS）
+	TotalBet      int64 // bill_type IN (2,4,8) 且 amount<0 求和（ABS）
+	TotalIncome int64 // bill_type IN (3,10,11) 且 amount>0 求和
+	Profit      int64 // TotalIncome - TotalBet
+	GrabCount   int64 // bill_type=3 计数
+	SendCount   int64 // bill_type=4 计数
+}
+
+// PlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）
+type PlayerSessionBillSummary struct {
+	TotalGrab     int64
+	TotalSend     int64
+	FirstRoundFee int64
+	Penalty       int64
+	TotalBet      int64
+	TotalIncome int64
+	Profit      int64
+	GrabCount   int64
+	SendCount   int64
+}
+
+// PlayerStatsBillAggregate 玩家累计统计（基于 bill_record 聚合）
+type PlayerStatsBillAggregate struct {
+	TotalGames     int64 // 不同 session_id 计数
+	WinCount       int64 // 盈亏>0 的 session 计数
+	TotalGrab      int64
+	TotalSend      int64
+	FirstRoundFee  int64
+	Penalty        int64
+	TotalBet       int64
+	TotalIncome    int64
+	TotalProfit    int64
+	TotalSendCount int64
+	TotalGrabCount int64
+}
+
 // HistoryDBRepository 玩家历史记录查询仓储
 type HistoryDBRepository interface {
 	ListPlayerSessions(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]PlayerSessionRow, int64, error)
@@ -110,6 +163,11 @@ type HistoryDBRepository interface {
 	AggregatePlayerStats(userID int64) (*PlayerStatsAggregate, error)
 	GetPlayerSession(userID, sessionID int64) (*model.SessionPlayer, error)
 	GetSession(sessionID int64) (*model.GameSession, error)
+	// 基于 bill_record 聚合的对账查询
+	ListPlayerSessionsWithBill(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]PlayerSessionBillRow, int64, error)
+	GetPlayerSessionBillSummary(userID, sessionID int64) (*PlayerSessionBillSummary, error)
+	AggregatePlayerStatsFromBill(userID int64) (*PlayerStatsBillAggregate, error)
+	GetPlayerSendRounds(sessionID, userID int64) ([]model.Round, error)
 }
 
 type DBRepository interface {

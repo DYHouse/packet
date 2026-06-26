@@ -271,14 +271,24 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 				"grab_count": gorm.Expr("grab_count + 1"),
 				"total_grab": gorm.Expr("total_grab + ?", r.Amount),
 			}
-			if r.UserID == data.MinPlayerID {
-				updates["send_count"] = gorm.Expr("send_count + 1")
-				updates["total_send"] = gorm.Expr("total_send + ?", data.TotalAmount)
-			}
 			if err := tx.Model(&model.SessionPlayer{}).
 				Where("session_id = ? AND user_id = ?", sessionIDInt64, parseInt64(r.UserID)).
 				Updates(updates).Error; err != nil {
-				return fmt.Errorf("update session player failed: %w", err)
+				return fmt.Errorf("update session player grab failed: %w", err)
+			}
+		}
+
+		if data.SenderType != domain.SenderTypeSystem && data.SenderType != domain.SenderTypeSystemForced {
+			senderIDInt := parseInt64(data.SenderID)
+			if senderIDInt != 0 {
+				if err := tx.Model(&model.SessionPlayer{}).
+					Where("session_id = ? AND user_id = ?", sessionIDInt64, senderIDInt).
+					Updates(map[string]interface{}{
+						"send_count": gorm.Expr("send_count + 1"),
+						"total_send": gorm.Expr("total_send + ?", data.TotalAmount),
+					}).Error; err != nil {
+					return fmt.Errorf("update session player send failed: %w", err)
+				}
 			}
 		}
 

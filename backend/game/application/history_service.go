@@ -39,15 +39,15 @@ func (s *HistoryService) GetPlayerHistory(ctx context.Context, userID int64, req
 	}
 	offset := (page - 1) * pageSize
 
-	rows, total, err := s.dbRepo.HistoryDBRepo().ListPlayerSessions(userID, req.StartDate, req.EndDate, req.ConfigName, pageSize, offset)
+	rows, total, err := s.dbRepo.HistoryDBRepo().ListPlayerSessionsWithBill(userID, req.StartDate, req.EndDate, req.ConfigName, pageSize, offset)
 	if err != nil {
-		logger.Error("failed to list player sessions", "user_id", userID, "error", err)
+		logger.Error("failed to list player sessions with bill", "user_id", userID, "error", err)
 		return nil, message.NewError(message.CodeHistoryQueryFailed)
 	}
 
 	items := make([]PlayerHistoryItem, 0, len(rows))
 	for i := range rows {
-		items = append(items, playerSessionRowToItem(&rows[i]))
+		items = append(items, playerSessionBillRowToItem(&rows[i]))
 	}
 
 	return &PlayerHistoryResp{
@@ -93,13 +93,33 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		return nil, message.NewError(message.CodeHistoryQueryFailed)
 	}
 
-	// 4. 构建 round_id -> grabRecord 索引
+	// 4. 查询玩家个人结果卡片（基于 bill_record 聚合）
+	billSummary, err := s.dbRepo.HistoryDBRepo().GetPlayerSessionBillSummary(userID, sessionID)
+	if err != nil {
+		logger.Error("failed to get player session bill summary", "user_id", userID, "session_id", sessionID, "error", err)
+		return nil, message.NewError(message.CodeHistoryQueryFailed)
+	}
+
+	// 5. 查询玩家发包回合列表
+	sendRounds, err := s.dbRepo.HistoryDBRepo().GetPlayerSendRounds(sessionID, userID)
+	if err != nil {
+		logger.Error("failed to get player send rounds", "user_id", userID, "session_id", sessionID, "error", err)
+		return nil, message.NewError(message.CodeHistoryQueryFailed)
+	}
+
+	// 6. 构建 round_id -> grabRecord 索引
 	grabByRound := make(map[int64]model.RoundGrabRecord, len(grabRecords))
 	for i := range grabRecords {
 		grabByRound[grabRecords[i].RoundID] = grabRecords[i]
 	}
 
-	// 5. 组装回合明细
+	// 7. 构建 round_id -> sendRound 索引
+	sendByRound := make(map[int64]model.Round, len(sendRounds))
+	for i := range sendRounds {
+		sendByRound[sendRounds[i].RoundID] = sendRounds[i]
+	}
+
+	// 8. 组装回合明细
 	roundDetails := make([]RoundDetail, 0, len(rounds))
 	for i := range rounds {
 		rd := RoundDetail{
@@ -121,36 +141,66 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 				GrabbedAt:      rec.GrabbedAt.UnixMilli(),
 			}
 		}
+		if sr, ok := sendByRound[rounds[i].RoundID]; ok {
+			rd.MySend = &SendDetail{
+				TotalAmount: currency.NewMoneyFromFen(sr.TotalAmount),
+				StartedAt:   timeToMs(sr.StartedAt),
+			}
+		}
 		roundDetails = append(roundDetails, rd)
 	}
 
-	// 6. 组装响应
+	// 9. 组装个人结果卡片（基于 bill 聚合 + player 的 seat_no/joined_at/left_at）
+	myStats := PlayerHistoryItem{
+		SessionID:    converter.FormatID(session.SessionID),
+		RoomNo:       session.RoomNo,
+		ConfigName:   session.ConfigName,
+		RoomFee:      currency.NewMoneyFromFen(session.RoomFee),
+		MaxRounds:    session.MaxRounds,
+		ActualRounds: session.ActualRounds,
+		Status:       int(session.Status),
+		StartedAt:    timeToMs(session.StartedAt),
+		EndedAt:      timeToMs(session.EndedAt),
+		EndReason:    session.EndReason,
+		SeatNo:       player.SeatNo,
+		SendCount:    int(billSummary.SendCount),
+		GrabCount:    int(billSummary.GrabCount),
+		TotalSend:    currency.NewMoneyFromFen(billSummary.TotalSend),
+		FirstRoundFee: currency.NewMoneyFromFen(billSummary.FirstRoundFee),
+		Penalty:       currency.NewMoneyFromFen(billSummary.Penalty),
+		TotalBet:      currency.NewMoneyFromFen(billSummary.TotalBet),
+		TotalGrab:    currency.NewMoneyFromFen(billSummary.TotalGrab),
+		Profit:       currency.NewMoneyFromFen(billSummary.Profit),
+		JoinedAt:     player.JoinedAt.UnixMilli(),
+		LeftAt:       timeToMs(player.LeftAt),
+	}
+
+	// 10. 组装响应
 	return &PlayerSessionDetailResp{
 		Session: gameSessionToSessionInfo(session),
-		MyStats: sessionPlayerToHistoryItem(player, session),
+		MyStats: myStats,
 		Rounds:  roundDetails,
 	}, nil
 }
 
 // GetPlayerStats 获取玩家累计统计概览
 func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*PlayerStatsResp, error) {
-	agg, err := s.dbRepo.HistoryDBRepo().AggregatePlayerStats(userID)
+	agg, err := s.dbRepo.HistoryDBRepo().AggregatePlayerStatsFromBill(userID)
 	if err != nil {
-		logger.Error("failed to aggregate player stats", "user_id", userID, "error", err)
+		logger.Error("failed to aggregate player stats from bill", "user_id", userID, "error", err)
 		return nil, message.NewError(message.CodeHistoryQueryFailed)
 	}
 	if agg == nil {
 		return &PlayerStatsResp{}, nil
 	}
 
-	totalProfit := agg.TotalGrab - agg.TotalSend
 	loseCount := agg.TotalGames - agg.WinCount
 
 	var winRate float64
 	var avgProfit int64
 	if agg.TotalGames > 0 {
 		winRate = float64(agg.WinCount) / float64(agg.TotalGames)
-		avgProfit = totalProfit / agg.TotalGames
+		avgProfit = int64(float64(agg.TotalProfit) / float64(agg.TotalGames))
 	}
 
 	return &PlayerStatsResp{
@@ -158,8 +208,11 @@ func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*Pla
 		WinCount:       agg.WinCount,
 		LoseCount:      loseCount,
 		WinRate:        winRate,
-		TotalProfit:    currency.NewMoneyFromFen(totalProfit),
+		TotalProfit:    currency.NewMoneyFromFen(agg.TotalProfit),
 		TotalSend:      currency.NewMoneyFromFen(agg.TotalSend),
+		FirstRoundFee:  currency.NewMoneyFromFen(agg.FirstRoundFee),
+		Penalty:        currency.NewMoneyFromFen(agg.Penalty),
+		TotalBet:       currency.NewMoneyFromFen(agg.TotalBet),
 		TotalGrab:      currency.NewMoneyFromFen(agg.TotalGrab),
 		TotalSendCount: agg.TotalSendCount,
 		TotalGrabCount: agg.TotalGrabCount,
@@ -167,8 +220,10 @@ func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*Pla
 	}, nil
 }
 
-// playerSessionRowToItem 将 PlayerSessionRow 转换为 PlayerHistoryItem
-func playerSessionRowToItem(row *domain.PlayerSessionRow) PlayerHistoryItem {
+// playerSessionBillRowToItem 将 PlayerSessionBillRow 转换为 PlayerHistoryItem
+// 数据源来自 game_sessions + bill_record 聚合，不含 session_players 的
+// SeatNo/JoinedAt/LeftAt/Nickname/Avatar 字段，这些字段填零值。
+func playerSessionBillRowToItem(row *domain.PlayerSessionBillRow) PlayerHistoryItem {
 	return PlayerHistoryItem{
 		SessionID:    converter.FormatID(row.SessionID),
 		RoomNo:       row.RoomNo,
@@ -180,14 +235,14 @@ func playerSessionRowToItem(row *domain.PlayerSessionRow) PlayerHistoryItem {
 		StartedAt:    timeToMs(row.StartedAt),
 		EndedAt:      timeToMs(row.EndedAt),
 		EndReason:    row.EndReason,
-		SeatNo:       row.SeatNo,
-		SendCount:    row.SendCount,
-		GrabCount:    row.GrabCount,
+		SendCount:    int(row.SendCount),
+		GrabCount:    int(row.GrabCount),
 		TotalSend:    currency.NewMoneyFromFen(row.TotalSend),
+		FirstRoundFee: currency.NewMoneyFromFen(row.FirstRoundFee),
+		Penalty:       currency.NewMoneyFromFen(row.Penalty),
+		TotalBet:      currency.NewMoneyFromFen(row.TotalBet),
 		TotalGrab:    currency.NewMoneyFromFen(row.TotalGrab),
-		Profit:       currency.NewMoneyFromFen(row.TotalGrab - row.TotalSend),
-		JoinedAt:     row.JoinedAt.UnixMilli(),
-		LeftAt:       timeToMs(row.LeftAt),
+		Profit:       currency.NewMoneyFromFen(row.Profit),
 	}
 }
 
@@ -204,30 +259,6 @@ func gameSessionToSessionInfo(session *model.GameSession) SessionInfo {
 		StartedAt:    timeToMs(session.StartedAt),
 		EndedAt:      timeToMs(session.EndedAt),
 		EndReason:    session.EndReason,
-	}
-}
-
-// sessionPlayerToHistoryItem 将 SessionPlayer + GameSession 组装为 PlayerHistoryItem
-func sessionPlayerToHistoryItem(player *model.SessionPlayer, session *model.GameSession) PlayerHistoryItem {
-	return PlayerHistoryItem{
-		SessionID:    converter.FormatID(session.SessionID),
-		RoomNo:       session.RoomNo,
-		ConfigName:   session.ConfigName,
-		RoomFee:      currency.NewMoneyFromFen(session.RoomFee),
-		MaxRounds:    session.MaxRounds,
-		ActualRounds: session.ActualRounds,
-		Status:       int(session.Status),
-		StartedAt:    timeToMs(session.StartedAt),
-		EndedAt:      timeToMs(session.EndedAt),
-		EndReason:    session.EndReason,
-		SeatNo:       player.SeatNo,
-		SendCount:    player.SendCount,
-		GrabCount:    player.GrabCount,
-		TotalSend:    currency.NewMoneyFromFen(player.TotalSend),
-		TotalGrab:    currency.NewMoneyFromFen(player.TotalGrab),
-		Profit:       currency.NewMoneyFromFen(player.TotalGrab - player.TotalSend),
-		JoinedAt:     player.JoinedAt.UnixMilli(),
-		LeftAt:       timeToMs(player.LeftAt),
 	}
 }
 
