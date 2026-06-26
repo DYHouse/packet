@@ -20,7 +20,7 @@ import (
 
 func main() {
 	count := flag.Int("count", 10, "Number of robot accounts to create")
-	initialBalanceMulti := flag.Float64("initial_balance_multi", 1.5, "Initial virtual balance multiplier")
+	initialBalance := flag.Int64("initial_balance", 1000000, "Initial virtual balance in cents (default: 1000000 = 10000 yuan)")
 	configPath := flag.String("config", "./config/game.yaml", "Path to game config file")
 	flag.Parse()
 
@@ -74,11 +74,11 @@ func main() {
 		&cfg.Avatar,
 	)
 
-	log.Printf("creating %d robot accounts (initial_balance_multi=%.2f)...", *count, *initialBalanceMulti)
+	log.Printf("creating %d robot accounts (initial_balance=%d)...", *count, *initialBalance)
 	start := time.Now()
 
 	// 8. Batch create robots
-	if err := robotAccountSvc.BatchCreateRobots(ctx, *count, *initialBalanceMulti); err != nil {
+	if err := robotAccountSvc.BatchCreateRobotsWithBalance(ctx, *count, *initialBalance); err != nil {
 		log.Fatalf("batch create robots failed: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func main() {
 	fmt.Println("Robot Account Initialization Statistics")
 	fmt.Println("================================================")
 	fmt.Printf("Requested count         : %d\n", *count)
-	fmt.Printf("Initial balance multi   : %.2f\n", *initialBalanceMulti)
+	fmt.Printf("Initial balance         : %d cents (%d yuan)\n", *initialBalance, *initialBalance/100)
 	fmt.Printf("Elapsed time            : %s\n", elapsed)
 	fmt.Printf("Total robots in DB      : %d\n", totalCount)
 	fmt.Printf("Robots in available pool: %d\n", availableCount)

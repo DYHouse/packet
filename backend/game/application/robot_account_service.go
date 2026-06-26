@@ -55,6 +55,7 @@ func NewRobotAccountService(
 // them in Redis (robot set, virtual balance, available pool).
 // initialBalanceMulti is multiplied with the balance required for the default
 // room fee to derive each robot's starting virtual balance.
+// Deprecated: Use BatchCreateRobotsWithBalance instead.
 func (s *RobotAccountService) BatchCreateRobots(ctx context.Context, count int, initialBalanceMulti float64) error {
 	if count <= 0 {
 		return nil
@@ -62,6 +63,16 @@ func (s *RobotAccountService) BatchCreateRobots(ctx context.Context, count int, 
 
 	balanceRequired := int64(defaultRoomFee/5 + defaultRoomFee*9)
 	initialBalance := int64(float64(balanceRequired) * initialBalanceMulti)
+
+	return s.BatchCreateRobotsWithBalance(ctx, count, initialBalance)
+}
+
+// BatchCreateRobotsWithBalance creates the given number of robot accounts with
+// a specified initial virtual balance and registers them in Redis.
+func (s *RobotAccountService) BatchCreateRobotsWithBalance(ctx context.Context, count int, initialBalance int64) error {
+	if count <= 0 {
+		return nil
+	}
 
 	for i := 1; i <= count; i++ {
 		robotUserID := fmt.Sprintf("robot_%05d", i)
