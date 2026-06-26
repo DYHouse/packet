@@ -1,0 +1,10 @@
+- [ ] 后端 `RoundDetail.MySendAmount` 字段已添加到 `history_dto.go`
+- [ ] 后端首局场景：`my_send_amount = roomFee / playerCount`（均摊房费）
+- [ ] 后端我发包场景：`my_send_amount = totalAmount`（全额）
+- [ ] 后端其他场景：`my_send_amount = 0`
+- [ ] 前端 `types.ts` 的 `RoundDetail` 已新增 `my_send_amount` 字段
+- [ ] HistoryRoundItem 当 `my_send_amount > 0` 时右下角显示"发出 {my_send_amount}"（红色 0xe85050）
+- [ ] HistoryRoundItem 当 `my_send_amount = 0` 时右下角仍显示"红包总额 {total_amount}"（白色，行为不变）
+- [ ] 首局系统发包场景：右侧同时显示"抢到/未抢到"+"发出"金额
+- [ ] 我发包场景：右侧同时显示"抢到/未抢到"+"发出"金额
+- [ ] i18n 翻译 key `history.detail.send_amount_round` 已在 zh/en/es 三个语言文件中添加
