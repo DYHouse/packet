@@ -313,6 +313,7 @@ func (s *GameSettleService) creditSessionPayout(ctx context.Context, sessionID i
 		Status:       dto.BillStatusProcessing,
 		Remark:       fmt.Sprintf("会话级抢红包/奖励入账,局ID:%d,入账:%d", sessionID, payOut),
 	}
+	bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID)
 
 	if err := s.billMgr.CreateBill(ctx, bill); err != nil {
 		return fmt.Errorf("create session credit bill failed: %w", err)
@@ -331,7 +332,6 @@ func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *mode
 			return fmt.Errorf("robot virtual credit failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
-		bill.IsRobot = true
 		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
 	}
 

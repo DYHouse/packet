@@ -23,16 +23,18 @@ func DefaultRewardSettlementConfig() *RewardSettlementConfig {
 }
 
 type RewardSettler struct {
-	config     *RewardSettlementConfig
-	billMgr    *BillManager
-	traceIDGen *TraceIDGenerator
+	config       *RewardSettlementConfig
+	billMgr      *BillManager
+	traceIDGen   *TraceIDGenerator
+	robotChecker RobotChecker
 }
 
-func NewRewardSettler(rewardCfg *RewardSettlementConfig, billMgr *BillManager, traceIDGen *TraceIDGenerator) *RewardSettler {
+func NewRewardSettler(rewardCfg *RewardSettlementConfig, billMgr *BillManager, traceIDGen *TraceIDGenerator, robotChecker RobotChecker) *RewardSettler {
 	return &RewardSettler{
-		config:     rewardCfg,
-		billMgr:    billMgr,
-		traceIDGen: traceIDGen,
+		config:       rewardCfg,
+		billMgr:      billMgr,
+		traceIDGen:   traceIDGen,
+		robotChecker: robotChecker,
 	}
 }
 
@@ -94,6 +96,7 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 			Status:       dto.BillStatusSuccess,
 			Remark:       fmt.Sprintf("系统奖励收入(待会话级入账),类型:%d,局ID:%d", settlement.RewardType, settlement.RoundID),
 		}
+		playerBill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, player.UserID)
 		allBills = append(allBills, playerBill)
 	}
 

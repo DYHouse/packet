@@ -143,7 +143,7 @@ func NewApplicationWithConfig(cfg *config.Config) (*Application, error) {
 
 	deductSvc := settlementService.NewDeductService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
 	refundSvc := settlementService.NewRefundService(platformClient, settlementRecorder, redisClient, traceIDGen, db, platformCfg, userIDConvert, callMgr)
-	rewardSettler := settlementService.NewRewardSettler(settlementService.DefaultRewardSettlementConfig(), settlementRecorder, traceIDGen)
+	rewardSettler := settlementService.NewRewardSettler(settlementService.DefaultRewardSettlementConfig(), settlementRecorder, traceIDGen, robotChecker)
 	gameSettleSvc := settlementService.NewGameSettleService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
 
 	settlementSvc := settlementService.NewSettlementService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, deductSvc, rewardSettler, gameSettleSvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)

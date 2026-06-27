@@ -210,6 +210,8 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 		Status:       dto.BillStatusProcessing,
 		Remark:       fmt.Sprintf("惩罚扣款,类型:%s,回合:%d", req.PenaltyType, req.RoundNo),
 	}
+	isRobot := s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID)
+	playerBill.IsRobot = isRobot
 
 	platformBill := &model.BillRecord{
 		RoundTraceID: roundTraceID,
@@ -227,6 +229,16 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 	// 同一事务创建两个 Bill，保证账目配对
 	if err := s.billMgr.CreateBillsPairInTransaction(ctx, playerBill, platformBill); err != nil {
 		return fmt.Errorf("create penalty bills failed: %w", err)
+	}
+
+	// 机器人虚拟通道：跳过 platform.Debit，直接走虚拟钱包扣款
+	if isRobot {
+		if err := s.virtualBalance.Deduct(ctx, req.UserID, req.Amount); err != nil {
+			s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusFailed, err.Error())
+			return fmt.Errorf("robot virtual deduct penalty failed: %w", err)
+		}
+		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, req.UserID)
+		return s.billMgr.UpdateBillSuccess(ctx, playerBill.ID, 0, balanceAfter)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, req.UserID)
@@ -328,6 +340,7 @@ func (s *SettlementService) DistributePenaltyFromPlatform(ctx context.Context, r
 				Status:       dto.BillStatusSuccess,
 				Remark:       fmt.Sprintf("罚款分红,总额:%d,原因:%s", req.Amount, req.Reason),
 			}
+			shareBill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, recipientID)
 			allBills = append(allBills, shareBill)
 		}
 	}

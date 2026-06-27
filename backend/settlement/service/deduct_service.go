@@ -113,6 +113,7 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 				Status:       dto.BillStatusProcessing,
 				Remark:       fmt.Sprintf("首回合平摊扣款,会话ID:%d,回合:%d", req.SessionID, req.RoundNo),
 			}
+			bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, player.UserID)
 			bills = append(bills, bill)
 		}
 
@@ -204,7 +205,6 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 			return fmt.Errorf("robot virtual deduct failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
-		bill.IsRobot = true
 		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
 	}
 
@@ -507,6 +507,7 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 			Status:       dto.BillStatusProcessing,
 			Remark:       req.Remark,
 		}
+		bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID)
 
 		if err := s.billMgr.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
 			return fmt.Errorf("create round settlement and bill failed: %w", err)
