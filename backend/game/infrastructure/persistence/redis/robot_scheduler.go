@@ -2,38 +2,12 @@ package redis
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 )
-
-// RobotRoomKey 房间机器人集合 Redis key
-func RobotRoomKey(roomID string) string {
-	return fmt.Sprintf("robot:room:%s", roomID)
-}
-
-// RobotAssignLockKey 机器人分配锁 Redis key
-func RobotAssignLockKey(robotUserID int64) string {
-	return fmt.Sprintf("robot:assign:%d", robotUserID)
-}
-
-// RobotRoomAssignLockKey 房间分配限流锁 Redis key
-func RobotRoomAssignLockKey(roomID string) string {
-	return fmt.Sprintf("robot:room_assign:%s", roomID)
-}
-
-// RobotRecycleCooldownKey 机器人回收冷却 Redis key
-func RobotRecycleCooldownKey(userID int64) string {
-	return fmt.Sprintf("robot:recycle_cooldown:%d", userID)
-}
-
-// RobotSchedulerActiveKey 调度器活跃机器人集合 Redis key
-func RobotSchedulerActiveKey() string {
-	return "robot:scheduler:active"
-}
 
 // RobotSchedulerRedis 机器人调度器状态 Redis 服务
 type RobotSchedulerRedis struct {

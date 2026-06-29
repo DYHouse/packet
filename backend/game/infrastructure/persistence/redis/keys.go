@@ -56,6 +56,17 @@ const (
 	KeyRewardCycleLeopard  = keyPrefix + ":reward:cycle:%s:%s:leopard"
 	KeyProfitDaily         = keyPrefix + ":profit:daily:%s"
 	KeySessionPlayerTotals = keyPrefix + ":session:%s:player:totals"
+
+	// 机器人相关 key（统一 cashparty: 前缀，遵循本文件规范）
+	KeyRobotPoolAvailable       = keyPrefix + ":robot:pool:available"
+	KeyRobotRoom                = keyPrefix + ":robot:room:%s"
+	KeyRobotAssignLock          = keyPrefix + ":robot:assign:%d"
+	KeyRobotRoomAssignLock      = keyPrefix + ":robot:room_assign:%s"
+	KeyRobotRecycleCooldown     = keyPrefix + ":robot:recycle_cooldown:%d"
+	KeyRobotSchedulerActive     = keyPrefix + ":robot:scheduler:active"
+	KeyRobotVirtualBalance      = keyPrefix + ":robot:virtual_balance:%d"
+	KeyRobotVirtualBalanceDirty = keyPrefix + ":robot:virtual_balance:dirty"
+	KeyRobotUserIDs             = keyPrefix + ":robot:user_ids"
 )
 
 func RoomHashKey(roomID string) string {
@@ -224,4 +235,51 @@ func ProfitDailyKey(date string) string {
 
 func SessionPlayerTotalsKey(sessionID string) string {
 	return fmt.Sprintf(KeySessionPlayerTotals, sessionID)
+}
+
+// 机器人 key 工厂函数
+
+// RobotPoolAvailableKey 可用机器人账号池 key
+func RobotPoolAvailableKey() string {
+	return KeyRobotPoolAvailable
+}
+
+// RobotRoomKey 房间机器人集合 key
+func RobotRoomKey(roomID string) string {
+	return fmt.Sprintf(KeyRobotRoom, roomID)
+}
+
+// RobotAssignLockKey 机器人分配锁 key
+func RobotAssignLockKey(robotUserID int64) string {
+	return fmt.Sprintf(KeyRobotAssignLock, robotUserID)
+}
+
+// RobotRoomAssignLockKey 房间分配限流锁 key
+func RobotRoomAssignLockKey(roomID string) string {
+	return fmt.Sprintf(KeyRobotRoomAssignLock, roomID)
+}
+
+// RobotRecycleCooldownKey 机器人回收冷却 key
+func RobotRecycleCooldownKey(userID int64) string {
+	return fmt.Sprintf(KeyRobotRecycleCooldown, userID)
+}
+
+// RobotSchedulerActiveKey 调度器活跃机器人集合 key
+func RobotSchedulerActiveKey() string {
+	return KeyRobotSchedulerActive
+}
+
+// RobotVirtualBalanceKey 机器人虚拟余额 key
+func RobotVirtualBalanceKey(userID int64) string {
+	return fmt.Sprintf(KeyRobotVirtualBalance, userID)
+}
+
+// RobotVirtualBalanceDirtyKey 虚拟余额脏数据集合 key
+func RobotVirtualBalanceDirtyKey() string {
+	return KeyRobotVirtualBalanceDirty
+}
+
+// RobotUserIDsKey 机器人用户ID集合 key
+func RobotUserIDsKey() string {
+	return KeyRobotUserIDs
 }

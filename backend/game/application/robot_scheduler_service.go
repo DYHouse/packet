@@ -375,7 +375,7 @@ func (s *RobotSchedulerService) checkPoolReserve(ctx context.Context) {
 // associated with rooms that are no longer in Waiting or Playing state. It
 // guards against missed OnGameEnd events.
 func (s *RobotSchedulerService) cleanupEndedRooms(ctx context.Context) {
-	const scanPattern = "robot:room:*"
+	const scanPattern = "cashparty:robot:room:*"
 	const scanCount = 200
 
 	roomIDs := s.scanRoomIDs(ctx, scanPattern, scanCount)

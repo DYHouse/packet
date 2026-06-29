@@ -3,7 +3,6 @@ package redis
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
@@ -11,21 +10,6 @@ import (
 	"github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	goredis "github.com/redis/go-redis/v9"
 )
-
-// RobotVirtualBalanceKey 机器人虚拟余额 Redis key
-func RobotVirtualBalanceKey(userID int64) string {
-	return fmt.Sprintf("robot:virtual_balance:%d", userID)
-}
-
-// RobotVirtualBalanceDirtyKey 虚拟余额脏数据集合 Redis key
-func RobotVirtualBalanceDirtyKey() string {
-	return "robot:virtual_balance:dirty"
-}
-
-// RobotUserIDsKey 机器人用户ID集合 Redis key
-func RobotUserIDsKey() string {
-	return "robot:user_ids"
-}
 
 // VirtualBalanceService 虚拟余额服务
 type VirtualBalanceService struct {
@@ -39,22 +23,6 @@ func NewVirtualBalanceService(redis *cRedis.Client, repo *mysql.RobotAccountRepo
 		redis: redis,
 		repo:  repo,
 	}
-}
-
-// Deduct 虚拟扣款（原子操作）
-func (s *VirtualBalanceService) Deduct(ctx context.Context, userID int64, amount int64) error {
-	key := RobotVirtualBalanceKey(userID)
-	newBalance, err := s.redis.IncrBy(ctx, key, -amount).Result()
-	if err != nil {
-		return err
-	}
-	if newBalance < 0 {
-		return errors.New("virtual balance cannot be negative")
-	}
-	if err := s.redis.SAdd(ctx, RobotVirtualBalanceDirtyKey(), converter.FormatID(userID)).Err(); err != nil {
-		return err
-	}
-	return nil
 }
 
 // Credit 虚拟入账（原子操作）

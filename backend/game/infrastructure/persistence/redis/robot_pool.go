@@ -8,11 +8,6 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 )
 
-// RobotPoolAvailableKey 可用机器人账号池 Redis key
-func RobotPoolAvailableKey() string {
-	return "robot:pool:available"
-}
-
 // RobotPoolService 机器人账号池服务
 type RobotPoolService struct {
 	redis *cRedis.Client

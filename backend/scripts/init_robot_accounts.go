@@ -144,7 +144,7 @@ func clearRobotAccounts(ctx context.Context, db *gorm.DB, redisClient *cRedis.Cl
 
 	// 3. Clear Redis robot-related keys using raw client
 	rawClient := redisClient.Raw()
-	robotKeys, err := rawClient.Keys(ctx, "robot:*").Result()
+	robotKeys, err := rawClient.Keys(ctx, "cashparty:robot:*").Result()
 	if err != nil {
 		return fmt.Errorf("get robot keys failed: %w", err)
 	}
