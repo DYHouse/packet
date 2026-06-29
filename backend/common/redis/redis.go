@@ -295,4 +295,3 @@ func (c *Client) Subscribe(ctx context.Context, channels ...string) *redis.PubSu
 func (c *Client) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
 	return c.rdb.Publish(ctx, channel, message)
 }
-

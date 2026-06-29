@@ -307,11 +307,18 @@
 
 ## Phase 6: 验证
 
-- [ ] Task 34: 编译与基础验证
-  - [ ] SubTask 34.1: go build ./... 编译通过
-  - [ ] SubTask 34.2: go vet ./... 无警告
-  - [ ] SubTask 34.3: go test -race ./... 现有测试通过
-  - [ ] SubTask 34.4: gofmt -l 检查格式
+- [x] Task 34: 编译与基础验证
+  - [x] SubTask 34.1: go build ./... 编译通过
+    - `go build ./common/... ./game/... ./settlement/... ./gateway/... ./api/...` 通过
+    - scripts 目录预先存在多 main 冲突（clear_data/check_tables/force_end_room/init_robot_accounts/init_rooms/test_game_apis/test_websocket 同目录），与本次修复无关，跳过
+  - [x] SubTask 34.2: go vet ./... 无警告
+    - `go vet ./common/... ./game/... ./settlement/... ./gateway/... ./api/...` 通过，无警告
+  - [x] SubTask 34.3: go test -race ./... 现有测试通过
+    - `go test -race -count=1 -timeout 120s` 通过
+    - game/algorithm 1.67s ok, gateway 2.33s ok，其他包无测试文件
+  - [x] SubTask 34.4: gofmt -l 检查格式
+    - 本次修改的 12 个文件中 2 个有格式问题（db_repository.go, redis.go），已 `gofmt -w` 修复
+    - 其他 33 个文件是预先存在的格式问题（非本次修复引入），与本次修复无关
 
 # Task Dependencies
 

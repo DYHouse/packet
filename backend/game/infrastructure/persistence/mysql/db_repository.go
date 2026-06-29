@@ -32,12 +32,12 @@ func NewDBRepository(db *gorm.DB) domain.DBRepository {
 	}
 }
 
-func (r *DBRepositoryImpl) RoomDBRepo() domain.RoomDBRepository          { return r.roomRepo }
-func (r *DBRepositoryImpl) SessionDBRepo() domain.SessionDBRepository    { return r.sessionRepo }
-func (r *DBRepositoryImpl) UserDBRepo() domain.UserDBRepository          { return r.userRepo }
+func (r *DBRepositoryImpl) RoomDBRepo() domain.RoomDBRepository             { return r.roomRepo }
+func (r *DBRepositoryImpl) SessionDBRepo() domain.SessionDBRepository       { return r.sessionRepo }
+func (r *DBRepositoryImpl) UserDBRepo() domain.UserDBRepository             { return r.userRepo }
 func (r *DBRepositoryImpl) RoomConfigDBRepo() domain.RoomConfigDBRepository { return r.roomConfigRepo }
-func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository        { return r.roundRepo }
-func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository  { return r.historyRepo }
+func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository           { return r.roundRepo }
+func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository       { return r.historyRepo }
 
 func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx domain.Transaction) error) error {
 	return r.db.WithContext(ctx).Transaction(func(gormTx *gorm.DB) error {
@@ -66,7 +66,7 @@ func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
 	}
 }
 
-func (t *GormTransactionImpl) RoomDBRepo() domain.RoomDBRepository    { return t.roomRepo }
+func (t *GormTransactionImpl) RoomDBRepo() domain.RoomDBRepository       { return t.roomRepo }
 func (t *GormTransactionImpl) SessionDBRepo() domain.SessionDBRepository { return t.sessionRepo }
-func (t *GormTransactionImpl) UserDBRepo() domain.UserDBRepository    { return t.userRepo }
-func (t *GormTransactionImpl) RoundDBRepo() domain.RoundDBRepository { return t.roundRepo }
+func (t *GormTransactionImpl) UserDBRepo() domain.UserDBRepository       { return t.userRepo }
+func (t *GormTransactionImpl) RoundDBRepo() domain.RoundDBRepository     { return t.roundRepo }
