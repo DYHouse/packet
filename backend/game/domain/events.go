@@ -44,11 +44,6 @@ type SpectatorLeavePayload struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type PlayerLeavePayload struct {
-	SeatNo int    `json:"seat_no"`
-	Reason string `json:"reason,omitempty"`
-}
-
 type SeatSelectPayload struct {
 	SeatNo   int    `json:"seat_no"`
 	Nickname string `json:"nickname,omitempty"`
@@ -69,10 +64,6 @@ type PlayerReadyPayload struct {
 type SpectatorKickPayload struct {
 	SeatNo int    `json:"seat_no"`
 	Reason string `json:"reason"`
-}
-
-type PlayerDisconnectPayload struct {
-	SeatNo int `json:"seat_no"`
 }
 
 type PlayerReconnectPayload struct {
@@ -291,32 +282,6 @@ func NewSpectatorKickEvent(roomID, userID string, seatNo int, reason string) *Ro
 	}
 }
 
-func NewPlayerLeaveEvent(roomID, userID string, seatNo int, reason string) *RoomEvent {
-	return &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventPlayerLeave,
-		RoomID:    roomID,
-		UserID:    userID,
-		Payload: PlayerLeavePayload{
-			SeatNo: seatNo,
-			Reason: reason,
-		},
-		OccurredAt: time.Now(),
-	}
-}
-
-func NewPlayerDisconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
-	return &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventPlayerDisconnect,
-		RoomID:    roomID,
-		UserID:    userID,
-		Payload: PlayerDisconnectPayload{
-			SeatNo: seatNo,
-		},
-		OccurredAt: time.Now(),
-	}
-}
 
 func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
 	return &RoomEvent{

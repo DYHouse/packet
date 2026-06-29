@@ -51,8 +51,6 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		handleErr = c.handleSpectatorJoin(ctx, event)
 	case domain.RoomEventSpectatorLeave:
 		handleErr = c.handleSpectatorLeave(ctx, event)
-	case domain.RoomEventPlayerLeave:
-		handleErr = c.handlePlayerLeave(ctx, event)
 	case domain.RoomEventPlayerReady:
 		handleErr = c.handlePlayerReady(ctx, event)
 	case domain.RoomEventSeatCancel:
@@ -106,10 +104,6 @@ func (c *RoomEventConsumer) handleSpectatorJoin(ctx context.Context, event *doma
 }
 
 func (c *RoomEventConsumer) handleSpectatorLeave(ctx context.Context, event *domain.RoomEvent) error {
-	return c.syncRoomCounts(ctx, event)
-}
-
-func (c *RoomEventConsumer) handlePlayerLeave(ctx context.Context, event *domain.RoomEvent) error {
 	return c.syncRoomCounts(ctx, event)
 }
 

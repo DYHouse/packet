@@ -96,10 +96,15 @@
   - [x] SubTask 12.4: go build ./game/... + go vet ./game/... 通过；底层 KafkaBroadcaster/RedisPubSubBroadcaster 已在 Error 级别记发送失败，本层 Warn 补业务上下文，不阻塞主流程
   - 选择 Warn 而非 Error：广播失败是预期内可恢复故障（玩家可重连拉状态恢复），避免 Error 级别告警风暴
 
-- [ ] Task 13: room_event_consumer 解析失败不丢消息 (C-08)
-  - [ ] SubTask 13.1: ParseRoomEvent 失败时返回 error 而非 nil
-  - [ ] SubTask 13.2: default 分支返回 error 而非 nil
-  - [ ] SubTask 13.3: 验证格式错误消息会重试而非丢失
+- [x] Task 13: room_event_consumer 解析失败不丢消息 (C-08) — **经核实为误报，无需修复**
+  - 核实结论：consumer 唯一职责是 syncRoomCounts（Redis→DB 快照同步），幂等且最终一致
+  - ParseRoomEvent 失败 return nil 正确：坏 JSON 重试无用，下次事件会刷新 DB
+  - default 分支 return nil 正确：未处理的事件类型不影响 count，本就该跳过
+  - DLQ 方案反而有害：旧消息重放会用旧 count 覆盖新 count，造成数据错误
+  - 可选改进：加 metric 监控失败率（非 bug 修复，属可观测性增强，不在本 spec 范围）
+  - 顺带清理死代码：删除从未被调用的 NewPlayerLeaveEvent / NewPlayerDisconnectEvent 函数、PlayerLeavePayload / PlayerDisconnectPayload struct、consumer 中对应的 case 分支与 handlePlayerLeave 方法
+  - 保留 RoomEventPlayerLeave / RoomEventPlayerDisconnect 常量（iota 链中段，删除会改变后续常量值，破坏 Kafka 消息兼容性）
+  - go build ./game/... + go vet ./game/... 通过
 
 - [ ] Task 14: 消费幂等用 SET NX 原子抢占 (C-09)
   - [ ] SubTask 14.1: game_event_consumer isProcessed/markProcessed 合并为 tryAcquire（SetNX）
