@@ -111,6 +111,7 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		"cashparty",
 		// 预生成随机起始偏移，Lua 侧用 % packetCount 取模，避免在 Lua 内调用 math.random
 		// （Redis Lua 禁用 math.random，会导致主从复制不一致）
+		// 1000 取 packetCount 上限 100 的 10 倍冗余，模偏差 < 1% 对机器人选包场景可接受
 		rand.Intn(1000),
 	}
 
