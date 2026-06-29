@@ -397,23 +397,16 @@ func (m *BillManager) GetBillsBySessionTypeAndUser(ctx context.Context, sessionI
 	return bills, err
 }
 
-// CreateBillsAndUpdateSettlement 在同一事务中批量创建账单并更新轮次结算状态
-func (m *BillManager) CreateBillsAndUpdateSettlement(ctx context.Context, roundTraceID string, settleAmount int64, settleUserCount int, settledAt time.Time, bills []*model.BillRecord) error {
+// CreateBillsOnly 仅批量创建账单，不更新轮次结算状态
+// 用于 creditRound：round_settlement.status 由 SettleRound 在所有子结算（credit+reward）成功后统一置为 Credited
+func (m *BillManager) CreateBillsOnly(ctx context.Context, bills []*model.BillRecord) error {
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, bill := range bills {
 			if err := tx.Create(bill).Error; err != nil {
 				return err
 			}
 		}
-		return tx.Model(&model.RoundSettlement{}).
-			Where("round_trace_id = ?", roundTraceID).
-			Updates(map[string]interface{}{
-				"status":               dto.RoundStatusCredited,
-				"settle_amount":        settleAmount,
-				"settle_user_count":    settleUserCount,
-				"settle_success_count": settleUserCount,
-				"settled_at":           &settledAt,
-			}).Error
+		return nil
 	})
 }
 

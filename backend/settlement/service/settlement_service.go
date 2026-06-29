@@ -97,14 +97,26 @@ func (s *SettlementService) SettleRound(ctx context.Context, req *dto.RoundSettl
 		existingSettlement.RewardType = req.RewardType
 		existingSettlement.RewardAmount = req.RewardAmount
 
-		if err := s.creditRound(ctx, existingSettlement, req.Players); err != nil {
+		// creditRound 仅写入 grab/commission BillRecord，不在此处标记 round_settlement.status = Credited。
+		// status 由 SettleRound 在 credit + reward 全部成功后统一标记，避免 reward 失败但 round 被标 Credited
+		// 导致重试时进入 L83-L84 早返回分支、reward 永远无法补偿。
+		totalSettleAmount, settleUserCount, err := s.creditRound(ctx, existingSettlement, req.Players)
+		if err != nil {
 			return err
 		}
 
 		if req.RewardType > 0 && req.RewardAmount > 0 {
 			if err := s.rewardSettler.SettleReward(ctx, existingSettlement, req.Players); err != nil {
-				logger.Error("settle system reward failed", "round_id", req.RoundID, "error", err)
+				// 上抛 err 触发 caller (game_event_consumer) 事务回滚，并保证 Kafka 重试时
+				// round_settlement.status 仍非 Credited，SettleReward 能被重新调用。
+				return fmt.Errorf("settle system reward failed: %w", err)
 			}
+		}
+
+		// 所有子结算成功后才标记 round_settlement.status = Credited
+		now := time.Now()
+		if err := s.billMgr.UpdateRoundSettlementCredited(ctx, existingSettlement.RoundTraceID, totalSettleAmount, settleUserCount, &now); err != nil {
+			return fmt.Errorf("update round settlement credited failed: %w", err)
 		}
 
 		return nil
@@ -113,7 +125,10 @@ func (s *SettlementService) SettleRound(ctx context.Context, req *dto.RoundSettl
 
 // creditRound handles round-level internal bookkeeping: creates BillRecord entries with Success status
 // without calling platform.Credit. Actual fund movement happens at session level via net settlement.
-func (s *SettlementService) creditRound(ctx context.Context, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) error {
+//
+// 返回 totalSettleAmount/settleUserCount 供 SettleRound 在所有子结算成功后统一标记 round_settlement.status。
+// 不再在此处调用 UpdateRoundSettlementCredited，避免 reward 失败后 status 被提前置位导致重试无法补偿。
+func (s *SettlementService) creditRound(ctx context.Context, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
 	if settlement.Commission > 0 {
 		if err := s.settleCommission(ctx, settlement); err != nil {
 			logger.Error("settle commission failed", "round_id", settlement.RoundID, "error", err)
@@ -157,13 +172,13 @@ func (s *SettlementService) creditRound(ctx context.Context, settlement *model.R
 		settleUserCount++
 	}
 
-	if len(bills) == 0 {
-		now := time.Now()
-		return s.billMgr.UpdateRoundSettlementCredited(ctx, settlement.RoundTraceID, totalSettleAmount, settleUserCount, &now)
+	if len(bills) > 0 {
+		if err := s.billMgr.CreateBillsOnly(ctx, bills); err != nil {
+			return 0, 0, fmt.Errorf("create grab bills failed: %w", err)
+		}
 	}
 
-	now := time.Now()
-	return s.billMgr.CreateBillsAndUpdateSettlement(ctx, settlement.RoundTraceID, totalSettleAmount, settleUserCount, now, bills)
+	return totalSettleAmount, settleUserCount, nil
 }
 
 func (s *SettlementService) settleCommission(ctx context.Context, settlement *model.RoundSettlement) error {

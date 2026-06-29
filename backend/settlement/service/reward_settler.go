@@ -63,6 +63,14 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 		return nil
 	}
 
+	// 幂等检查：若平台支出 bill 已存在且成功，视为已结算，直接返回 nil。
+	// 防止 Kafka 重试时 SettleRound 上抛 err 触发重试，导致 reward bills 被重复创建。
+	// 与 creditRound 中 GetBillByRoundTypeAndUser 跳过已成功 grab bill 的模式一致。
+	existingBill, err := s.billMgr.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeSystemReward, dto.PlatformAccountID)
+	if err == nil && existingBill != nil && existingBill.Status == dto.BillStatusSuccess {
+		return nil
+	}
+
 	totalDeductAmount := settlement.RewardAmount * playerCount
 
 	allBills := make([]*model.BillRecord, 0, 1+int(playerCount))
