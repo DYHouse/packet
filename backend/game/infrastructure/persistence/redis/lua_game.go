@@ -76,7 +76,8 @@ return {0, tonumber(packetID), amount, position, '', isLast}
 
 // LuaRobotGrabPacket 机器人抢红包脚本（原子操作：从可用列表随机选+抢）
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey]
-// ARGV: [userID, now, grabTimeout, roomID, keyPrefix]
+// ARGV: [userID, now, grabTimeout, roomID, keyPrefix, randOffset]
+// randOffset: Go 侧预生成的随机起始偏移（0 ~ packetCount-1），避免 Lua 内 math.random 导致主从复制不一致
 // 返回: {code, packetID, amount, position, errMsg, isLast}
 const LuaRobotGrabPacket = `
 local availablePacketsKey = KEYS[1]
@@ -90,6 +91,7 @@ local now = tonumber(ARGV[2])
 local grabTimeout = tonumber(ARGV[3])
 local roomID = ARGV[4]
 local keyPrefix = ARGV[5]
+local randOffset = tonumber(ARGV[6]) or 0
 
 local playerData = redis.call('HGET', playersKey, userID)
 if not playerData then
@@ -120,18 +122,12 @@ local chosenPacketID = nil
 local availableKey = nil
 local available = nil
 
--- Shuffle and find the first actually available packet
-math.randomseed(now)
-local shuffled = {}
-for i, pid in ipairs(packetIDs) do
-	shuffled[i] = pid
-end
-for i = #shuffled, 2, -1 do
-	local j = math.random(1, i)
-	shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-end
-
-for _, pid in ipairs(shuffled) do
+-- 从 Go 侧预生成的 randOffset 作为起始偏移，轮询查找第一个可用红包
+-- 避免使用 math.random/math.randomseed（Redis Lua 禁用，会导致主从复制不一致）
+local count = #packetIDs
+for i = 0, count - 1 do
+	local idx = (randOffset + i) % count + 1
+	local pid = packetIDs[idx]
 	availableKey = keyPrefix .. ':packet:available:' .. pid
 	available = redis.call('GET', availableKey)
 	if available and available == '1' then
@@ -216,7 +212,6 @@ if not packets or #packets == 0 then
     return {0, 0, {}}
 end
 
-math.randomseed(now)
 local results = {}
 local playerIdx = 1
 

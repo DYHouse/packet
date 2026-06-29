@@ -109,6 +109,9 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		s.grabTimeout,
 		roomID,
 		"cashparty",
+		// 预生成随机起始偏移，Lua 侧用 % packetCount 取模，避免在 Lua 内调用 math.random
+		// （Redis Lua 禁用 math.random，会导致主从复制不一致）
+		rand.Intn(1000),
 	}
 
 	res, err := s.redis.Eval(ctx, redis.LuaRobotGrabPacket, keys, args...).Slice()
