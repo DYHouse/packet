@@ -6,6 +6,7 @@ import (
 	"github.com/cashparty/backend/common/broadcast"
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/kafka"
+	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 )
 
@@ -21,10 +22,25 @@ func NewGameBroadcaster(cfg *config.BroadcastConfig, producer *kafka.Producer, r
 	}
 }
 
+// Broadcast 房间广播。失败时记 Warn 日志（含业务上下文 roomID/event），不阻塞主流程。
+// 选择 Warn 而非 Error：广播失败是预期内可恢复故障，玩家可通过重连拉状态恢复；
+// 底层 Kafka/RedisBroadcaster 已在 Error 级别记录发送失败，本层只补业务上下文。
 func (b *GameBroadcaster) Broadcast(roomID string, event string, data interface{}, excludeUserID string) {
-	_ = b.broadcaster.Broadcast(context.Background(), roomID, event, data, excludeUserID)
+	if err := b.broadcaster.Broadcast(context.Background(), roomID, event, data, excludeUserID); err != nil {
+		logger.Warn("game broadcast failed",
+			"room_id", roomID,
+			"event", event,
+			"exclude_user_id", excludeUserID,
+			"error", err)
+	}
 }
 
+// BroadcastToUser 单用户推送。失败时记 Warn 日志，不阻塞主流程。
 func (b *GameBroadcaster) BroadcastToUser(userID string, event string, data interface{}) {
-	_ = b.broadcaster.BroadcastToUser(context.Background(), userID, event, data)
+	if err := b.broadcaster.BroadcastToUser(context.Background(), userID, event, data); err != nil {
+		logger.Warn("game broadcast to user failed",
+			"user_id", userID,
+			"event", event,
+			"error", err)
+	}
 }
