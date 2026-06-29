@@ -46,7 +46,7 @@ func (p *GameEventPublisher) publish(ctx context.Context, event *domain.GameEven
 		event.Timestamp = time.Now().Unix()
 	}
 	if event.TraceID == "" {
-		event.TraceID = fmt.Sprintf("evt_%s_%d", event.RoomID, event.Timestamp)
+		return fmt.Errorf("event TraceID must be set by caller")
 	}
 
 	data, err := json.Marshal(event)
