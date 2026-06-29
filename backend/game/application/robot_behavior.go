@@ -68,7 +68,12 @@ func (e *RobotBehaviorEngine) ScheduleAction(roomID string, robotUserID string, 
 // scheduleRetry schedules a retry for a failed robot action with an
 // incremented retry count. If the retry count exceeds the configured maximum,
 // no retry is scheduled.
-func (e *RobotBehaviorEngine) scheduleRetry(roomID string, robotUserID string, action string, retryCount int) {
+//
+// For grab action, roundID must be non-empty to preserve the round context
+// across retries (grab data format: "robotUserID:grab:roundID:uuid:retryCount").
+// For other actions, roundID is ignored and the standard format is used
+// ("robotUserID:action:uuid:retryCount").
+func (e *RobotBehaviorEngine) scheduleRetry(roomID string, robotUserID string, action string, retryCount int, roundID string) {
 	maxRetry := e.config.Behavior.ActionRetryMax
 	if maxRetry <= 0 {
 		maxRetry = 2
@@ -86,7 +91,13 @@ func (e *RobotBehaviorEngine) scheduleRetry(roomID string, robotUserID string, a
 	if delay <= 0 {
 		delay = 2 * time.Second
 	}
-	data := fmt.Sprintf("%s:%s:%s:%d", robotUserID, action, uuid.New().String()[:8], retryCount+1)
+	var data string
+	if action == "grab" && roundID != "" {
+		// grab 格式必须保留 roundID，否则重试时 GrabPacket 拿到错误的 roundID
+		data = fmt.Sprintf("%s:grab:%s:%s:%d", robotUserID, roundID, uuid.New().String()[:8], retryCount+1)
+	} else {
+		data = fmt.Sprintf("%s:%s:%s:%d", robotUserID, action, uuid.New().String()[:8], retryCount+1)
+	}
 	e.scheduler.SetTimeout(context.Background(), scheduler.TimeoutTypeRobot, roomID, data, delay)
 	logger.Info("robot action retry scheduled",
 		"action", action,
@@ -113,10 +124,10 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 	robotUserID := parts[0]
 	action := parts[1]
 
-	// Parse retry count from the last segment (default 0 for old format)
+	// Parse retry count from the last segment (default 0 for old format).
+	// 仅用于非 grab action：grab 固定 5 段格式，retryCount 固定在 parts[4]。
 	retryCount := 0
 	parseRetryFromEnd := func() int {
-		// Try to parse the last segment as retry count
 		for i := len(parts) - 1; i >= 2; i-- {
 			if n, err := strconv.Atoi(parts[i]); err == nil {
 				return n
@@ -125,6 +136,8 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 		return 0
 	}
 
+	// roundID 仅 grab 使用；grab 重试时必须保留 roundID，否则 GrabPacket 会拿到错误的 roundID
+	var roundID string
 	var err error
 	switch action {
 	case "seat":
@@ -134,12 +147,15 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 		retryCount = parseRetryFromEnd()
 		err = e.robotPlayer.Ready(ctx, roomID, robotUserID)
 	case "grab":
-		if len(parts) < 4 {
-			logger.Error("invalid grab timeout data, missing round id", "data", data)
+		// grab 固定 5 段格式：robotUserID:grab:roundID:uuid:retryCount
+		if len(parts) < 5 {
+			logger.Error("invalid grab timeout data, expected 5 parts", "data", data, "got_parts", len(parts))
 			return
 		}
-		roundID := parts[2]
-		retryCount = parseRetryFromEnd()
+		roundID = parts[2]
+		// 固定从 parts[4] 读 retryCount，不用 parseRetryFromEnd
+		// （parseRetryFromEnd 若 roundID 是纯数字可能解析到错误位置）
+		retryCount, _ = strconv.Atoi(parts[4])
 		err = e.robotPlayer.GrabPacket(ctx, roomID, roundID, robotUserID)
 	case "send":
 		retryCount = parseRetryFromEnd()
@@ -162,7 +178,7 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 		)
 		// Schedule retry for transient failures (seat, ready, grab)
 		if action == "seat" || action == "ready" || action == "grab" {
-			e.scheduleRetry(roomID, robotUserID, action, retryCount)
+			e.scheduleRetry(roomID, robotUserID, action, retryCount, roundID)
 		}
 	}
 }
