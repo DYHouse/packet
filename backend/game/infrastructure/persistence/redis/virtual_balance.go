@@ -59,33 +59,47 @@ func (s *VirtualBalanceService) GetBalance(ctx context.Context, userID int64) (i
 }
 
 // SyncToDB 批量同步脏数据到DB（由定时任务调用）
+//
+// 使用 SPOP 逐个原子弹出成员，避免原 SMembers+Del 两步操作的竞态：
+//  1. Del 会误删循环期间其他 goroutine 通过 Credit 新 SAdd 的成员
+//  2. Del 会丢失循环中 DB 更新失败被 continue 跳过的成员
+//
+// SPOP 保证每个成员只被消费一次；处理失败时重新 SAdd 回 dirtyKey 等下次重试。
 func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 	dirtyKey := RobotVirtualBalanceDirtyKey()
-	members, err := s.redis.SMembers(ctx, dirtyKey).Result()
-	if err != nil {
-		return err
-	}
-	for _, member := range members {
+
+	for {
+		// SPOP 原子弹出成员：弹出并删除一步完成，无竞态窗口
+		member, err := s.redis.SPop(ctx, dirtyKey).Result()
+		if err != nil {
+			if errors.Is(err, goredis.Nil) {
+				return nil // 集合为空，同步完成
+			}
+			return err
+		}
+
 		userID, err := converter.ParseIDStrict(member)
 		if err != nil {
-			logger.Error("parse dirty userID failed", "member", member, "error", err)
+			// 无效成员（数据格式错误），丢弃不重试
+			logger.Error("parse dirty userID failed, discard", "member", member, "error", err)
 			continue
 		}
+
 		balance, err := s.redis.Get(ctx, RobotVirtualBalanceKey(userID)).Int64()
 		if err != nil {
-			logger.Error("get virtual balance failed", "user_id", userID, "error", err)
+			// 读取余额失败，重新加回 dirtyKey 等下次重试
+			s.redis.SAdd(ctx, dirtyKey, member)
+			logger.Error("get virtual balance failed, re-add to dirty", "user_id", userID, "error", err)
 			continue
 		}
+
 		if err := s.repo.UpdateBalance(ctx, userID, balance); err != nil {
-			logger.Error("update balance to DB failed", "user_id", userID, "error", err)
+			// DB 更新失败，重新加回 dirtyKey 等下次重试
+			s.redis.SAdd(ctx, dirtyKey, member)
+			logger.Error("update balance to DB failed, re-add to dirty", "user_id", userID, "error", err)
 			continue
 		}
 	}
-	// 清空脏数据集合
-	if err := s.redis.Del(ctx, dirtyKey).Err(); err != nil {
-		return err
-	}
-	return nil
 }
 
 // AddToRobotSet 添加到机器人ID集合（供RobotChecker使用）

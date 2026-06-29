@@ -166,6 +166,11 @@ func (c *Client) SIsMember(ctx context.Context, key string, member interface{}) 
 	return c.rdb.SIsMember(ctx, key, member)
 }
 
+// SPop 原子弹出并删除集合中的一个成员
+func (c *Client) SPop(ctx context.Context, key string) *redis.StringCmd {
+	return c.rdb.SPop(ctx, key)
+}
+
 // Pipeline 创建Pipeline
 func (c *Client) Pipeline() redis.Pipeliner {
 	return c.rdb.Pipeline()
