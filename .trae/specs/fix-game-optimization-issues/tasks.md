@@ -79,11 +79,22 @@
   - 幂等性核实：grab_count/total_grab/send_count/total_send 用 `gorm.Expr("... + 1")` 在 consumer 事务内，事务回滚后这些 +1 也被撤销，重试从原值开始，不存在 +2 问题
   - 发现新 bug（不在 Task 11 范围）：settlement_service.go L104-108 SettleReward 失败只记日志不 return err，creditRound 成功但 reward 未结算时 SettleRound 仍返回 nil，需单独修复
 
-- [ ] Task 12: broadcaster 返回 error 并记录日志 (C-07)
-  - [ ] SubTask 12.1: domain/repository.go Broadcaster 接口 Broadcast/BroadcastToUser 返回 error
-  - [ ] SubTask 12.2: infrastructure/broadcast/broadcaster.go 实现返回 error
-  - [ ] SubTask 12.3: 调用方处理 error（记录 Warn 日志，不中断主流程）
-  - [ ] SubTask 12.4: 验证广播失败有日志可查
+- [x] Task 11.5（新增）: SettleReward 失败吞 err 修复（Task 11 发现的衍生 bug）
+  - [x] SubTask 11.5.1: settlement_service.go SettleRound 中 SettleReward 失败上抛 err（替换原 logger.Error 吞 err），触发 caller (game_event_consumer) 事务回滚
+  - [x] SubTask 11.5.2: creditRound 不再在内部调用 UpdateRoundSettlementCredited/CreateBillsAndUpdateSettlement 标记 Credited；改为返回 (totalSettleAmount, settleUserCount, err) 供 SettleRound 在 credit + reward 全部成功后统一标记 Credited
+  - [x] SubTask 11.5.3: bill_manager.go 删除 CreateBillsAndUpdateSettlement（创建 bill + 标 Credited 的耦合方法），新增纯写 bill 的 CreateBillsOnly
+  - [x] SubTask 11.5.4: reward_settler.go SettleReward 入口加幂等检查（GetBillByRoundTypeAndUser 查平台支出 bill，已成功直接返回 nil），防止 Kafka 重试时 reward bills 重复创建
+  - [x] SubTask 11.5.5: go build ./settlement/... + go vet ./settlement/... + go build ./game/... + go vet ./game/... 全部通过
+  - 修复前：creditRound 标 Credited + caller 提交事务 → 重试早返回 nil，reward 永远丢失
+  - 修复后：creditRound 写 bills（保留），reward err 上抛 → caller 事务回滚 → 重试时 settlement 非 Credited，重新进入 credit+reward；SettleReward 入口幂等检查防止重复创建 bills
+  - 残留风险：reward 最终失败会留下"已写 grab bills 但未 Credited 且无 reward bills"的中间态，需后续接入 SettlementCheckService 巡检
+
+- [x] Task 12: broadcaster 包装层记 Warn 日志（C-07，采用方案 B：spec 原文"返回 error 或至少记录日志告警"后半选项）
+  - [x] SubTask 12.1（方案调整）: domain/repository.go Broadcaster 接口签名保持不变（不改 error 返回值）
+  - [x] SubTask 12.2（方案调整）: infrastructure/broadcast/broadcaster.go 包装层替换 `_ =` 为 `if err := ...; err != nil { logger.Warn(...) }`，Warn 日志带 room_id/event/exclude_user_id/user_id 业务上下文
+  - [x] SubTask 12.3（方案调整）: 35 处调用方零改动（domain 接口未变），由包装层统一处理 error
+  - [x] SubTask 12.4: go build ./game/... + go vet ./game/... 通过；底层 KafkaBroadcaster/RedisPubSubBroadcaster 已在 Error 级别记发送失败，本层 Warn 补业务上下文，不阻塞主流程
+  - 选择 Warn 而非 Error：广播失败是预期内可恢复故障（玩家可重连拉状态恢复），避免 Error 级别告警风暴
 
 - [ ] Task 13: room_event_consumer 解析失败不丢消息 (C-08)
   - [ ] SubTask 13.1: ParseRoomEvent 失败时返回 error 而非 nil
