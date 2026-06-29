@@ -37,7 +37,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		return nil
 	}
 
-	if c.isProcessed(ctx, event) {
+	if !c.tryAcquire(ctx, event) {
 		logger.Debug("event already processed, skipping",
 			"event_type", event.EventType,
 			"room_id", event.RoomID,
@@ -65,6 +65,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 	}
 
 	if handleErr != nil {
+		c.releaseAcquire(ctx, event)
 		logger.Error("handle room event failed",
 			"event_type", event.EventType,
 			"room_id", event.RoomID,
@@ -73,7 +74,6 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		return handleErr
 	}
 
-	c.markProcessed(ctx, event)
 	logger.Info("room event processed",
 		"event_type", event.EventType,
 		"room_id", event.RoomID,
@@ -119,21 +119,34 @@ func (c *RoomEventConsumer) handleSpectatorKick(ctx context.Context, event *doma
 	return c.syncRoomCounts(ctx, event)
 }
 
-func (c *RoomEventConsumer) isProcessed(ctx context.Context, event *domain.RoomEvent) bool {
+// tryAcquire 用 SetNX 原子抢占事件处理权。
+// 返回 true 表示抢占成功（首次处理），false 表示已被其他 consumer 处理过。
+func (c *RoomEventConsumer) tryAcquire(ctx context.Context, event *domain.RoomEvent) bool {
 	if c.redis == nil {
-		return false
+		return true
 	}
 	key := redisKeys.RoomEventProcessedKey(event.EventID)
-	exists, _ := c.redis.Exists(ctx, key).Result()
-	return exists > 0
+	ok, err := c.redis.SetNX(ctx, key, "1", 24*time.Hour).Result()
+	if err != nil {
+		logger.Warn("tryAcquire SetNX failed, fail-open",
+			"event_id", event.EventID,
+			"error", err)
+		return true
+	}
+	return ok
 }
 
-func (c *RoomEventConsumer) markProcessed(ctx context.Context, event *domain.RoomEvent) {
+// releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。
+func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, event *domain.RoomEvent) {
 	if c.redis == nil {
 		return
 	}
 	key := redisKeys.RoomEventProcessedKey(event.EventID)
-	c.redis.Set(ctx, key, "1", 24*time.Hour)
+	if err := c.redis.Del(ctx, key).Err(); err != nil {
+		logger.Warn("releaseAcquire Del failed",
+			"event_id", event.EventID,
+			"error", err)
+	}
 }
 
 func (c *RoomEventConsumer) Start(ctx context.Context) error {

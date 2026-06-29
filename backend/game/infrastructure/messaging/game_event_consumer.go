@@ -54,7 +54,7 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 		return fmt.Errorf("unmarshal event failed: %w", err)
 	}
 
-	if c.isProcessed(ctx, event.TraceID) {
+	if !c.tryAcquire(ctx, event.TraceID) {
 		logger.Warn("event already processed", "trace_id", event.TraceID)
 		return nil
 	}
@@ -74,6 +74,7 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 	}
 
 	if err != nil {
+		c.releaseAcquire(ctx, event.TraceID)
 		logger.Error("handle game event failed",
 			"event_type", event.EventType,
 			"trace_id", event.TraceID,
@@ -81,7 +82,6 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 		return err
 	}
 
-	c.markProcessed(ctx, event.TraceID)
 	return nil
 }
 
@@ -444,21 +444,34 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 	return nil
 }
 
-func (c *GameEventConsumer) isProcessed(ctx context.Context, traceID string) bool {
+// tryAcquire 用 SetNX 原子抢占事件处理权。
+// 返回 true 表示抢占成功（首次处理），false 表示已被其他 consumer 处理过。
+func (c *GameEventConsumer) tryAcquire(ctx context.Context, traceID string) bool {
 	if c.redis == nil {
-		return false
+		return true
 	}
 	key := redisKeys.GameEventProcessedKey(traceID)
-	exists, _ := c.redis.Exists(ctx, key).Result()
-	return exists > 0
+	ok, err := c.redis.SetNX(ctx, key, 1, 7*24*time.Hour).Result()
+	if err != nil {
+		logger.Warn("tryAcquire SetNX failed, fail-open",
+			"trace_id", traceID,
+			"error", err)
+		return true
+	}
+	return ok
 }
 
-func (c *GameEventConsumer) markProcessed(ctx context.Context, traceID string) {
+// releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。
+func (c *GameEventConsumer) releaseAcquire(ctx context.Context, traceID string) {
 	if c.redis == nil {
 		return
 	}
 	key := redisKeys.GameEventProcessedKey(traceID)
-	c.redis.Set(ctx, key, 1, 7*24*time.Hour)
+	if err := c.redis.Del(ctx, key).Err(); err != nil {
+		logger.Warn("releaseAcquire Del failed",
+			"trace_id", traceID,
+			"error", err)
+	}
 }
 
 func parseInt64(v interface{}) int64 {
