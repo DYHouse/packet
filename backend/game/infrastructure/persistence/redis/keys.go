@@ -9,6 +9,7 @@ const (
 	keyRoomPlayersPrefix    = keyPrefix + ":room:players"
 
 	KeyRoomHash          = keyRoomHashPrefix + ":%s"
+	KeyRoomHashPrefix    = keyRoomHashPrefix
 	KeyRoomSpectators    = keyRoomSpectatorsPrefix + ":%s"
 	KeyRoomPlayers       = keyRoomPlayersPrefix + ":%s"
 	KeyPlayerRoom        = keyPrefix + ":player:room:%s"
@@ -60,6 +61,7 @@ const (
 	// 机器人相关 key（统一 cashparty: 前缀，遵循本文件规范）
 	KeyRobotPoolAvailable       = keyPrefix + ":robot:pool:available"
 	KeyRobotRoom                = keyPrefix + ":robot:room:%s"
+	KeyRobotRoomPrefix          = keyPrefix + ":robot:room:"
 	KeyRobotAssignLock          = keyPrefix + ":robot:assign:%d"
 	KeyRobotRoomAssignLock      = keyPrefix + ":robot:room_assign:%s"
 	KeyRobotRecycleCooldown     = keyPrefix + ":robot:recycle_cooldown:%d"

@@ -286,7 +286,7 @@ func (s *RobotSchedulerService) recycleZombieRobots(ctx context.Context, roomID 
 // status is Waiting. The returned candidates are pre-populated with seated
 // count, ready player count and room fee for downstream filtering.
 func (s *RobotSchedulerService) getWaitingRooms(ctx context.Context) []roomCandidate {
-	const scanPattern = "cashparty:room:hash:*"
+	const scanPattern = redis.KeyRoomHashPrefix + ":*"
 	const scanCount = 200
 
 	roomIDs := s.scanRoomIDs(ctx, scanPattern, scanCount)
@@ -375,7 +375,7 @@ func (s *RobotSchedulerService) checkPoolReserve(ctx context.Context) {
 // associated with rooms that are no longer in Waiting or Playing state. It
 // guards against missed OnGameEnd events.
 func (s *RobotSchedulerService) cleanupEndedRooms(ctx context.Context) {
-	const scanPattern = "cashparty:robot:room:*"
+	const scanPattern = redis.KeyRobotRoomPrefix + "*"
 	const scanCount = 200
 
 	roomIDs := s.scanRoomIDs(ctx, scanPattern, scanCount)
