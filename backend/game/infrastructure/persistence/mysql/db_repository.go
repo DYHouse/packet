@@ -7,6 +7,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// DBRepositoryImpl 聚合各子 repo。构造时一次性初始化所有子 repo，
+// 方法直接返回字段，无 lazy init 竞态。NewGormXxxRepository 均为纯内存构造（仅 set db），
+// eager init 零成本，且构造后字段只读，天然并发安全。
 type DBRepositoryImpl struct {
 	db             *gorm.DB
 	roomRepo       domain.RoomDBRepository
@@ -18,58 +21,33 @@ type DBRepositoryImpl struct {
 }
 
 func NewDBRepository(db *gorm.DB) domain.DBRepository {
-	return &DBRepositoryImpl{db: db}
+	return &DBRepositoryImpl{
+		db:             db,
+		roomRepo:       NewGormRoomRepository(db),
+		sessionRepo:    NewGormSessionRepository(db),
+		userRepo:       NewGormUserRepository(db),
+		roomConfigRepo: NewGormRoomConfigRepository(db),
+		roundRepo:      NewGormRoundRepository(db),
+		historyRepo:    NewGormHistoryRepository(db),
+	}
 }
 
-func (r *DBRepositoryImpl) RoomDBRepo() domain.RoomDBRepository {
-	if r.roomRepo == nil {
-		r.roomRepo = NewGormRoomRepository(r.db)
-	}
-	return r.roomRepo
-}
-
-func (r *DBRepositoryImpl) SessionDBRepo() domain.SessionDBRepository {
-	if r.sessionRepo == nil {
-		r.sessionRepo = NewGormSessionRepository(r.db)
-	}
-	return r.sessionRepo
-}
-
-func (r *DBRepositoryImpl) UserDBRepo() domain.UserDBRepository {
-	if r.userRepo == nil {
-		r.userRepo = NewGormUserRepository(r.db)
-	}
-	return r.userRepo
-}
-
-func (r *DBRepositoryImpl) RoomConfigDBRepo() domain.RoomConfigDBRepository {
-	if r.roomConfigRepo == nil {
-		r.roomConfigRepo = NewGormRoomConfigRepository(r.db)
-	}
-	return r.roomConfigRepo
-}
-
-func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository {
-	if r.roundRepo == nil {
-		r.roundRepo = NewGormRoundRepository(r.db)
-	}
-	return r.roundRepo
-}
-
-func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository {
-	if r.historyRepo == nil {
-		r.historyRepo = NewGormHistoryRepository(r.db)
-	}
-	return r.historyRepo
-}
+func (r *DBRepositoryImpl) RoomDBRepo() domain.RoomDBRepository          { return r.roomRepo }
+func (r *DBRepositoryImpl) SessionDBRepo() domain.SessionDBRepository    { return r.sessionRepo }
+func (r *DBRepositoryImpl) UserDBRepo() domain.UserDBRepository          { return r.userRepo }
+func (r *DBRepositoryImpl) RoomConfigDBRepo() domain.RoomConfigDBRepository { return r.roomConfigRepo }
+func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository        { return r.roundRepo }
+func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository  { return r.historyRepo }
 
 func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx domain.Transaction) error) error {
 	return r.db.WithContext(ctx).Transaction(func(gormTx *gorm.DB) error {
-		tx := &GormTransactionImpl{db: gormTx}
+		tx := NewGormTransaction(gormTx)
 		return fn(tx)
 	})
 }
 
+// GormTransactionImpl 事务内的子 repo 聚合。构造时一次性初始化，
+// 避免事务内 lazy init 竞态（虽然事务通常单 goroutine 使用，但保持与 DBRepositoryImpl 一致）。
 type GormTransactionImpl struct {
 	db          *gorm.DB
 	roomRepo    domain.RoomDBRepository
@@ -78,30 +56,17 @@ type GormTransactionImpl struct {
 	roundRepo   domain.RoundDBRepository
 }
 
-func (t *GormTransactionImpl) RoomDBRepo() domain.RoomDBRepository {
-	if t.roomRepo == nil {
-		t.roomRepo = NewGormRoomRepository(t.db)
+func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
+	return &GormTransactionImpl{
+		db:          db,
+		roomRepo:    NewGormRoomRepository(db),
+		sessionRepo: NewGormSessionRepository(db),
+		userRepo:    NewGormUserRepository(db),
+		roundRepo:   NewGormRoundRepository(db),
 	}
-	return t.roomRepo
 }
 
-func (t *GormTransactionImpl) SessionDBRepo() domain.SessionDBRepository {
-	if t.sessionRepo == nil {
-		t.sessionRepo = NewGormSessionRepository(t.db)
-	}
-	return t.sessionRepo
-}
-
-func (t *GormTransactionImpl) UserDBRepo() domain.UserDBRepository {
-	if t.userRepo == nil {
-		t.userRepo = NewGormUserRepository(t.db)
-	}
-	return t.userRepo
-}
-
-func (t *GormTransactionImpl) RoundDBRepo() domain.RoundDBRepository {
-	if t.roundRepo == nil {
-		t.roundRepo = NewGormRoundRepository(t.db)
-	}
-	return t.roundRepo
-}
+func (t *GormTransactionImpl) RoomDBRepo() domain.RoomDBRepository    { return t.roomRepo }
+func (t *GormTransactionImpl) SessionDBRepo() domain.SessionDBRepository { return t.sessionRepo }
+func (t *GormTransactionImpl) UserDBRepo() domain.UserDBRepository    { return t.userRepo }
+func (t *GormTransactionImpl) RoundDBRepo() domain.RoundDBRepository { return t.roundRepo }

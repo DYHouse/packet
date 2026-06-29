@@ -133,10 +133,12 @@
   - [x] SubTask 16.5: go build ./game/... + go vet ./game/... 通过；go test -race ./game/algorithm/... 通过
   - 设计要点：RewardController 内部 config 字段保持裸 *RewardControlConfig（构造后 immutable，整体 RewardController 对象被 atomic.Pointer 替换，无需内部再加锁）；多实例场景安全（atomic.Pointer 是单进程原语，nacos 推送延迟是分布式固有特性，Redis SetNX 保证同一 round 只在一个实例生成）
 
-- [ ] Task 17: db_repository 用 sync.Once 初始化 (C-12)
-  - [ ] SubTask 17.1: db_repository.go 各子 repo 字段加 sync.Once
-  - [ ] SubTask 17.2: RoomDBRepo/SeatDBRepo 等方法用 Once.Do 初始化
-  - [ ] SubTask 17.3: 验证并发调用返回同一实例
+- [x] Task 17: db_repository 并发安全初始化 (C-12) — **方案偏差：用 eager init 替代 sync.Once**
+  - [x] SubTask 17.1: DBRepositoryImpl 所有子 repo 字段在 NewDBRepository 构造时一次性初始化
+  - [x] SubTask 17.2: RoomDBRepo/SessionDBRepo/UserDBRepo/RoomConfigDBRepo/RoundDBRepo/HistoryDBRepo 方法直接返回字段，删除 `if r.xxx == nil` lazy init
+  - [x] SubTask 17.3: GormTransactionImpl 同样改造，新增 NewGormTransaction 构造函数，WithTransaction 用其初始化事务内子 repo
+  - [x] 验证：go build ./game/... + go vet ./game/... 通过
+  - 方案选择理由：所有 NewGormXxxRepository 均为纯内存构造（仅 set db 字段，无 IO 无副作用），eager init 零成本；构造后字段只读，天然并发安全，无锁无 race；代码比 sync.Once 更简洁（避免字段数 × 2 膨胀）；spec 中 sync.Once 只是建议，eager init 同样满足"保证并发安全"核心诉求
 
 - [ ] Task 18: robot_scheduler_service.Start 加锁防重复 (C-14)
   - [ ] SubTask 18.1: robot_scheduler_service.go 加 mutex 和 started 标志
