@@ -5,7 +5,6 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	"math/big"
-	"sync"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
@@ -22,7 +21,6 @@ const (
 type RewardController struct {
 	config *RewardControlConfig
 	redis  *cRedis.Client
-	rngMu  sync.Mutex
 }
 
 func NewRewardController(config *RewardControlConfig, redis *cRedis.Client) *RewardController {
@@ -208,10 +206,8 @@ func (c *RewardController) getRoomConfig(roomID string) *RoomRewardConfig {
 	return c.config.RoomConfigs[roomIDInt64]
 }
 
+// randomFloat 使用 crypto/rand 生成随机数。crand.Reader 本身并发安全，无需额外加锁。
 func (c *RewardController) randomFloat() float64 {
-	c.rngMu.Lock()
-	defer c.rngMu.Unlock()
-
 	n, _ := crand.Int(crand.Reader, big.NewInt(1000000))
 	return float64(n.Int64()) / 1000000.0
 }

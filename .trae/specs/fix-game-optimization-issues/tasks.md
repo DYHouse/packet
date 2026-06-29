@@ -125,12 +125,13 @@
 
 ## Phase 3: P1 高优先级修复 - 并发安全
 
-- [ ] Task 16: PacketGenerator 用 atomic.Pointer[Config] (C-11)
-  - [ ] SubTask 16.1: packet_generator.go config/straightGenerator/leopardGenerator/rewardController 字段改为 atomic.Pointer 包装或整体快照
-  - [ ] 16.2: UpdateConfig 构建新快照后 atomic Store
-  - [ ] SubTask 16.3: Generate/validateRequest/calculateDynamicMinAmount/ValidatePackets 读取侧 atomic Load
-  - [ ] SubTask 16.4: 移除冗余的 rngMu 锁（crypto/rand 本身并发安全）
-  - [ ] SubTask 16.5: go test -race 验证无竞态
+- [x] Task 16: PacketGenerator 用 atomic.Pointer[Config] (C-11)
+  - [x] SubTask 16.1: packet_generator.go config/straightGenerator/leopardGenerator/rewardController 字段改为 atomic.Pointer[X] 包装
+  - [x] SubTask 16.2: UpdateConfig 构建新快照后 atomic Store（4 个 Pointer 各自 Store，读侧 Load 拿到完整一致的一组指针）
+  - [x] SubTask 16.3: Generate 入口 Load 一次快照传给 validateRequest/generateNormalPackets/calculateDynamicMinAmount；ValidatePackets 内 Load；保证一次 Generate 内 config 一致，避免 nacos 推送在执行过程中替换 config 导致校验/计算不一致
+  - [x] SubTask 16.4: 移除 packet_generator.go 与 reward_controller.go 的 rngMu 锁（crypto/rand.Reader 本身并发安全）；randomInt/randomRange/shuffle/randomFloat 删除 Lock/Unlock
+  - [x] SubTask 16.5: go build ./game/... + go vet ./game/... 通过；go test -race ./game/algorithm/... 通过
+  - 设计要点：RewardController 内部 config 字段保持裸 *RewardControlConfig（构造后 immutable，整体 RewardController 对象被 atomic.Pointer 替换，无需内部再加锁）；多实例场景安全（atomic.Pointer 是单进程原语，nacos 推送延迟是分布式固有特性，Redis SetNX 保证同一 round 只在一个实例生成）
 
 - [ ] Task 17: db_repository 用 sync.Once 初始化 (C-12)
   - [ ] SubTask 17.1: db_repository.go 各子 repo 字段加 sync.Once
