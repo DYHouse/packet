@@ -256,13 +256,18 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 				PacketID:       parseInt64(r.PacketID),
 				SessionID:      sessionIDInt64,
 				UserID:         parseInt64(r.UserID),
-				Amount:         r.Amount,
-				IsMin:          isMin,
-				IsAutoAssigned: isAutoAssigned,
-				GrabbedAt:      now,
 			}
-			if err := tx.Create(grabRecord).Error; err != nil {
-				return fmt.Errorf("create grab record failed: %w", err)
+			// 用 FirstOrCreate 防止 Kafka 重试时重复插入（按 round_id + user_id 查重）
+			result := tx.Where(grabRecord).
+				Assign(model.RoundGrabRecord{
+					Amount:         r.Amount,
+					IsMin:          isMin,
+					IsAutoAssigned: isAutoAssigned,
+					GrabbedAt:      now,
+				}).
+				FirstOrCreate(grabRecord)
+			if result.Error != nil {
+				return fmt.Errorf("create or update grab record failed: %w", result.Error)
 			}
 		}
 
@@ -351,10 +356,9 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 		}
 
 		if err := c.settlementService.SettleRound(ctx, settleReq); err != nil {
-			logger.Error("settlement failed",
-				"session_id", sessionIDInt64,
-				"round_id", event.RoundID,
-				"error", err)
+			// SettleRound 失败必须 return err 触发事务回滚，避免 round 标记 Ended 但平台账未结算。
+			// 重试时依赖 SettleRound 内部幂等（RoundStatusCredited 返回 nil）和上面 grab_record 的 FirstOrCreate。
+			return fmt.Errorf("settle round failed: %w", err)
 		}
 
 		return nil
@@ -416,10 +420,7 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 			if err := tx.Model(&model.SessionPlayer{}).
 				Where("session_id = ? AND user_id = ?", sessionIDInt64, parseInt64(fr.UserID)).
 				Update("total_profit", fr.TotalProfit).Error; err != nil {
-				logger.Error("update session player total_profit failed",
-					"session_id", sessionIDInt64,
-					"user_id", fr.UserID,
-					"error", err)
+				return fmt.Errorf("update session player total_profit failed: user_id=%d: %w", parseInt64(fr.UserID), err)
 			}
 		}
 
@@ -428,11 +429,11 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 			"room_id", event.RoomID,
 			"actual_rounds", data.ActualRounds)
 
-		// Trigger game-level settlement after session ends
+		// Trigger game-level settlement after session ends.
+		// SettleGame 失败必须 return err 触发事务回滚，避免 session 标记 Completed 但结算未完成。
+		// 重试时依赖 session 幂等检查（L390-397）和 SettleGame 内部幂等（allSettled 返回 nil）。
 		if err := c.settlementService.SettleGame(ctx, sessionIDInt64); err != nil {
-			logger.Error("game settle failed on session end",
-				"session_id", sessionIDInt64,
-				"error", err)
+			return fmt.Errorf("settle game failed: %w", err)
 		}
 
 		return nil
