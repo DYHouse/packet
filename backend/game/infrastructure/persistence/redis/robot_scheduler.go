@@ -3,9 +3,10 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
+	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 )
 
@@ -46,12 +47,12 @@ func NewRobotSchedulerRedis(redis *cRedis.Client) *RobotSchedulerRedis {
 
 // AddRobotToRoom 添加机器人到房间
 func (s *RobotSchedulerRedis) AddRobotToRoom(ctx context.Context, roomID string, userID int64) error {
-	return s.redis.SAdd(ctx, RobotRoomKey(roomID), userID).Err()
+	return s.redis.SAdd(ctx, RobotRoomKey(roomID), converter.FormatID(userID)).Err()
 }
 
 // RemoveRobotFromRoom 从房间移除机器人
 func (s *RobotSchedulerRedis) RemoveRobotFromRoom(ctx context.Context, roomID string, userID int64) error {
-	return s.redis.SRem(ctx, RobotRoomKey(roomID), userID).Err()
+	return s.redis.SRem(ctx, RobotRoomKey(roomID), converter.FormatID(userID)).Err()
 }
 
 // GetRoomRobots 获取房间内所有机器人
@@ -62,8 +63,9 @@ func (s *RobotSchedulerRedis) GetRoomRobots(ctx context.Context, roomID string) 
 	}
 	ids := make([]int64, 0, len(members))
 	for _, member := range members {
-		userID, err := strconv.ParseInt(member, 10, 64)
+		userID, err := converter.ParseIDStrict(member)
 		if err != nil {
+			logger.Warn("parse room robot userID failed", "member", member, "error", err)
 			continue
 		}
 		ids = append(ids, userID)
@@ -109,17 +111,17 @@ func (s *RobotSchedulerRedis) IsInRecycleCooldown(ctx context.Context, userID in
 
 // AddToActiveSet 添加到活跃集合
 func (s *RobotSchedulerRedis) AddToActiveSet(ctx context.Context, userID int64) error {
-	return s.redis.SAdd(ctx, RobotSchedulerActiveKey(), userID).Err()
+	return s.redis.SAdd(ctx, RobotSchedulerActiveKey(), converter.FormatID(userID)).Err()
 }
 
 // RemoveFromActiveSet 从活跃集合移除
 func (s *RobotSchedulerRedis) RemoveFromActiveSet(ctx context.Context, userID int64) error {
-	return s.redis.SRem(ctx, RobotSchedulerActiveKey(), userID).Err()
+	return s.redis.SRem(ctx, RobotSchedulerActiveKey(), converter.FormatID(userID)).Err()
 }
 
 // IsActiveRobot 检查是否为活跃机器人
 func (s *RobotSchedulerRedis) IsActiveRobot(ctx context.Context, userID int64) (bool, error) {
-	return s.redis.SIsMember(ctx, RobotSchedulerActiveKey(), fmt.Sprintf("%d", userID)).Result()
+	return s.redis.SIsMember(ctx, RobotSchedulerActiveKey(), converter.FormatID(userID)).Result()
 }
 
 // GetActiveCount 获取活跃机器人数量

@@ -2,9 +2,9 @@ package redis
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 
+	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 )
 
@@ -25,12 +25,12 @@ func NewRobotPoolService(redis *cRedis.Client) *RobotPoolService {
 
 // AddToAvailablePool 添加到可用账号池
 func (s *RobotPoolService) AddToAvailablePool(ctx context.Context, userID int64) error {
-	return s.redis.SAdd(ctx, RobotPoolAvailableKey(), userID).Err()
+	return s.redis.SAdd(ctx, RobotPoolAvailableKey(), converter.FormatID(userID)).Err()
 }
 
 // RemoveFromAvailablePool 从可用账号池移除
 func (s *RobotPoolService) RemoveFromAvailablePool(ctx context.Context, userID int64) error {
-	return s.redis.SRem(ctx, RobotPoolAvailableKey(), userID).Err()
+	return s.redis.SRem(ctx, RobotPoolAvailableKey(), converter.FormatID(userID)).Err()
 }
 
 // GetAvailableCount 获取可用账号池数量
@@ -40,7 +40,7 @@ func (s *RobotPoolService) GetAvailableCount(ctx context.Context) (int64, error)
 
 // IsAvailable 检查是否在可用池中
 func (s *RobotPoolService) IsAvailable(ctx context.Context, userID int64) (bool, error) {
-	return s.redis.SIsMember(ctx, RobotPoolAvailableKey(), fmt.Sprintf("%d", userID)).Result()
+	return s.redis.SIsMember(ctx, RobotPoolAvailableKey(), converter.FormatID(userID)).Result()
 }
 
 // GetAvailableRobots 获取所有可用机器人ID
@@ -51,8 +51,9 @@ func (s *RobotPoolService) GetAvailableRobots(ctx context.Context) ([]int64, err
 	}
 	ids := make([]int64, 0, len(members))
 	for _, member := range members {
-		userID, err := strconv.ParseInt(member, 10, 64)
+		userID, err := converter.ParseIDStrict(member)
 		if err != nil {
+			logger.Warn("parse robot userID failed", "member", member, "error", err)
 			continue
 		}
 		ids = append(ids, userID)

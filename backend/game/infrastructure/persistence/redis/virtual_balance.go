@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 
+	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/mysql"
@@ -51,7 +51,7 @@ func (s *VirtualBalanceService) Deduct(ctx context.Context, userID int64, amount
 	if newBalance < 0 {
 		return errors.New("virtual balance cannot be negative")
 	}
-	if err := s.redis.SAdd(ctx, RobotVirtualBalanceDirtyKey(), userID).Err(); err != nil {
+	if err := s.redis.SAdd(ctx, RobotVirtualBalanceDirtyKey(), converter.FormatID(userID)).Err(); err != nil {
 		return err
 	}
 	return nil
@@ -63,7 +63,7 @@ func (s *VirtualBalanceService) Credit(ctx context.Context, userID int64, amount
 	if _, err := s.redis.IncrBy(ctx, key, amount).Result(); err != nil {
 		return err
 	}
-	if err := s.redis.SAdd(ctx, RobotVirtualBalanceDirtyKey(), userID).Err(); err != nil {
+	if err := s.redis.SAdd(ctx, RobotVirtualBalanceDirtyKey(), converter.FormatID(userID)).Err(); err != nil {
 		return err
 	}
 	return nil
@@ -98,7 +98,7 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 		return err
 	}
 	for _, member := range members {
-		userID, err := strconv.ParseInt(member, 10, 64)
+		userID, err := converter.ParseIDStrict(member)
 		if err != nil {
 			logger.Error("parse dirty userID failed", "member", member, "error", err)
 			continue
@@ -122,12 +122,12 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 
 // AddToRobotSet 添加到机器人ID集合（供RobotChecker使用）
 func (s *VirtualBalanceService) AddToRobotSet(ctx context.Context, userID int64) error {
-	return s.redis.SAdd(ctx, RobotUserIDsKey(), userID).Err()
+	return s.redis.SAdd(ctx, RobotUserIDsKey(), converter.FormatID(userID)).Err()
 }
 
 // IsRobot 判断是否为机器人
 func (s *VirtualBalanceService) IsRobot(ctx context.Context, userID int64) (bool, error) {
-	return s.redis.SIsMember(ctx, RobotUserIDsKey(), fmt.Sprintf("%d", userID)).Result()
+	return s.redis.SIsMember(ctx, RobotUserIDsKey(), converter.FormatID(userID)).Result()
 }
 
 // SetBalance 设置虚拟余额（初始化时使用）
