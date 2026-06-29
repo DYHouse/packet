@@ -189,15 +189,15 @@ type NacosConfig struct {
 }
 
 type AlgorithmConfig struct {
-	MinPacketAmount     int64                `mapstructure:"min_packet_amount"`
-	StraightProbability float64              `mapstructure:"straight_probability"`
-	LeopardProbability  float64              `mapstructure:"leopard_probability"`
+	MinPacketAmount     *int64               `mapstructure:"min_packet_amount"`
+	StraightProbability *float64             `mapstructure:"straight_probability"`
+	LeopardProbability  *float64             `mapstructure:"leopard_probability"`
 	RewardControl       *RewardControlConfig `mapstructure:"reward_control"`
 }
 
 type RewardControlConfig struct {
 	GlobalSwitchEnabled  bool                        `mapstructure:"global_switch_enabled"`
-	ProfitRatioThreshold float64                     `mapstructure:"profit_ratio_threshold"`
+	ProfitRatioThreshold *float64                    `mapstructure:"profit_ratio_threshold"`
 	RoomConfigs          map[int64]*RoomRewardConfig `mapstructure:"room_configs"`
 }
 

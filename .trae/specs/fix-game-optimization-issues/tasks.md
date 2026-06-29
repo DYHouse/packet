@@ -140,15 +140,18 @@
   - [x] 验证：go build ./game/... + go vet ./game/... 通过
   - 方案选择理由：所有 NewGormXxxRepository 均为纯内存构造（仅 set db 字段，无 IO 无副作用），eager init 零成本；构造后字段只读，天然并发安全，无锁无 race；代码比 sync.Once 更简洁（避免字段数 × 2 膨胀）；spec 中 sync.Once 只是建议，eager init 同样满足"保证并发安全"核心诉求
 
-- [ ] Task 18: robot_scheduler_service.Start 加锁防重复 (C-14)
-  - [ ] SubTask 18.1: robot_scheduler_service.go 加 mutex 和 started 标志
-  - [ ] SubTask 18.2: Start 检查已启动则拒绝（返回 error 或 nil）
-  - [ ] SubTask 18.3: Stop 时重置 started 标志
+- [x] Task 18: robot_scheduler_service.Start 加锁防重复 (C-14) — **经核实为误报，无需修复**
+  - 核实结论：`Start()` 仅由 `container.go` L352 `StartSchedulers()` 调用，`StartSchedulers()` 仅由 `app.go` L192 `Application.Start()` 调用一次，进程启动期间唯一一次，无任何路径会重复调用
+  - Stop 已是幂等的（`if s.cancel != nil` 检查），多次调用安全
+  - 多实例场景：每个 game 服务器是独立进程，进程内 Start 仍只调一次；sync.Mutex+started 标志是进程内原语，对多实例无保护作用；多实例的扫描竞态已由 Redis 分布式锁（AcquireRoomAssignLock/AcquireAssignLock）保护
+  - spec 中未给出具体复现路径，防御性"加锁防重复"属过度工程，违反 KISS 原则
 
-- [ ] Task 19: convertAlgorithmConfig 用指针区分 0 值 (C-17)
-  - [ ] SubTask 19.1: config 结构体字段改为指针类型（*int64/*float64）或引入 Optional 包装
-  - [ ] SubTask 19.2: app.go convertAlgorithmConfig 判断 nil 而非 > 0
-  - [ ] SubTask 19.3: 验证显式设为 0 时配置生效
+- [x] Task 19: convertAlgorithmConfig 用指针区分 0 值 (C-17)
+  - [x] SubTask 19.1: common/config/config.go AlgorithmConfig 的 MinPacketAmount/StraightProbability/LeopardProbability 改为 *int64/*float64；RewardControlConfig.ProfitRatioThreshold 改为 *float64（下游 algorithm.Config 保持 float64，仅传输层用指针）
+  - [x] SubTask 19.2: app.go convertAlgorithmConfig 判断 nil 而非 > 0；ProfitRatioThreshold 在 RewardControl 块内单独判断 nil 覆盖 default 0.05
+  - [x] SubTask 19.3: 显式设为 0 的语义生效：MinPacketAmount=0 允许 0 金额；StraightProbability/LeopardProbability=0 关闭对应奖励类型；ProfitRatioThreshold=0 表示无阈值（reward_controller.go isProbabilityAllowed 内 `> 0` 才检查）
+  - 验证：go build ./game/... ./common/... + go vet ./game/... ./common/... 通过
+  - 影响面：AlgorithmConfig 仅由 app.go convertAlgorithmConfig 读取（已 grep 确认），无其他调用方；mapstructure 原生支持指针类型，yaml 字段存在则解析为指针，不存在则 nil，现有 algorithm.yaml 配置无需修改
 
 - [ ] Task 20: reward_controller.checkGuarantee 用 SetNX (C-22)
   - [ ] SubTask 20.1: reward_controller.go checkGuarantee 用 SetNX 替代 Get+Set

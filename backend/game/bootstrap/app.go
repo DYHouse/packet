@@ -299,21 +299,28 @@ func Run() {
 func convertAlgorithmConfig(cfg *config.AlgorithmConfig) *algorithm.Config {
 	algoCfg := algorithm.DefaultConfig()
 
-	if cfg.MinPacketAmount > 0 {
-		algoCfg.MinPacketAmount = cfg.MinPacketAmount
+	// 用 nil 判断"未设置"，区分"显式 0"与"未配置"。
+	// 显式 0 的语义：MinPacketAmount=0 允许 0 金额红包；
+	//               StraightProbability/LeopardProbability=0 关闭该奖励类型；
+	//               ProfitRatioThreshold=0 表示无阈值（reward_controller.go isProbabilityAllowed 内 `> 0` 才检查）。
+	if cfg.MinPacketAmount != nil {
+		algoCfg.MinPacketAmount = *cfg.MinPacketAmount
 	}
-	if cfg.StraightProbability > 0 {
-		algoCfg.StraightProbability = cfg.StraightProbability
+	if cfg.StraightProbability != nil {
+		algoCfg.StraightProbability = *cfg.StraightProbability
 	}
-	if cfg.LeopardProbability > 0 {
-		algoCfg.LeopardProbability = cfg.LeopardProbability
+	if cfg.LeopardProbability != nil {
+		algoCfg.LeopardProbability = *cfg.LeopardProbability
 	}
 
 	if cfg.RewardControl != nil && len(cfg.RewardControl.RoomConfigs) > 0 {
 		algoCfg.RewardControl = &algorithm.RewardControlConfig{
 			GlobalSwitchEnabled:  cfg.RewardControl.GlobalSwitchEnabled,
-			ProfitRatioThreshold: cfg.RewardControl.ProfitRatioThreshold,
+			ProfitRatioThreshold: 0.05, // default；若下方显式设置则覆盖
 			RoomConfigs:          make(map[int64]*algorithm.RoomRewardConfig),
+		}
+		if cfg.RewardControl.ProfitRatioThreshold != nil {
+			algoCfg.RewardControl.ProfitRatioThreshold = *cfg.RewardControl.ProfitRatioThreshold
 		}
 		for roomID, roomCfg := range cfg.RewardControl.RoomConfigs {
 			algoCfg.RewardControl.RoomConfigs[roomID] = &algorithm.RoomRewardConfig{
