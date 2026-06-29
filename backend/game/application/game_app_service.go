@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"time"
 
@@ -746,12 +747,18 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 			}, "")
 		}
 
-		return s.endGameWithOptions(ctx, roomID, &EndGameOptions{
+		if err := s.endGameWithOptions(ctx, roomID, &EndGameOptions{
 			AllowedStatus: int(domain.RoomStatusInterrupted),
 			EndReason:     message.ReasonReplacementTimeout,
 			SessionID:     meta.CurrentSessionID,
 			ActualRounds:  int(meta.CurrentRound),
-		})
+		}); err != nil {
+			logger.Error("endGameWithOptions failed (replace timeout)",
+				"room_id", roomID,
+				"session_id", meta.CurrentSessionID,
+				"error", err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -835,12 +842,27 @@ func (s *GameAppService) handleDeductFailure(ctx context.Context, roomID string,
 		actualRounds = int(meta.CurrentRound)
 	}
 
-	go s.endGameWithOptions(context.Background(), roomID, &EndGameOptions{
-		AllowedStatus: int(domain.RoomStatusPlaying),
-		EndReason:     reason,
-		SessionID:     sessionID,
-		ActualRounds:  actualRounds,
-	})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("endGameWithOptions panic (deduct failure)",
+					"room_id", roomID, "reason", reason,
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		if err := s.endGameWithOptions(context.Background(), roomID, &EndGameOptions{
+			AllowedStatus: int(domain.RoomStatusPlaying),
+			EndReason:     reason,
+			SessionID:     sessionID,
+			ActualRounds:  actualRounds,
+		}); err != nil {
+			logger.Error("endGameWithOptions failed (deduct failure)",
+				"room_id", roomID,
+				"session_id", sessionID,
+				"reason", reason,
+				"error", err)
+		}
+	}()
 }
 
 func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string) {
@@ -1035,13 +1057,27 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 				sessionID = meta.CurrentSessionID
 			}
 
-			go s.endGameWithOptions(context.Background(), roomID, &EndGameOptions{
-				AllowedStatus: int(domain.RoomStatusPlaying),
-				EndReason:     message.ReasonNormalEnd,
-				SessionID:     sessionID,
-				ActualRounds:  roundNo,
-				FinalResults:  finalResultsForEvent,
-			})
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("endGameWithOptions panic (normal end)",
+							"room_id", roomID,
+							"panic", r, "stack", string(debug.Stack()))
+					}
+				}()
+				if err := s.endGameWithOptions(context.Background(), roomID, &EndGameOptions{
+					AllowedStatus: int(domain.RoomStatusPlaying),
+					EndReason:     message.ReasonNormalEnd,
+					SessionID:     sessionID,
+					ActualRounds:  roundNo,
+					FinalResults:  finalResultsForEvent,
+				}); err != nil {
+					logger.Error("endGameWithOptions failed (normal end)",
+						"room_id", roomID,
+						"session_id", sessionID,
+						"error", err)
+				}
+			}()
 		} else {
 			if s.scheduler != nil {
 				var sendDuration time.Duration

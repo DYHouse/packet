@@ -190,7 +190,7 @@ func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roo
 		}
 
 		// Acquire assign lock
-		locked, err := s.robotSchedulerRedis.AcquireAssignLock(ctx, robot.UserID, room.RoomID, s.config.Scheduler.RobotAssignLockTTL)
+		locked, lockToken, err := s.robotSchedulerRedis.AcquireAssignLock(ctx, robot.UserID, room.RoomID, s.config.Scheduler.RobotAssignLockTTL)
 		if err != nil || !locked {
 			continue
 		}
@@ -202,7 +202,7 @@ func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roo
 				"user_id", robot.UserID,
 				"error", err,
 			)
-			s.robotSchedulerRedis.ReleaseAssignLock(ctx, robot.UserID)
+			s.robotSchedulerRedis.ReleaseAssignLock(ctx, robot.UserID, lockToken)
 			continue
 		}
 
@@ -218,7 +218,7 @@ func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roo
 			s.accountSvc.MarkRobotIdle(ctx, robot.UserID)
 			s.robotSchedulerRedis.RemoveRobotFromRoom(ctx, room.RoomID, robot.UserID)
 			s.robotSchedulerRedis.RemoveFromActiveSet(ctx, robot.UserID)
-			s.robotSchedulerRedis.ReleaseAssignLock(ctx, robot.UserID)
+			s.robotSchedulerRedis.ReleaseAssignLock(ctx, robot.UserID, lockToken)
 			logger.Warn("robot join and ready failed",
 				"room_id", room.RoomID,
 				"user_id", robot.UserID,

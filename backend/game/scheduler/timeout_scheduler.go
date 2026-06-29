@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -49,12 +50,13 @@ var defaultCheckIntervals = map[TimeoutType]time.Duration{
 type TimeoutHandler func(ctx context.Context, roomID string, data string)
 
 type TimeoutScheduler struct {
-	redis    *cRedis.Client
-	handlers map[TimeoutType]TimeoutHandler
-	configs  map[TimeoutType]TimeoutConfig
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	redis     *cRedis.Client
+	handlers  map[TimeoutType]TimeoutHandler
+	configs   map[TimeoutType]TimeoutConfig
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	handlerWg sync.WaitGroup // 跟踪 handler goroutine 退出，确保 Stop 时等待 handler 完成
 }
 
 func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
@@ -121,8 +123,20 @@ func (s *TimeoutScheduler) Start() {
 
 func (s *TimeoutScheduler) Stop() {
 	s.cancel()
-	s.wg.Wait()
-	logger.Info("timeout scheduler stopped")
+	s.wg.Wait() // 等 checker goroutine 退出
+
+	// 等 handler goroutine 退出，带超时防止永久阻塞
+	done := make(chan struct{})
+	go func() {
+		s.handlerWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		logger.Info("timeout scheduler stopped (all handlers completed)")
+	case <-time.After(10 * time.Second):
+		logger.Warn("timeout scheduler stop timeout, some handlers may still be running")
+	}
 }
 
 func (s *TimeoutScheduler) SetTimeout(ctx context.Context, timeoutType TimeoutType, roomID, data string, customDuration ...time.Duration) {
@@ -236,7 +250,18 @@ func (s *TimeoutScheduler) checkTimeouts(timeoutType TimeoutType) {
 
 		if handler, ok := s.handlers[timeoutType]; ok {
 			logger.Info("timeout triggered", "type", timeoutType, "room_id", roomID, "data", data)
-			go handler(s.ctx, roomID, data)
+			s.handlerWg.Add(1)
+			go func(handler TimeoutHandler, roomID, data string) {
+				defer s.handlerWg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("timeout handler panic",
+							"type", timeoutType, "room_id", roomID, "data", data,
+							"panic", r, "stack", string(debug.Stack()))
+					}
+				}()
+				handler(s.ctx, roomID, data)
+			}(handler, roomID, data)
 		}
 	}
 }

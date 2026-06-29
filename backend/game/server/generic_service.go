@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -17,7 +18,9 @@ import (
 	commonPb "github.com/cashparty/backend/proto/common"
 	settlementService "github.com/cashparty/backend/settlement/service"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 type BroadcastFunc func(roomID string, cmd string, payload interface{}, excludeUserID string)
@@ -120,11 +123,13 @@ func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.Forwar
 	}
 
 	if err != nil {
-		logger.Info("[Game->Gateway] sending error response",
+		logger.Warn("[Game->Gateway] request failed",
 			"cmd", req.Cmd,
 			"request_id", req.RequestId,
 			"error", err.Error())
-		return resp, err
+		// 不返回 err 给 gRPC 框架（避免泄漏内部错误给客户端）
+		// resp 已含业务错误码（handleError 已转换），gateway 应基于 resp.Code 处理
+		return resp, nil
 	}
 
 	logger.Info("[Game->Gateway] sending response",
@@ -141,8 +146,8 @@ func (s *GenericServiceServer) handleJoinRoom(ctx context.Context, req *commonPb
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.roomAppSvc.JoinAndAutoSeat(ctx, &application.JoinRoomRequest{
@@ -186,8 +191,8 @@ func (s *GenericServiceServer) handleLeaveRoom(ctx context.Context, req *commonP
 		RoomID string `json:"room_id"`
 		Reason string `json:"reason"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	_, err := s.roomAppSvc.LeaveRoom(ctx, &application.LeaveRoomRequest{
@@ -206,8 +211,8 @@ func (s *GenericServiceServer) handleRoomState(ctx context.Context, req *commonP
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.roomAppSvc.GetRoomState(ctx, &application.GetRoomStateRequest{
@@ -228,8 +233,8 @@ func (s *GenericServiceServer) handleSelectSeat(ctx context.Context, req *common
 		RoomID string `json:"room_id"`
 		SeatNo int    `json:"seat_no"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.seatAppSvc.SelectSeat(ctx, &application.SelectSeatRequest{
@@ -251,8 +256,8 @@ func (s *GenericServiceServer) handleCancelSeat(ctx context.Context, req *common
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.seatAppSvc.CancelSeat(ctx, &application.CancelSeatRequest{
@@ -272,8 +277,8 @@ func (s *GenericServiceServer) handlePlayerReady(ctx context.Context, req *commo
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.seatAppSvc.PlayerReady(ctx, &application.PlayerReadyRequest{
@@ -293,8 +298,8 @@ func (s *GenericServiceServer) handleSendPacket(ctx context.Context, req *common
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.gameAppSvc.SendPacket(ctx, &application.SendPacketRequest{
@@ -315,8 +320,8 @@ func (s *GenericServiceServer) handleGrabPacket(ctx context.Context, req *common
 		RoomID   string `json:"room_id"`
 		PacketID string `json:"packet_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	if s.userLimiter != nil {
@@ -357,8 +362,8 @@ func (s *GenericServiceServer) handleGetRoomList(ctx context.Context, req *commo
 		Page     int `json:"page"`
 		PageSize int `json:"page_size"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	if data.Page <= 0 {
@@ -424,8 +429,8 @@ func (s *GenericServiceServer) handleReconnect(ctx context.Context, req *commonP
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	if data.RoomID == "" {
@@ -477,8 +482,8 @@ func (s *GenericServiceServer) handleEnqueue(ctx context.Context, req *commonPb.
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.roomAppSvc.Enqueue(ctx, &application.EnqueueRequest{
@@ -491,7 +496,7 @@ func (s *GenericServiceServer) handleEnqueue(ctx context.Context, req *commonPb.
 
 	return s.successResponse(req, map[string]interface{}{
 		"queue_position": result.QueuePosition,
-		"room_state":    result.RoomState,
+		"room_state":     result.RoomState,
 	}), nil
 }
 
@@ -499,8 +504,8 @@ func (s *GenericServiceServer) handleDequeue(ctx context.Context, req *commonPb.
 	var data struct {
 		RoomID string `json:"room_id"`
 	}
-	if len(req.Data) > 0 {
-		json.Unmarshal(req.Data, &data)
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
 	}
 
 	result, err := s.roomAppSvc.Dequeue(ctx, &application.DequeueRequest{
@@ -592,6 +597,19 @@ func (s *GenericServiceServer) parseUserID(userIDStr string) (int64, error) {
 	return userID, err
 }
 
+// parseRequestData 解析 ForwardRequest.Data 到 target；失败返回 CodeInvalidParams 错误响应。
+// 第二个返回值 true 表示解析失败、调用方应直接 return resp。
+func (s *GenericServiceServer) parseRequestData(req *commonPb.ForwardRequest, target interface{}) (*commonPb.ForwardResponse, bool) {
+	if len(req.Data) > 0 {
+		if err := json.Unmarshal(req.Data, target); err != nil {
+			logger.Warn("invalid request data",
+				"cmd", req.Cmd, "request_id", req.RequestId, "error", err)
+			return s.errorResponse(req, message.CodeInvalidParams, message.GetErrorMsg(message.CodeInvalidParams)), true
+		}
+	}
+	return nil, false
+}
+
 func (s *GenericServiceServer) SaveUser(ctx context.Context, req *commonPb.SaveUserRequest) (*commonPb.SaveUserResponse, error) {
 	logger.Info("[Game<-Gateway] SaveUser request",
 		"user_id", req.UserId,
@@ -677,6 +695,10 @@ func NewGRPCServer(
 		grpc.KeepaliveParams(kaParams),
 		grpc.MaxRecvMsgSize(10*1024*1024),
 		grpc.MaxSendMsgSize(10*1024*1024),
+		grpc.ChainUnaryInterceptor(
+			recoveryUnaryInterceptor,
+			loggingUnaryInterceptor,
+		),
 	)
 
 	genericServiceServer := NewGenericServiceServer(
@@ -707,20 +729,81 @@ func (s *GRPCServer) Start() error {
 
 	logger.Info("gRPC server starting", "port", s.port)
 
+	// ready channel 用于捕获 Serve 启动后立即失败（如 lis 被关闭、端口异常）
+	// 100ms 内若无错误返回则视为启动成功
+	ready := make(chan error, 1)
 	go func() {
-		if err := s.server.Serve(lis); err != nil {
-			logger.Error("gRPC server error", "error", err)
+		err := s.server.Serve(lis)
+		if err != nil && err != grpc.ErrServerStopped {
+			ready <- err
+		} else {
+			ready <- nil
 		}
 	}()
 
-	return nil
+	select {
+	case err := <-ready:
+		return fmt.Errorf("gRPC server failed to start: %w", err)
+	case <-time.After(100 * time.Millisecond):
+		// Serve 正常运行（无立即错误），返回 nil 让主流程继续
+		return nil
+	}
 }
 
 func (s *GRPCServer) Stop() {
 	logger.Info("stopping gRPC server")
-	s.server.GracefulStop()
+
+	// GracefulStop 可能永久阻塞（handler 死锁/慢响应），用 goroutine + 超时兜底
+	done := make(chan struct{})
+	go func() {
+		s.server.GracefulStop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		logger.Info("gRPC server graceful stop completed")
+	case <-time.After(30 * time.Second):
+		logger.Warn("gRPC server graceful stop timeout, forcing stop")
+		s.server.Stop() // 强制关闭，立即中断所有连接
+	}
 }
 
 func (s *GRPCServer) Addr() string {
 	return fmt.Sprintf("127.0.0.1:%d", s.port)
+}
+
+// recoveryUnaryInterceptor 捕获 handler panic，防止整个 game 进程崩溃。
+// panic 时返回 gRPC Internal status error，记录 Error 日志含 stack。
+func recoveryUnaryInterceptor(
+	ctx context.Context, req interface{},
+	info *grpc.UnaryServerInfo, handler grpc.UnaryHandler,
+) (resp interface{}, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("gRPC handler panic",
+				"method", info.FullMethod, "panic", r, "stack", string(debug.Stack()))
+			err = status.Errorf(codes.Internal, "internal server error")
+		}
+	}()
+	return handler(ctx, req)
+}
+
+// loggingUnaryInterceptor 统一记录 gRPC 请求耗时和结果。
+func loggingUnaryInterceptor(
+	ctx context.Context, req interface{},
+	info *grpc.UnaryServerInfo, handler grpc.UnaryHandler,
+) (resp interface{}, err error) {
+	start := time.Now()
+	resp, err = handler(ctx, req)
+	duration := time.Since(start)
+
+	if err != nil {
+		logger.Warn("gRPC request failed",
+			"method", info.FullMethod, "duration", duration, "error", err)
+	} else {
+		logger.Info("gRPC request completed",
+			"method", info.FullMethod, "duration", duration)
+	}
+	return resp, err
 }
