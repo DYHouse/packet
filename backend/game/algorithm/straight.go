@@ -16,6 +16,11 @@ func NewStraightGenerator(config *Config) *StraightGenerator {
 }
 
 func (g *StraightGenerator) Generate(ctx context.Context, req *GenerateRequest, traceID string) (*GenerateResult, error) {
+	// 入口防御性校验，避免 PacketCount<=0 导致后续除零 panic
+	if req.PacketCount <= 0 || req.TotalAmount <= 0 {
+		return nil, NewError(ErrCodeInvalidPacketCount, "invalid packet count or total amount")
+	}
+
 	n := int64(req.PacketCount)
 
 	minIntSum := (1 + n) * n / 2

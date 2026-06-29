@@ -13,6 +13,11 @@ func NewLeopardGenerator(config *Config) *LeopardGenerator {
 }
 
 func (g *LeopardGenerator) Generate(ctx context.Context, req *GenerateRequest, traceID string) (*GenerateResult, error) {
+	// 入口防御性校验，避免 PacketCount<=0 导致除零 panic
+	if req.PacketCount <= 0 || req.TotalAmount <= 0 {
+		return nil, NewError(ErrCodeInvalidPacketCount, "invalid packet count or total amount")
+	}
+
 	if req.TotalAmount%int64(req.PacketCount) != 0 {
 		return nil, NewError(ErrCodeAmountTooSmall, "total amount cannot be evenly divided for leopard pattern")
 	}

@@ -165,7 +165,8 @@ func (g *PacketGenerator) generateNormalPackets(ctx context.Context, req *Genera
 			}
 		}
 	} else {
-		amounts[0] = minAmount
+		// PacketCount=1 时无需随机分配，全部金额给唯一红包，避免金额丢失
+		amounts[0] = req.TotalAmount
 	}
 
 	g.shuffle(amounts)
