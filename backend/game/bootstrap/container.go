@@ -6,6 +6,7 @@ import (
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/kafka"
+	"github.com/cashparty/backend/common/limiter"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
@@ -52,6 +53,9 @@ type Container struct {
 	SettlementCheckScheduler   *settlementScheduler.SettlementCheckScheduler
 	GameSettleRetryScheduler   *settlementScheduler.GameSettleRetryScheduler
 	GameSettleTimeoutScheduler *settlementScheduler.GameSettleTimeoutScheduler
+
+	// Rate limiter (grab command)
+	UserLimiter                 *limiter.UserLimiter
 
 	// Robot system services
 	RobotCfg                    *config.RobotConfig
@@ -141,6 +145,7 @@ func NewContainer(
 		DeductSvc:          deductSvc,
 		RefundSvc:          refundSvc,
 		PacketGenerator:    packetGenerator,
+		UserLimiter:        limiter.NewUserLimiter(redis),
 
 		platformClient:           platformClient,
 		billMgr:                  billMgr,

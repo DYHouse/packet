@@ -320,8 +320,15 @@ func (s *GenericServiceServer) handleGrabPacket(ctx context.Context, req *common
 	}
 
 	if s.userLimiter != nil {
-		allowed, _ := s.userLimiter.AllowGrab(ctx, req.UserId)
-		if !allowed {
+		allowed, err := s.userLimiter.AllowGrab(ctx, req.UserId)
+		if err != nil {
+			// 限流服务异常时 fail-open（放行），但记录告警以便排查
+			logger.Warn("grab rate limiter error, fail-open",
+				"user_id", req.UserId,
+				"request_id", req.RequestId,
+				"error", err)
+		}
+		if err == nil && !allowed {
 			return s.errorResponse(req, message.CodeRateLimitExceeded, message.GetErrorMsg(message.CodeRateLimitExceeded)), nil
 		}
 	}

@@ -204,7 +204,7 @@ func (a *Application) Start(ctx context.Context) error {
 		a.Container.BalanceService,
 		a.Container.HistoryService,
 		a.Container.Redis,
-		nil,
+		a.Container.UserLimiter,
 		a.Container.Broadcaster.Broadcast,
 	)
 
