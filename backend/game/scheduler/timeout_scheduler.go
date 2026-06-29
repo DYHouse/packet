@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -165,7 +166,7 @@ func (s *TimeoutScheduler) ClearRoomTimeouts(ctx context.Context, timeoutType Ti
 		return
 	}
 	for _, member := range members {
-		if len(member) > len(roomID) && member[:len(roomID)] == roomID {
+		if strings.HasPrefix(member, roomID+":") {
 			s.redis.ZRem(ctx, key, member)
 		}
 	}
