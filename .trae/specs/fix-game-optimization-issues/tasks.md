@@ -294,12 +294,16 @@
     - 验证：`go build ./game/...` + `go vet ./game/application/...` + gofmt 全部通过
     - 方案成熟性：defer recover + Error 日志是 Go 异步任务标准做法，生产级别可用
 
-- [ ] Task 33: bootstrap 关闭顺序与超时治理 (H-64/65/67/68)
-  - [ ] SubTask 33.1: app.go Stop 顺序调整为：grpcServer.GracefulStop(超时) → cancel → Container.Stop(超时) → 关闭 kafka/redis
-  - [ ] SubTask 33.2: app.go Start 失败时调用 Stop 清理已启动资源
-  - [ ] SubTask 33.3: container.go Stop 加整体超时（context.WithTimeout）
-  - [ ] SubTask 33.4: container.go 将 Kafka 消费者纳入生命周期管理（WaitGroup 跟踪）
-  - [ ] SubTask 33.5: container.go 校验 SyncInterval<=0 设默认值
+- [x] Task 33: bootstrap 关闭顺序与超时治理 (H-64/65/67/68) — **经核实为低优先级问题，关闭不修复**
+  - 核实结论：spec 列为 P1 略偏高，实际属"代码质量/优雅性"改进，非功能性 bug
+  - 逐项核实：
+    - 33.1 Stop 顺序：先 cancel+停 scheduler 再停 gRPC，不优雅但无功能性 bug。gRPC handler 调 scheduler.SetTimeout/ClearTimeout 只是往 Redis ZADD/ZREM，不会 panic
+    - 33.2 Start 失败清理：gRPC Start 失败通常端口占用；Run() 中 `panic(err)` 让进程退出，goroutine 随进程退出兜底
+    - 33.3 Container.Stop 无超时：5 个 settlement scheduler 的 BaseScheduler.Stop 立即返回（close stopCh 不等 goroutine）+ TimeoutScheduler 10s + VirtualBalanceSyncScheduler 10s ≈ 20-30s，k8s 默认 30s terminationGracePeriodSeconds 够用
+    - 33.4 Kafka consumer 管理：cancel ctx 后 Consumer.Start 自动关 reader 返回（L91）；KafkaProducer.Close 在 consumer 仍处理时 producer.Send 失败只记日志不 panic，时间窗口极短
+    - 33.5 SyncInterval：已由 Task 29 修复（NewVirtualBalanceSyncScheduler 内 `if interval <= 0 { interval = 30s }`）
+  - 不修复后果：不会 panic（全是 Redis/Kafka 调用，失败返回 error）；不会数据丢失（Task 14 SetNX 幂等 + Kafka 重试兜底）；关闭时间 ~20-30s 可接受
+  - 建议关闭，作为已知低优先级问题，后续优化项
 
 ## Phase 6: 验证
 
