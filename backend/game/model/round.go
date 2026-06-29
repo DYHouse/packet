@@ -42,9 +42,9 @@ type RoundGrabRecord struct {
 	PacketID       int64     `json:"packet_id" gorm:"index;not null"`
 	SessionID      int64     `json:"session_id" gorm:"index;not null"`
 	UserID         int64     `json:"user_id" gorm:"index;not null"`
-	Amount         int64     `json:"amount;not null"`
-	IsMin          int       `json:"is_min;default:0"`
-	IsAutoAssigned int       `json:"is_auto_assigned;default:0"`
+	Amount         int64     `json:"amount" gorm:"not null"`
+	IsMin          int       `json:"is_min" gorm:"default:0"`
+	IsAutoAssigned int       `json:"is_auto_assigned" gorm:"default:0"`
 	GrabbedAt      time.Time `json:"grabbed_at"`
 	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
 }

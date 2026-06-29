@@ -16,11 +16,11 @@ type GameSession struct {
 	RoomNo       string        `json:"room_no" gorm:"size:20;not null"`
 	ConfigID     int64         `json:"config_id" gorm:"index;not null"`
 	ConfigName   string        `json:"config_name" gorm:"size:50"`
-	RoomFee      int64         `json:"room_fee;not null"`
-	MaxRounds    int           `json:"max_rounds;not null"`
+	RoomFee      int64         `json:"room_fee" gorm:"not null"`
+	MaxRounds    int           `json:"max_rounds" gorm:"not null"`
 	ActualRounds int           `json:"actual_rounds"`
 	CurrentRound int           `json:"current_round"`
-	PlayerCount  int           `json:"player_count;not null"`
+	PlayerCount  int           `json:"player_count" gorm:"not null"`
 	Status       SessionStatus `json:"status" gorm:"index;not null"`
 	StartedAt    *time.Time    `json:"started_at"`
 	EndedAt      *time.Time    `json:"ended_at"`
