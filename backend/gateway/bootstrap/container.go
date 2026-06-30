@@ -112,6 +112,7 @@ func (c *Container) InitServer() {
 			WriteBufferSize: c.Config.Gateway.WriteBufferSize,
 			SendQueueSize:   c.Config.Gateway.SendQueueSize,
 			AllowedOrigins:  c.Config.Gateway.AllowedOrigins,
+			TestEnabled:     c.Config.Server.TestEnabled,
 		},
 		c.ConnMgr,
 		c.AuthMiddleware,

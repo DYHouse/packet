@@ -26,6 +26,7 @@ type ServerConfig struct {
 	Name         string        `yaml:"name"`
 	Port         int           `yaml:"port"`
 	Mode         string        `yaml:"mode"`
+	TestEnabled  bool          `yaml:"test_enabled"`
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
 }
@@ -209,6 +210,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Server.Mode == "" {
 		cfg.Server.Mode = "debug"
 	}
+	// TestEnabled 默认 false（生产安全）；dev 环境需在配置中显式设为 true
 	if cfg.Server.ReadTimeout == 0 {
 		cfg.Server.ReadTimeout = 60 * time.Second
 	}
