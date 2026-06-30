@@ -28,6 +28,7 @@ type Config struct {
 	WriteBufferSize int
 	SendQueueSize   int
 	AllowedOrigins  []string
+	TestEnabled     bool
 }
 
 type Server struct {
@@ -103,7 +104,10 @@ func (s *Server) setupRoutes() {
 	s.engine.GET("/ready", s.healthChecker.CheckReady)
 	s.engine.GET("/live", s.healthChecker.CheckLive)
 
-	s.engine.POST("/test/token", s.handleTestToken)
+	// 测试 token 接口仅在显式开启时注册，生产环境默认关闭
+	if s.config.TestEnabled {
+		s.engine.POST("/test/token", s.handleTestToken)
+	}
 
 	wsGroup := s.engine.Group("")
 	wsGroup.Use(middleware.RateLimitMiddleware(s.rateLimiter))

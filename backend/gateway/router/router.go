@@ -156,7 +156,7 @@ func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string
 		Timestamp: req.Timestamp,
 	}
 
-	logger.Info("[Gateway->Server] sending request",
+	logger.Debug("[Gateway->Server] sending request",
 		"service", serviceName,
 		"user_id", forwardReq.UserId,
 		"cmd", forwardReq.Cmd,
@@ -172,7 +172,7 @@ func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string
 		return message.NewErrorResponse(req.Cmd, req.RequestID, message.CodeSystemError)
 	}
 
-	logger.Info("[Gateway<-Server] received response",
+	logger.Debug("[Gateway<-Server] received response",
 		"cmd", resp.Cmd,
 		"request_id", resp.RequestId,
 		"code", resp.Code,
