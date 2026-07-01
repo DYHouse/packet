@@ -1,4 +1,4 @@
-package service
+package scripts
 
 // luaDeductBalance 原子扣减虚拟余额 Lua 脚本
 // KEYS[1] = 机器人虚拟余额 key (cashparty:robot:virtual_balance:{userID})

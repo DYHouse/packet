@@ -11,6 +11,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/scheduler"
 	"github.com/cashparty/backend/settlement/dto"
 	settlementService "github.com/cashparty/backend/settlement/service"
@@ -236,7 +237,7 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 	spectatorsKey := redis.RoomSpectatorsKey(req.RoomID)
 	now := time.Now().Unix()
 
-	result, err := s.redis.Eval(ctx, redis.LuaPlayerReady,
+	result, err := scripts.PlayerReady.Run(ctx, s.redis,
 		[]string{roomHashKey, playersKey, spectatorsKey}, req.UserID, now).Slice()
 
 	if err != nil {
@@ -336,7 +337,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	seatOwnerKey := redis.RoomSeatOwnerKey(roomID)
 	userRoomKey := redis.PlayerRoomKey(userID)
 
-	result, err := s.redis.Eval(ctx, redis.LuaHandleSeatTimeout,
+	result, err := scripts.HandleSeatTimeout.Run(ctx, s.redis,
 		[]string{roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey, userRoomKey},
 		userID).Slice()
 

@@ -7,6 +7,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis/scripts"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -28,7 +29,7 @@ func NewVirtualBalanceService(redis *cRedis.Client) *VirtualBalanceService {
 func (s *VirtualBalanceService) Deduct(ctx context.Context, userID int64, amount int64) error {
 	key := redis.RobotVirtualBalanceKey(userID)
 	dirtyKey := redis.RobotVirtualBalanceDirtyKey()
-	result, err := s.redis.Eval(ctx, luaDeductBalance, []string{key, dirtyKey}, amount, fmt.Sprintf("%d", userID)).Int64()
+	result, err := scripts.DeductBalance.Run(ctx, s.redis, []string{key, dirtyKey}, amount, fmt.Sprintf("%d", userID)).Int64()
 	if err != nil {
 		return fmt.Errorf("deduct virtual balance failed: %w", err)
 	}

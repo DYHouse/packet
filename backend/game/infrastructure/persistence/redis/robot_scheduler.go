@@ -7,8 +7,8 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // RobotSchedulerRedis 机器人调度器状态 Redis 服务
@@ -66,20 +66,10 @@ func (s *RobotSchedulerRedis) AcquireAssignLock(ctx context.Context, userID int6
 	return ok, token, nil
 }
 
-// releaseAssignLockScript 原子校验并释放锁：仅当 key 的 value == token 时才 DEL
-// 防止 TTL 过期后被其他实例抢占，原持有者恢复后误删新持有者的锁
-var releaseAssignLockScript = goredis.NewScript(`
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("DEL", KEYS[1])
-else
-    return 0
-end
-`)
-
 // ReleaseAssignLock 释放分配锁（需校验 token）
-// 若 TTL 已过期被他人抢占，GET != token，不会 DEL，保护新持有者
+// 若 TTL 已过期被他人抢占，GET != token，不会 del，保护新持有者
 func (s *RobotSchedulerRedis) ReleaseAssignLock(ctx context.Context, userID int64, token string) error {
-	return releaseAssignLockScript.Run(ctx, s.redis.Raw(), []string{RobotAssignLockKey(userID)}, token).Err()
+	return scripts.ReleaseAssignLock.Run(ctx, s.redis, []string{RobotAssignLockKey(userID)}, token).Err()
 }
 
 // AcquireRoomAssignLock 获取房间分配限流锁

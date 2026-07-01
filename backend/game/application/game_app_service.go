@@ -20,6 +20,7 @@ import (
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/model"
 	"github.com/cashparty/backend/game/scheduler"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
@@ -515,7 +516,7 @@ func (s *GameAppService) StartGame(ctx context.Context, roomID string) {
 	roomHashKey := redis.RoomHashKey(roomID)
 	now := time.Now().Unix()
 
-	result, err := s.redis.Eval(ctx, redis.LuaTryStartGame, []string{roomHashKey}, now).Result()
+	result, err := scripts.TryStartGame.Run(ctx, s.redis, []string{roomHashKey}, now).Result()
 	if err != nil {
 		logger.Error("failed to execute start game lua script",
 			"room_id", roomID,
@@ -891,7 +892,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 			"cashparty",
 		}
 
-		res, err := s.redis.Eval(ctx, redis.LuaSettleRound, keys, args...).Slice()
+		res, err := scripts.SettleRound.Run(ctx, s.redis, keys, args...).Slice()
 		if err != nil {
 			logger.Error("settle round failed", "room_id", roomID, "round_id", roundID, "error", err)
 			return err
@@ -1142,7 +1143,7 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 		opts.AllowedStatus,
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaEndGame, keys, args...).Slice()
+	res, err := scripts.EndGame.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("end game lua failed", "room_id", roomID, "error", err)
 		return err

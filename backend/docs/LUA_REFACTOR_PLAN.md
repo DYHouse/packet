@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 范围：game-service / settlement-service / robot-scheduler 全部 Redis Lua 脚本
-> 目标：在不改变业务语义的前提下，提升 Lua 层的性能、可维护性、可观测性与可测试性，并为未来 Redis Cluster 迁移铺路。
+> 目标：在不改变业务语义的前提下，提升 Lua 层的性能、可维护性、可观测性与可测试性。
 
 ---
 
@@ -51,14 +51,13 @@ func (c *Client) Eval(ctx context.Context, script string, keys []string, args ..
 | P2 | Lua 脚本无单测、无集成测 | High | 质量 |
 | P3 | 脚本散落在 service / infrastructure 多层 | Medium | 架构 |
 | P4 | 业务错误码在 Lua 中是魔法数字 | Medium | 可维护性 |
-| P5 | Lua 内拼接 key（`keyPrefix .. ':packet:info:' .. id`） | Medium | Cluster 兼容性 |
+| P5 | Lua 内拼接 key（`keyPrefix .. ':packet:info:' .. id`） | Medium | 可维护性 |
 | P6 | 长脚本（`LuaSettleRound` 190 行）混合多种关注点 | Medium | 可维护性 |
 | P7 | TTL `86400` 硬编码 15+ 处 | Low | 可配置性 |
 | P8 | 返回值结构不统一，Go 侧用 `result[0..N]` 位置索引 | Low | 可维护性 |
 | P9 | 无 Lua 执行指标/日志 | Medium | 可观测性 |
 | P10 | `LuaHandlePenalty` 存在死代码 | Low | 代码质量 |
 | P11 | 无脚本版本管理，热更新困难 | Low | 运维 |
-| P12 | 未做 Redis Cluster hash tag 规划 | Medium | 演进 |
 
 ---
 
@@ -68,8 +67,7 @@ func (c *Client) Eval(ctx context.Context, script string, keys []string, args ..
 2. **可维护**：脚本集中管理，错误码与 TTL 单一来源，长脚本拆分。
 3. **可观测**：每次 Lua 执行有耗时、错误码、重试指标。
 4. **可测试**：每个脚本有 `miniredis` 单测覆盖正常/边界/并发场景。
-5. **可演进**：key 设计预留 hash tag，为 Redis Cluster 留出迁移路径。
-6. **零业务回归**：分阶段灰度，保留旧路径回退能力。
+5. **零业务回归**：分阶段灰度，保留旧路径回退能力。
 
 ---
 
@@ -165,7 +163,7 @@ var (
 #### 风险与回退
 
 - `SCRIPT LOAD` 在 Redis 重启/`FLUSH` 后 sha 失效 → go-redis 自动 fallback 到 `EVAL`，无业务影响
-- 集群/Sentinel failover 后新 master 没有 sha → 同上自动 fallback
+- Sentinel failover 后新 master 没有 sha → 同上自动 fallback
 
 ---
 
@@ -329,8 +327,7 @@ local packetKey = keyPrefix .. ':packet:info:' .. packetIDStr
 
 #### 问题
 
-1. **Redis Cluster 不兼容**：`cashparty:packet:info:{packetID}` 与 `cashparty:room:hash:{roomID}` 不在同一 slot，跨 slot 操作报 `CROSSSLOT` 错误。
-2. **重复拼接**：同一个 packetKey 在 grab / robot_grab / auto_distribute / settle 里都拼一遍，命名漂移风险。
+1. **重复拼接**：同一个 packetKey 在 grab / robot_grab / auto_distribute / settle 里都拼一遍，命名漂移风险。
 
 #### 方案
 
@@ -340,18 +337,11 @@ local packetKey = keyPrefix .. ':packet:info:' .. packetIDStr
 
 1. **能用 KEYS 的全用 KEYS**：`LuaSettleRound` 里 `packetIDs` 来自 `LRANGE availablePacketsKey`，可以在 Go 侧先 `LRANGE` 拿到 ID 列表，把所有 `packet:info:{id}` key 预构造后传入。但这破坏原子性（LRANGE 和 settle 之间有间隙）——**不可行**。
 
-2. **引入 hash tag**：把所有可能被同一脚本访问的 key 用 `{roomID}` 作为 hash tag：
-   ```
-   cashparty:{roomID}:packet:info:{packetID}
-   cashparty:{roomID}:round:state:{roundID}
-   ```
-   这样 Cluster 模式下它们落同一 slot。**这是 Cluster 迁移的必要前置工作**，建议本次重构先做 key 命名规范文档，下个迭代落地。
-
-3. **抽取 key builder 到共享 Lua 片段**：通过 §3.3 的 preamble 机制注入：
+2. **抽取 key builder 到共享 Lua 片段**：通过 §3.3 的 preamble 机制注入：
    ```lua
    local function packetInfoKey(prefix, id) return prefix .. ':packet:info:' .. id end
    ```
-   消除拼写漂移，但不解决 Cluster 问题。
+   消除拼写漂移，统一命名来源。
 
 ---
 
@@ -615,34 +605,6 @@ INFO  lua script registered  name=grab_packet version=v1.2 sha=9a3b...
 
 ---
 
-### 3.12 P12 — Redis Cluster hash tag 规划（Medium）
-
-#### 现状
-
-所有 key 用 `cashparty:` 前缀，无 hash tag。
-
-#### 方案
-
-制定 key 命名规范，所有同一房间内的 key 共享 `{roomID}` hash tag：
-
-```
-# 现状
-cashparty:room:hash:R1
-cashparty:room:players:R1
-cashparty:round:state:RD1           # 跨 slot！
-cashparty:packet:info:P1            # 跨 slot！
-
-# 目标
-cashparty:{R1}:room:hash
-cashparty:{R1}:room:players
-cashparty:{R1}:round:state:RD1
-cashparty:{R1}:packet:info:P1
-```
-
-**本次只做规范文档**，不实际改造（改造影响面大，需独立项目推进）。
-
----
-
 ## 四、实施计划
 
 ### 4.1 分阶段路线图
@@ -658,7 +620,7 @@ cashparty:{R1}:packet:info:P1
 | **P2** | §3.10 修复死代码 | lua_game.go | 无 | Low |
 | **P2** | §3.6 TTL 参数化 | 全脚本 | 低 | Low |
 | **P2** | §3.7 返回值结构化（新脚本采用） | 渐进 | 低 | Low |
-| **P3** | §3.11 版本号 + §3.12 hash tag 规范文档 | 文档 | 无 | Low |
+| **P3** | §3.11 版本号管理 | 文档 | 无 | Low |
 
 ### 4.2 验证策略
 
