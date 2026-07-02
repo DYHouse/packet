@@ -87,15 +87,25 @@ func (m *BillManager) ExistsRoundSettlement(ctx context.Context, roundID int64) 
 }
 
 func (m *BillManager) UpdateRoundSettlementCredited(ctx context.Context, traceID string, settleAmount int64, settleUserCount int, settledAt *time.Time) error {
-	return m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
-		Where("round_trace_id = ?", traceID).
+	// 乐观锁：只允许从非 Credited 状态转换到 Credited，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
+		Where("round_trace_id = ? AND status != ?", traceID, dto.RoundStatusCredited).
 		Updates(map[string]interface{}{
 			"status":               dto.RoundStatusCredited,
 			"settle_amount":        settleAmount,
 			"settle_user_count":    settleUserCount,
 			"settle_success_count": settleUserCount,
 			"settled_at":           settledAt,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		// 已被其他事务标记为 Credited，视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) UpdateRoundSettlementStatus(ctx context.Context, traceID string, status int, errMsg string) error {
@@ -105,9 +115,19 @@ func (m *BillManager) UpdateRoundSettlementStatus(ctx context.Context, traceID s
 	if errMsg != "" {
 		updates["error_message"] = errMsg
 	}
-	return m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
-		Where("round_trace_id = ?", traceID).
-		Updates(updates).Error
+	// 乐观锁：若已是终态 Credited，拒绝覆盖（状态机只能向前推进）。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
+		Where("round_trace_id = ? AND status != ?", traceID, dto.RoundStatusCredited).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		// 已是 Credited 终态，视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) GetRoundSettlementByRoundID(ctx context.Context, roundID int64) (*model.RoundSettlement, error) {
@@ -229,9 +249,19 @@ func (m *BillManager) UpdateRefundAuditStatus(ctx context.Context, refundID int6
 		"approved_by":    approvedBy,
 		"approve_remark": remark,
 	}
-	return m.db.WithContext(ctx).Model(&model.RefundAudit{}).
-		Where("id = ?", refundID).
-		Updates(updates).Error
+	// 乐观锁：只允许从 Pending 状态转换，防止并发审批/拒绝同一退款单。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
+		Where("id = ? AND status = ?", refundID, dto.RefundStatusPending).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 Pending（已被审批/拒绝/退款完成），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) UpdateRefundAuditError(ctx context.Context, refundID int64, errMsg string) error {

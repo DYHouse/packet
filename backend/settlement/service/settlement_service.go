@@ -191,7 +191,7 @@ func (s *SettlementService) settleCommission(ctx context.Context, settlement *mo
 
 	commissionBill := &model.BillRecord{
 		RoundTraceID: settlement.RoundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeCommission, settlement.SenderID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeCommission, dto.PlatformAccountID),
 		BillType:     dto.BillTypeCommission,
 		RoomID:       settlement.RoomID,
 		SessionID:    settlement.SessionID,
