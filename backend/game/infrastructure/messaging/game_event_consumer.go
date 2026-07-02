@@ -106,6 +106,13 @@ func (c *GameEventConsumer) handleSessionStart(ctx context.Context, event *domai
 		return fmt.Errorf("invalid session_id: %w", err)
 	}
 
+	// 幂等检查：session 已存在则跳过（Kafka 重试时主键冲突会导致死循环）
+	var existingSession model.GameSession
+	if err := c.db.WithContext(ctx).Where("session_id = ?", sessionIDInt64).First(&existingSession).Error; err == nil {
+		logger.Info("session already created, skip", "session_id", sessionIDInt64)
+		return nil
+	}
+
 	now := time.Now()
 	session := &model.GameSession{
 		SessionID:   sessionIDInt64,
@@ -170,6 +177,14 @@ func (c *GameEventConsumer) handlePacketCreated(ctx context.Context, event *doma
 		return fmt.Errorf("invalid session_id: %w", err)
 	}
 
+	// 幂等检查：该 round 的 packet 已创建则跳过（Kafka 重试时主键冲突会导致死循环）
+	var packetCount int64
+	if err := c.db.WithContext(ctx).Model(&model.Packet{}).
+		Where("round_id = ?", parseInt64(event.RoundID)).Count(&packetCount).Error; err == nil && packetCount > 0 {
+		logger.Info("packets already created, skip", "round_id", event.RoundID)
+		return nil
+	}
+
 	now := time.Now()
 
 	if err := c.db.Transaction(func(tx *gorm.DB) error {
@@ -228,6 +243,15 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 	sessionIDInt64, err := strconv.ParseInt(event.SessionID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid session_id: %w", err)
+	}
+
+	// 幂等检查：round 已是 Ended 状态则跳过。
+	// 避免 Kafka 重试时 session_player 的 grab_count/send_count 重复累加、special_reward 重复创建。
+	// grab_record 已用 FirstOrCreate 幂等，但 +1 更新和 reward.Create 无法直接幂等化，需在入口拦截。
+	var existingRound model.Round
+	if err := c.db.WithContext(ctx).Where("round_id = ? AND status = ?", parseInt64(event.RoundID), model.RoundStatusEnded).First(&existingRound).Error; err == nil {
+		logger.Info("round already settled, skip", "round_id", event.RoundID)
+		return nil
 	}
 
 	now := time.Now()
@@ -364,12 +388,12 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 			// SettleRound 失败必须 return err 触发事务回滚，避免 round 标记 Ended 但平台账未结算。
 			//
 			// 幂等性分析（Kafka 重试场景）：
+			//   - handleRoundSettle 入口检查 round.status == Ended → 已处理则跳过，避免重复进入事务 ✅
 			//   - SettleRound 内部：RoundStatusCredited 早返回 + GetBillByRoundTypeAndUser 跳过已创建 bill → 幂等 ✅
 			//   - grab_record：FirstOrCreate 按 round_id + user_id 查重 → 幂等 ✅
-			//   - ⚠️ session_player grab_count/send_count 的 +1 更新和 special_reward 的 Create 非幂等，
-			//     事务回滚后重试会重复累加/重复创建。这是 handleRoundSettle 的已知缺陷，
-			//     由 tryAcquire（SetNX）兜底防止重复消费，仅在 Redis 不可用或 releaseAcquire 后重试时暴露。
-			//     彻底修复需要将 +1 更新改为幂等模式（如 ON DUPLICATE KEY UPDATE），属 Task 9+ 范畴。
+			//   - session_player grab_count/send_count 的 +1 更新和 special_reward 的 Create 非幂等，
+			//     由入口幂等检查兜底；仅在 TOCTOU 窗口（检查与事务执行之间）并发触发时可能重复，
+			//     此时由 tryAcquire（SetNX）兜底防止重复消费。
 			//
 			// 事务一致性：SettleRound 内部用 billMgr.db（非事务 tx），其创建的 bill records 不随主事务回滚。
 			// 这是已知设计权衡：SettleRound 的幂等机制保证重试时不会重复创建 bill。
