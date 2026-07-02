@@ -335,50 +335,51 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 			"round_id", event.RoundID,
 			"round_no", data.RoundNo)
 
+		players := make([]*settlementDto.PlayerSettleInfo, 0, len(data.Results))
+		for _, r := range data.Results {
+			players = append(players, &settlementDto.PlayerSettleInfo{
+				UserID: parseInt64(r.UserID),
+				Amount: r.Amount,
+				IsMin:  r.UserID == data.SenderID && data.SenderType != "system",
+			})
+		}
+
+		settleReq := &settlementDto.RoundSettleRequest{
+			RoomID:           parseInt64(event.RoomID),
+			SessionID:        sessionIDInt64,
+			RoundID:          parseInt64(event.RoundID),
+			RoundNo:          data.RoundNo,
+			SenderID:         parseInt64(data.SenderID),
+			SenderType:       data.SenderType,
+			TotalAmount:      data.TotalAmount,
+			Commission:       data.Commission,
+			RoomFeePerPlayer: data.RoomFeePerPlayer,
+			MinPlayerID:      parseInt64(data.MinPlayerID),
+			Players:          players,
+			RewardType:       data.RewardType,
+			RewardAmount:     data.RewardAmount,
+		}
+
+		if err := c.settlementService.SettleRound(ctx, settleReq); err != nil {
+			// SettleRound 失败必须 return err 触发事务回滚，避免 round 标记 Ended 但平台账未结算。
+			//
+			// 幂等性分析（Kafka 重试场景）：
+			//   - SettleRound 内部：RoundStatusCredited 早返回 + GetBillByRoundTypeAndUser 跳过已创建 bill → 幂等 ✅
+			//   - grab_record：FirstOrCreate 按 round_id + user_id 查重 → 幂等 ✅
+			//   - ⚠️ session_player grab_count/send_count 的 +1 更新和 special_reward 的 Create 非幂等，
+			//     事务回滚后重试会重复累加/重复创建。这是 handleRoundSettle 的已知缺陷，
+			//     由 tryAcquire（SetNX）兜底防止重复消费，仅在 Redis 不可用或 releaseAcquire 后重试时暴露。
+			//     彻底修复需要将 +1 更新改为幂等模式（如 ON DUPLICATE KEY UPDATE），属 Task 9+ 范畴。
+			//
+			// 事务一致性：SettleRound 内部用 billMgr.db（非事务 tx），其创建的 bill records 不随主事务回滚。
+			// 这是已知设计权衡：SettleRound 的幂等机制保证重试时不会重复创建 bill。
+			// 如需严格事务一致性，需让 billMgr 支持 tx 参数（影响面较大，未在本轮修复）。
+			return fmt.Errorf("settle round failed: %w", err)
+		}
+
 		return nil
 	}); err != nil {
 		return err
-	}
-
-	// SettleRound 在事务外调用，避免跨事务连接导致 bill records 不随主事务回滚。
-	// SettleRound 内部有完整的幂等机制（状态机检查 + Redis 锁 + bill 查重），
-	// 重试时 creditRound/settleCommission 通过 GetBillByRoundTypeAndUser 跳过已创建的 bill。
-	players := make([]*settlementDto.PlayerSettleInfo, 0, len(data.Results))
-	for _, r := range data.Results {
-		players = append(players, &settlementDto.PlayerSettleInfo{
-			UserID: parseInt64(r.UserID),
-			Amount: r.Amount,
-			IsMin:  r.UserID == data.SenderID && data.SenderType != "system",
-		})
-	}
-
-	settleReq := &settlementDto.RoundSettleRequest{
-		RoomID:           parseInt64(event.RoomID),
-		SessionID:        sessionIDInt64,
-		RoundID:          parseInt64(event.RoundID),
-		RoundNo:          data.RoundNo,
-		SenderID:         parseInt64(data.SenderID),
-		SenderType:       data.SenderType,
-		TotalAmount:      data.TotalAmount,
-		Commission:       data.Commission,
-		RoomFeePerPlayer: data.RoomFeePerPlayer,
-		MinPlayerID:      parseInt64(data.MinPlayerID),
-		Players:          players,
-		RewardType:       data.RewardType,
-		RewardAmount:     data.RewardAmount,
-	}
-
-	if err := c.settlementService.SettleRound(ctx, settleReq); err != nil {
-		// 不返回 error 触发 Kafka 重试，因为事务已提交，重试会导致 session_player 的
-		// grab_count/total_grab 非幂等更新（重复 +1）。SettleRound 失败由 scheduler 补偿：
-		// - SettlementCheckScheduler 扫描未 Credited 的 round_settlement
-		// - GameSettleRetryScheduler 扫描 Failed 状态的 game_settle
-		// SettleRound 内部幂等（状态机 + bill 查重）保证 scheduler 重试安全。
-		logger.Error("settle round failed after transaction committed, will be retried by scheduler",
-			"room_id", event.RoomID,
-			"round_id", event.RoundID,
-			"trace_id", event.TraceID,
-			"error", err)
 	}
 
 	// Trigger robot send behavior
