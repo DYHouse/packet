@@ -228,11 +228,14 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, _ := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
 		CallType:   model.CallTypeDebit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    debitReq,
 	})
+	if callLogErr != nil {
+		logger.Warn("create call log failed", "biz_order_no", bill.BizOrderNo, "error", callLogErr)
+	}
 
 	result, err := s.platform.Debit(ctx, debitReq)
 	if err != nil {

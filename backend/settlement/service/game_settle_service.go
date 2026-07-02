@@ -219,11 +219,14 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 		ActualBetAmount: platform.FormatAmount(betAmount),
 	}
 
-	callLog, _ := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
 		CallType:   model.CallTypeSettle,
 		BizOrderNo: bizOrderNo,
 		ReqBody:    settleReq,
 	})
+	if callLogErr != nil {
+		logger.Warn("create call log failed", "biz_order_no", bizOrderNo, "error", callLogErr)
+	}
 
 	result, err := s.platform.Settle(ctx, settleReq)
 	if err != nil {
@@ -373,11 +376,14 @@ func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *mode
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, _ := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
 		CallType:   model.CallTypeCredit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    creditReq,
 	})
+	if callLogErr != nil {
+		logger.Warn("create call log failed", "biz_order_no", bill.BizOrderNo, "error", callLogErr)
+	}
 
 	result, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {

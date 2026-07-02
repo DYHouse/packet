@@ -283,11 +283,14 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, _ := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
 		CallType:   model.CallTypeDebit,
 		BizOrderNo: playerBill.BizOrderNo,
 		ReqBody:    debitReq,
 	})
+	if callLogErr != nil {
+		logger.Warn("create call log failed", "biz_order_no", playerBill.BizOrderNo, "error", callLogErr)
+	}
 
 	result, err := s.platform.Debit(ctx, debitReq)
 	if err != nil {

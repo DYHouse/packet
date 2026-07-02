@@ -7,6 +7,7 @@ import (
 
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/lock"
+	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/dto"
@@ -172,11 +173,14 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, _ := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
 		CallType:   model.CallTypeCredit,
 		BizOrderNo: refund.RefundOrderNo,
 		ReqBody:    creditReq,
 	})
+	if callLogErr != nil {
+		logger.Warn("create call log failed", "biz_order_no", refund.RefundOrderNo, "error", callLogErr)
+	}
 
 	creditResult, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
