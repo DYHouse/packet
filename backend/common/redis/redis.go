@@ -23,6 +23,10 @@ func NewClient(cfg *config.RedisConfig) (*Client, error) {
 	var rdb *redis.Client
 	var err error
 
+	if cfg.UseEvalSHA != nil {
+		SetUseEvalSHA(*cfg.UseEvalSHA)
+	}
+
 	switch cfg.Mode {
 	case "sentinel":
 		rdb, err = newSentinelClient(cfg)

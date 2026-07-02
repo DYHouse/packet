@@ -25,6 +25,13 @@ type Config struct {
 	IDGenerator IDGeneratorConfig `mapstructure:"id_generator"`
 	Avatar      AvatarConfig      `mapstructure:"avatar"`
 	Robot       RobotConfig       `mapstructure:"robot"`
+	Lua         LuaConfig         `mapstructure:"lua"`
+}
+
+// LuaConfig Lua 脚本调用层配置。
+// UseEvalSHA 为 nil 或 true 时走 EVALSHA 路径；显式设为 false 时回退到 EVAL。
+type LuaConfig struct {
+	UseEvalSHA *bool `mapstructure:"use_evalsha"`
 }
 
 type RobotConfig struct {
@@ -112,6 +119,7 @@ type RedisConfig struct {
 	DialTimeout  time.Duration `mapstructure:"dial_timeout"`
 	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+	UseEvalSHA   *bool         `mapstructure:"use_evalsha"`
 
 	Mode          string   `mapstructure:"mode"`
 	MasterName    string   `mapstructure:"master_name"`

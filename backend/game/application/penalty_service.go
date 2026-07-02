@@ -11,6 +11,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 	settlementService "github.com/cashparty/backend/settlement/service"
 )
@@ -48,7 +49,7 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 		penaltyType.String(),
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaHandlePenalty, keys, args...).Slice()
+	res, err := scripts.HandlePenalty.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("apply penalty lua failed", "error", err, "room_id", roomID, "user_id", userID)
 		return nil, err
@@ -118,7 +119,7 @@ func (s *PenaltyService) DistributePenalty(ctx context.Context, roomID string, p
 		string(excludeJSON),
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaDistributePenalty, keys, args...).Slice()
+	res, err := scripts.DistributePenalty.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("distribute penalty lua failed", "error", err, "room_id", roomID)
 		return nil, err

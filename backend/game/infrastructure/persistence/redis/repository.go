@@ -11,6 +11,7 @@ import (
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -183,7 +184,7 @@ func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, 
 		isRobot,
 	}
 
-	result, err := r.client.Eval(ctx, LuaSelectSeat, keys, args...).Slice()
+	result, err := scripts.SelectSeat.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return err
 	}
@@ -207,7 +208,7 @@ func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) 
 		userID,
 	}
 
-	result, err := r.client.Eval(ctx, LuaCancelSeat, keys, args...).Slice()
+	result, err := scripts.CancelSeat.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return err
 	}
@@ -238,7 +239,7 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 		roomID,
 	}
 
-	result, err := r.client.Eval(ctx, LuaJoinAsSpectator, keys, args...).Slice()
+	result, err := scripts.JoinAsSpectator.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +274,7 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 		fmt.Sprintf("%d", time.Now().Unix()),
 	}
 
-	result, err := r.client.Eval(ctx, LuaLeaveRoom, keys, args...).Slice()
+	result, err := scripts.LeaveRoom.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		logger.Error("LuaLeaveRoom execution failed", "room_id", roomID, "user_id", userID, "error", err)
 		return err
@@ -312,7 +313,7 @@ func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, use
 		KeyRoundStatePrefix,
 	}
 
-	result, err := r.client.Eval(ctx, LuaKickPlayerAndInterrupt, keys, args...).Slice()
+	result, err := scripts.KickPlayer.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +343,7 @@ func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID st
 		isRobot,
 	}
 
-	result, err := r.client.Eval(ctx, LuaAutoSeatAndReady, keys, args...).Slice()
+	result, err := scripts.AutoSeatAndReady.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +387,7 @@ func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID string) (in
 		fmt.Sprintf("%d", time.Now().UnixMilli()),
 	}
 
-	result, err := r.client.Eval(ctx, LuaEnqueue, keys, args...).Slice()
+	result, err := scripts.Enqueue.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return 0, err
 	}
@@ -408,7 +409,7 @@ func (r *RoomRepository) Dequeue(ctx context.Context, roomID, userID string) err
 		userID,
 	}
 
-	result, err := r.client.Eval(ctx, LuaDequeue, keys, args...).Slice()
+	result, err := scripts.Dequeue.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return err
 	}
@@ -435,7 +436,7 @@ func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seat
 		fmt.Sprintf("%d", time.Now().Unix()),
 	}
 
-	result, err := r.client.Eval(ctx, LuaAutoSubstitute, keys, args...).Slice()
+	result, err := scripts.AutoSubstitute.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return nil, err
 	}

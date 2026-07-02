@@ -12,6 +12,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 )
 
 type GrabService struct {
@@ -46,7 +47,7 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 		packetID,
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaGrabPacket, keys, args...).Slice()
+	res, err := scripts.GrabPacket.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("grab packet lua failed", "error", err, "room_id", roomID, "round_id", roundID, "user_id", userID)
 		return nil, err
@@ -115,7 +116,7 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		rand.Intn(1000),
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaRobotGrabPacket, keys, args...).Slice()
+	res, err := scripts.RobotGrabPacket.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("robot grab packet lua failed", "error", err, "room_id", roomID, "round_id", roundID, "user_id", userID)
 		return nil, err
@@ -162,7 +163,7 @@ func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string
 		roundID,
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaAutoDistributePackets, keys, args...).Slice()
+	res, err := scripts.AutoDistributePackets.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("auto distribute lua failed", "error", err, "room_id", roomID, "round_id", roundID)
 		return 0, nil, err
@@ -232,7 +233,7 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 		rewardAmount,
 	}
 
-	res, err := s.redis.Eval(ctx, redis.LuaSendPacket, keys, args...).Slice()
+	res, err := scripts.SendPacket.Run(ctx, s.redis, keys, args...).Slice()
 	if err != nil {
 		logger.Error("init round packets lua failed", "error", err, "room_id", roomID, "round_id", roundID)
 		return "", nil, err
