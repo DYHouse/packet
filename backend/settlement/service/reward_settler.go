@@ -77,7 +77,7 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 
 	platformBill := &model.BillRecord{
 		RoundTraceID: settlement.RoundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("REWARD_OUT", settlement.RoundID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeSystemReward, dto.PlatformAccountID),
 		BillType:     dto.BillTypeSystemReward,
 		RoomID:       settlement.RoomID,
 		SessionID:    settlement.SessionID,
@@ -93,7 +93,7 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 	for _, player := range players {
 		playerBill := &model.BillRecord{
 			RoundTraceID: settlement.RoundTraceID,
-			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("REWARD_IN", player.UserID),
+			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeSystemReward, player.UserID),
 			BillType:     dto.BillTypeSystemReward,
 			RoomID:       settlement.RoomID,
 			SessionID:    settlement.SessionID,

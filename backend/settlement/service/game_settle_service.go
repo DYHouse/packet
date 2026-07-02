@@ -138,6 +138,17 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 				continue
 			}
 
+			// 幂等检查：跳过已成功结算的玩家，避免重试时重复调用 platform.Settle
+			settled, err := s.billMgr.IsPlayerGameSettled(ctx, sessionID, userID)
+			if err != nil {
+				logger.Error("check player settled failed", "session_id", sessionID, "user_id", userID, "error", err)
+				allSuccess = false
+				continue
+			}
+			if settled {
+				continue
+			}
+
 			if err := s.settlePlayer(ctx, sessionID, userID, betAmount, payOut, startTime, endTime); err != nil {
 				logger.Error("settle player failed", "session_id", sessionID, "user_id", userID, "error", err)
 				allSuccess = false
@@ -162,6 +173,15 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 
 // settlePlayer calls platform.Settle(/settle) for a single player's game result
 func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, userID int64, betAmount int64, payOut int64, startTime, endTime time.Time) error {
+	// 幂等检查：已结算的玩家直接跳过，避免重试时重复调用 platform.Settle
+	settled, err := s.billMgr.IsPlayerGameSettled(ctx, sessionID, userID)
+	if err != nil {
+		return fmt.Errorf("check player game settle status failed: %w", err)
+	}
+	if settled {
+		return nil
+	}
+
 	// 机器人虚拟通道：跳过 platform.Settle，仅更新状态
 	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
 		if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleSettled); err != nil {
@@ -180,7 +200,7 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 		gameResult = "win"
 	}
 
-	bizOrderNo := s.traceIDGen.GenerateBizOrderNo("GAME_SETTLE", userID)
+	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(fmt.Sprintf("GAME_SETTLE_%d", sessionID), dto.BillTypeGameSettle, userID)
 
 	settleReq := &platform.SettleRequest{
 		BizID:           bizOrderNo,
@@ -303,7 +323,7 @@ func (s *GameSettleService) creditSessionPayout(ctx context.Context, sessionID i
 	traceID := fmt.Sprintf("SESSION_CREDIT_%d_%d", sessionID, userID)
 	bill := &model.BillRecord{
 		RoundTraceID: traceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("SESSION_CREDIT", userID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(traceID, dto.BillTypeSessionCredit, userID),
 		BillType:     dto.BillTypeSessionCredit,
 		RoomID:       roomID,
 		SessionID:    sessionID,

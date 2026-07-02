@@ -21,18 +21,18 @@ func (g *TraceIDGenerator) GenerateRoundTraceID(sessionID int64, roundNo int) st
 	return fmt.Sprintf("RT_%d_%d", sessionID, roundNo)
 }
 
-func (g *TraceIDGenerator) GenerateBizOrderNo(bizType string, userID int64) string {
-	timestamp := time.Now().Format("20060102150405")
-	random := g.idGen.GenerateInt64() % 1000
-	return fmt.Sprintf("%s_%s_%d_%03d", bizType, timestamp, userID, random)
+// GenerateBizOrderNo 基于业务语义确定性生成，重试时可复现，便于平台基于 BizID 做幂等去重
+func (g *TraceIDGenerator) GenerateBizOrderNo(roundTraceID string, billType int, userID int64) string {
+	return fmt.Sprintf("%s_%d_%d", roundTraceID, billType, userID)
 }
 
 func (g *TraceIDGenerator) GenerateBatchID() string {
 	return fmt.Sprintf("BATCH_%d", g.idGen.GenerateInt64())
 }
 
-func (g *TraceIDGenerator) GenerateRefundOrderNo(userID int64) string {
-	return g.GenerateBizOrderNo("REFUND", userID)
+// GenerateRefundOrderNo 退款订单号基于 billID 确定性生成，重试时可复现
+func (g *TraceIDGenerator) GenerateRefundOrderNo(billID int64) string {
+	return fmt.Sprintf("REFUND_%d", billID)
 }
 
 func (g *TraceIDGenerator) GenerateReconcileNo() string {

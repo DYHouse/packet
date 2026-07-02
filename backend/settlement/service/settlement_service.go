@@ -155,7 +155,7 @@ func (s *SettlementService) creditRound(ctx context.Context, settlement *model.R
 
 		bill := &model.BillRecord{
 			RoundTraceID: settlement.RoundTraceID,
-			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("CREDIT", player.UserID),
+			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeGrabPacket, player.UserID),
 			BillType:     dto.BillTypeGrabPacket,
 			RoomID:       settlement.RoomID,
 			SessionID:    settlement.SessionID,
@@ -191,7 +191,7 @@ func (s *SettlementService) settleCommission(ctx context.Context, settlement *mo
 
 	commissionBill := &model.BillRecord{
 		RoundTraceID: settlement.RoundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("COMMISSION", settlement.RoundID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeCommission, settlement.SenderID),
 		BillType:     dto.BillTypeCommission,
 		RoomID:       settlement.RoomID,
 		SessionID:    settlement.SessionID,
@@ -215,7 +215,7 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 
 	playerBill := &model.BillRecord{
 		RoundTraceID: roundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("PENALTY", req.UserID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypePenaltyIncome, req.UserID),
 		BillType:     dto.BillTypePenaltyIncome,
 		RoomID:       req.RoomID,
 		SessionID:    req.SessionID,
@@ -230,7 +230,7 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 
 	platformBill := &model.BillRecord{
 		RoundTraceID: roundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("PLATFORM_IN", req.SessionID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypePenaltyIncome, dto.PlatformAccountID),
 		BillType:     dto.BillTypePenaltyIncome,
 		RoomID:       req.RoomID,
 		SessionID:    req.SessionID,
@@ -319,7 +319,7 @@ func (s *SettlementService) DistributePenaltyFromPlatform(ctx context.Context, r
 
 	platformBill := &model.BillRecord{
 		RoundTraceID: roundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("PENALTY_DIST", req.RoomID),
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypePenaltyDistribute, dto.PlatformAccountID),
 		BillType:     dto.BillTypePenaltyDistribute,
 		RoomID:       req.RoomID,
 		SessionID:    req.SessionID,
@@ -345,7 +345,7 @@ func (s *SettlementService) DistributePenaltyFromPlatform(ctx context.Context, r
 
 			shareBill := &model.BillRecord{
 				RoundTraceID: roundTraceID,
-				BizOrderNo:   s.traceIDGen.GenerateBizOrderNo("PENALTY_SHARE", recipientID),
+				BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypePenaltyDistribute, recipientID),
 				BillType:     dto.BillTypePenaltyDistribute,
 				RoomID:       req.RoomID,
 				SessionID:    req.SessionID,

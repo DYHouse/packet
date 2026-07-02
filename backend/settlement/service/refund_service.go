@@ -83,7 +83,7 @@ func (s *RefundService) applyForRefundLocked(ctx context.Context, req *dto.Refun
 		}
 	}
 
-	refundOrderNo := s.traceIDGen.GenerateRefundOrderNo(bill.UserID)
+	refundOrderNo := s.traceIDGen.GenerateRefundOrderNo(bill.ID)
 	refundAudit := &model.RefundAudit{
 		RefundOrderNo: refundOrderNo,
 		RoundTraceID:  bill.RoundTraceID,

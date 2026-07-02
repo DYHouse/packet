@@ -12,6 +12,7 @@ const (
 	BillTypePenaltyDistribute  = 10
 	BillTypeSystemReward       = 11
 	BillTypeSessionCredit      = 12
+	BillTypeGameSettle         = 13
 )
 
 const (

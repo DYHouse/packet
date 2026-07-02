@@ -97,7 +97,7 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 
 		bills := make([]*model.BillRecord, 0, len(req.Players))
 		for _, player := range req.Players {
-			bizOrderNo := s.traceIDGen.GenerateBizOrderNo("DEDUCT_FIRST", player.UserID)
+			bizOrderNo := s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypeFirstRoundDeduct, player.UserID)
 			bill := &model.BillRecord{
 				RoundTraceID: roundTraceID,
 				BizOrderNo:   bizOrderNo,
@@ -289,7 +289,7 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 		}
 
 		if bill.Status == dto.BillStatusSuccess {
-			refundOrderNo := s.traceIDGen.GenerateRefundOrderNo(userID)
+			refundOrderNo := s.traceIDGen.GenerateRefundOrderNo(bill.ID)
 			refundAudit := &model.RefundAudit{
 				RefundOrderNo: refundOrderNo,
 				RoundTraceID:  roundTraceID,
@@ -436,7 +436,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 			Status:             dto.RoundStatusDeducted,
 		}
 
-		bizOrderNo := s.traceIDGen.GenerateBizOrderNo("SYS_PACKET", req.RoundID)
+		bizOrderNo := s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypeSystemPacket, dto.PlatformAccountID)
 		bill := &model.BillRecord{
 			RoundTraceID: roundTraceID,
 			BizOrderNo:   bizOrderNo,
@@ -492,7 +492,7 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 			settlement.MinPlayerID = req.UserID
 		}
 
-		bizOrderNo := s.traceIDGen.GenerateBizOrderNo("DEDUCT", req.UserID)
+		bizOrderNo := s.traceIDGen.GenerateBizOrderNo(roundTraceID, req.BillType, req.UserID)
 		bill := &model.BillRecord{
 			RoundTraceID: roundTraceID,
 			BizOrderNo:   bizOrderNo,

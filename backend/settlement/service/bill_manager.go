@@ -447,6 +447,20 @@ func (m *BillManager) UpdateGameSettleStatusByUser(ctx context.Context, sessionI
 		Updates(updates).Error
 }
 
+// IsPlayerGameSettled 检查指定玩家在指定会话中是否已完成游戏级结算
+// 用于 settlePlayer 幂等检查：已 Settled 的玩家不再重复调用 platform.Settle
+func (m *BillManager) IsPlayerGameSettled(ctx context.Context, sessionID int64, userID int64) (bool, error) {
+	var count int64
+	err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
+		Where("session_id = ? AND user_id = ? AND game_settle_status = ?",
+			sessionID, userID, dto.BillGameSettleSettled).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // GetUnsettledUsersBySession 查询游戏中未完成游戏级结算的玩家列表
 func (m *BillManager) GetUnsettledUsersBySession(ctx context.Context, sessionID int64) ([]int64, error) {
 	var userIDs []int64
