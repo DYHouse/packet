@@ -54,7 +54,12 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 		return fmt.Errorf("unmarshal event failed: %w", err)
 	}
 
-	if !c.tryAcquire(ctx, event.TraceID) {
+	acquired, acquireErr := c.tryAcquire(ctx, event.TraceID)
+	if acquireErr != nil {
+		// Redis 不可用（fail-closed），返回 error 让 Kafka 重试
+		return acquireErr
+	}
+	if !acquired {
 		logger.Warn("event already processed", "trace_id", event.TraceID)
 		return nil
 	}
@@ -445,20 +450,23 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 }
 
 // tryAcquire 用 SetNX 原子抢占事件处理权。
-// 返回 true 表示抢占成功（首次处理），false 表示已被其他 consumer 处理过。
-func (c *GameEventConsumer) tryAcquire(ctx context.Context, traceID string) bool {
+// 返回 (true, nil) 表示抢占成功（首次处理）。
+// 返回 (false, nil) 表示已被其他 consumer 处理过（幂等跳过）。
+// 返回 (false, err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
+// 业务侧幂等（DB 唯一索引/FirstOrCreate/状态机）仍作为兜底防线。
+func (c *GameEventConsumer) tryAcquire(ctx context.Context, traceID string) (bool, error) {
 	if c.redis == nil {
-		return true
+		return true, nil
 	}
 	key := redisKeys.GameEventProcessedKey(traceID)
 	ok, err := c.redis.SetNX(ctx, key, 1, 7*24*time.Hour).Result()
 	if err != nil {
-		logger.Warn("tryAcquire SetNX failed, fail-open",
+		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
 			"trace_id", traceID,
 			"error", err)
-		return true
+		return false, fmt.Errorf("tryAcquire SetNX failed: %w", err)
 	}
-	return ok
+	return ok, nil
 }
 
 // releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。

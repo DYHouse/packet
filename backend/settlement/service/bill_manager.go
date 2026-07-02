@@ -78,6 +78,16 @@ func (m *BillManager) GetBillByRoundTypeAndUser(ctx context.Context, roundID int
 	return &bill, nil
 }
 
+// GetBillByTraceTypeAndUser 基于 round_trace_id 查询 Bill，用于 RoundID 未设置的场景（如惩罚扣款）。
+func (m *BillManager) GetBillByTraceTypeAndUser(ctx context.Context, roundTraceID string, billType int, userID int64) (*model.BillRecord, error) {
+	var bill model.BillRecord
+	err := m.db.WithContext(ctx).Where("round_trace_id = ? AND bill_type = ? AND user_id = ?", roundTraceID, billType, userID).First(&bill).Error
+	if err != nil {
+		return nil, err
+	}
+	return &bill, nil
+}
+
 func (m *BillManager) ExistsRoundSettlement(ctx context.Context, roundID int64) (bool, error) {
 	var count int64
 	err := m.db.WithContext(ctx).Model(&model.RoundSettlement{}).

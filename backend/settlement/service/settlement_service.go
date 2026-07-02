@@ -213,6 +213,15 @@ func (s *SettlementService) settleCommission(ctx context.Context, settlement *mo
 func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dto.PenaltyDeductRequest) error {
 	roundTraceID := s.traceIDGen.GeneratePenaltyDeductTraceID(req.RoomID, req.SessionID)
 
+	// 幂等检查：若已存在同 traceID + BillType + userID 的 Success 状态 bill，直接返回 nil。
+	// 对于 Processing/Failed 状态的 bill 不跳过，继续走原流程：
+	//   - platform.Debit 的 BizID 是确定性的（基于 roundTraceID），平台侧会幂等处理
+	//   - 但会重复创建 bill，需依赖 DB 唯一索引兜底（Task 9 将添加复合唯一索引）
+	existingBill, err := s.billMgr.GetBillByTraceTypeAndUser(ctx, roundTraceID, dto.BillTypePenaltyIncome, req.UserID)
+	if err == nil && existingBill != nil && existingBill.Status == dto.BillStatusSuccess {
+		return nil
+	}
+
 	playerBill := &model.BillRecord{
 		RoundTraceID: roundTraceID,
 		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, dto.BillTypePenaltyIncome, req.UserID),
@@ -316,6 +325,13 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 
 func (s *SettlementService) DistributePenaltyFromPlatform(ctx context.Context, req *dto.PenaltyDistributeRequest) error {
 	roundTraceID := s.traceIDGen.GeneratePenaltyDistTraceID(req.RoomID, req.SessionID)
+
+	// 幂等检查：若已存在同 traceID + BillType + PlatformAccountID 的 Success 状态 bill，直接返回 nil。
+	// DistributePenaltyFromPlatform 的所有 bill 都是 Success 状态（不涉及平台调用），所以一次成功即可跳过。
+	existingBill, err := s.billMgr.GetBillByTraceTypeAndUser(ctx, roundTraceID, dto.BillTypePenaltyDistribute, dto.PlatformAccountID)
+	if err == nil && existingBill != nil && existingBill.Status == dto.BillStatusSuccess {
+		return nil
+	}
 
 	platformBill := &model.BillRecord{
 		RoundTraceID: roundTraceID,
