@@ -4,35 +4,39 @@ import (
 	"context"
 	"time"
 
+	commonconfig "github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type CreditRetryScheduler struct {
-	base        *BaseScheduler
+	base        *csched.BaseScheduler
 	creditRetry *service.CreditRetryService
 }
 
-func NewCreditRetryScheduler(ctx context.Context, creditRetry *service.CreditRetryService, redis *cRedis.Client) *CreditRetryScheduler {
-	config := SchedulerConfig{
+func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *CreditRetryScheduler {
+	config := csched.BaseSchedulerConfig{
 		Name:         "credit_retry",
-		Interval:     30 * time.Second,
-		InitialDelay: 10 * time.Second,
+		Interval:     cfg.Interval,
+		InitialDelay: cfg.InitialDelay,
 		LockKey:      rediskeys.KeySchedulerCreditRetryLock,
-		LockTTL:      60,
+		LockTTL:      cfg.LockTTL,
 	}
 
-	return &CreditRetryScheduler{
-		base:        NewBaseScheduler(ctx, config, nil, redis),
+	s := &CreditRetryScheduler{
 		creditRetry: creditRetry,
 	}
+	s.base = csched.NewBaseScheduler(config, s.execute, redis)
+	return s
 }
 
-func (s *CreditRetryScheduler) Start() {
-	s.base.task = s.execute
-	s.base.Start()
+func (s *CreditRetryScheduler) Name() string { return s.base.Name() }
+
+func (s *CreditRetryScheduler) Start(ctx context.Context) error {
+	return s.base.Start(ctx)
 }
 
 func (s *CreditRetryScheduler) execute(ctx context.Context) error {

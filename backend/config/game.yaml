@@ -9,6 +9,30 @@ timeout:
   grab: 20s
   send: 30s
   replace: 30s
+  robot: 5s
+  check_interval: 1s
+
+settlement_scheduler:
+  credit_retry:
+    interval: 30s
+    initial_delay: 10s
+    lock_ttl: 60
+  settlement_check:
+    interval: 5m
+    initial_delay: 1m
+    lock_ttl: 300
+  refund_process:
+    interval: 1m
+    initial_delay: 30s
+    lock_ttl: 120
+  game_settle_retry:
+    interval: 30s
+    initial_delay: 15s
+    lock_ttl: 60
+  game_settle_timeout:
+    interval: 5m
+    initial_delay: 1m
+    lock_ttl: 300
 
 redis:
   mode: "standalone"

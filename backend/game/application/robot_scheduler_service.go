@@ -75,15 +75,21 @@ func (s *RobotSchedulerService) SetBehaviorEngine(engine *RobotBehaviorEngine) {
 	s.behaviorEngine = engine
 }
 
+// Name returns the scheduler name.
+func (s *RobotSchedulerService) Name() string {
+	return "robot_scheduler"
+}
+
 // Start launches the scan loop in a background goroutine. The scan interval
 // is taken from the scheduler config. The provided ctx is used as the parent
 // of the service's internal context so that cancellation propagates from the
 // application lifecycle.
-func (s *RobotSchedulerService) Start(ctx context.Context) {
+func (s *RobotSchedulerService) Start(ctx context.Context) error {
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.wg.Add(1)
 	go s.scanLoop()
 	logger.Info("robot scheduler service started", "scan_interval", s.config.Scheduler.ScanInterval)
+	return nil
 }
 
 // Stop signals the scan loop to exit and waits for it to drain (with a 10s

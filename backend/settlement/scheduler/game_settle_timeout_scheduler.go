@@ -4,37 +4,41 @@ import (
 	"context"
 	"time"
 
+	commonconfig "github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type GameSettleTimeoutScheduler struct {
-	base          *BaseScheduler
+	base          *csched.BaseScheduler
 	billMgr       *service.BillManager
 	gameSettleSvc *service.GameSettleService
 }
 
-func NewGameSettleTimeoutScheduler(ctx context.Context, billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client) *GameSettleTimeoutScheduler {
-	config := SchedulerConfig{
+func NewGameSettleTimeoutScheduler(billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleTimeoutScheduler {
+	config := csched.BaseSchedulerConfig{
 		Name:         "game_settle_timeout",
-		Interval:     5 * time.Minute,
-		InitialDelay: 1 * time.Minute,
+		Interval:     cfg.Interval,
+		InitialDelay: cfg.InitialDelay,
 		LockKey:      rediskeys.KeySchedulerGameSettleTimeoutLock,
-		LockTTL:      300,
+		LockTTL:      cfg.LockTTL,
 	}
 
-	return &GameSettleTimeoutScheduler{
-		base:          NewBaseScheduler(ctx, config, nil, redis),
+	s := &GameSettleTimeoutScheduler{
 		billMgr:       billMgr,
 		gameSettleSvc: gameSettleSvc,
 	}
+	s.base = csched.NewBaseScheduler(config, s.execute, redis)
+	return s
 }
 
-func (s *GameSettleTimeoutScheduler) Start() {
-	s.base.task = s.execute
-	s.base.Start()
+func (s *GameSettleTimeoutScheduler) Name() string { return s.base.Name() }
+
+func (s *GameSettleTimeoutScheduler) Start(ctx context.Context) error {
+	return s.base.Start(ctx)
 }
 
 func (s *GameSettleTimeoutScheduler) execute(ctx context.Context) error {

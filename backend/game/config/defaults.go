@@ -13,6 +13,7 @@ func setDefaults(cfg *Config) {
 	commonconfig.SetLogDefaults(&cfg.Log)
 	commonconfig.SetPlatformDefaults(&cfg.Platform)
 	commonconfig.SetRobotDefaults(&cfg.Robot)
+	commonconfig.SetSettlementSchedulerDefaults(&cfg.SettlementScheduler)
 	commonconfig.SetNacosDefaults(&cfg.Nacos.NacosConfig)
 
 	// game 独有

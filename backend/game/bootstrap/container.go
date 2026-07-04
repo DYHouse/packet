@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"time"
 
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/async"
@@ -9,6 +10,7 @@ import (
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/limiter"
 	cRedis "github.com/cashparty/backend/common/redis"
+	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
 	"github.com/cashparty/backend/game/domain"
@@ -24,39 +26,36 @@ import (
 )
 
 type Container struct {
-	PlatformCfg        *config.PlatformConfig
-	TimeoutCfg         *config.TimeoutConfig
-	AvatarCfg          *config.AvatarConfig
-	DB                 *gorm.DB
-	Redis              *cRedis.Client
-	KafkaProducer      *kafka.Producer
-	DBRepo             domain.DBRepository
-	RoomRepo           domain.RoomRepository
-	Broadcaster        domain.Broadcaster
-	EventPublisher     domain.EventPublisher
-	GameEventPublisher *messaging.GameEventPublisher
+	PlatformCfg            *config.PlatformConfig
+	TimeoutCfg             *config.TimeoutConfig
+	AvatarCfg              *config.AvatarConfig
+	SettlementSchedulerCfg *config.SettlementSchedulerConfig
+	DB                     *gorm.DB
+	Redis                  *cRedis.Client
+	KafkaProducer          *kafka.Producer
+	DBRepo                 domain.DBRepository
+	RoomRepo               domain.RoomRepository
+	Broadcaster            domain.Broadcaster
+	EventPublisher         domain.EventPublisher
+	GameEventPublisher     *messaging.GameEventPublisher
 	// RoomEventConsumer / GameEventConsumer 的 Close 生命周期由 Application.kafkaConsumers
 	// 统一管理（PLAN §6 LF-2），Container 不持有 io.Closer 列表，避免双重关闭。
-	RoomEventConsumer          *messaging.RoomEventConsumer
-	GameEventConsumer          *messaging.GameEventConsumer
-	TimeoutScheduler           *scheduler.TimeoutScheduler
-	GrabService                *application.GrabService
-	PenaltyService             *application.PenaltyService
-	RoomAppService             *application.RoomAppService
-	SeatAppService             *application.SeatAppService
-	GameAppService             *application.GameAppService
-	UserService                *application.UserService
-	SettlementSvc              *settlementService.SettlementService
-	DeductSvc                  *settlementService.DeductService
-	RefundSvc                  *settlementService.RefundService
-	BalanceService             *settlementService.BalanceService
-	HistoryService             *application.HistoryService
-	PacketGenerator            *algorithm.PacketGenerator
-	CreditRetryScheduler       *settlementScheduler.CreditRetryScheduler
-	RefundProcessScheduler     *settlementScheduler.RefundProcessScheduler
-	SettlementCheckScheduler   *settlementScheduler.SettlementCheckScheduler
-	GameSettleRetryScheduler   *settlementScheduler.GameSettleRetryScheduler
-	GameSettleTimeoutScheduler *settlementScheduler.GameSettleTimeoutScheduler
+	RoomEventConsumer *messaging.RoomEventConsumer
+	GameEventConsumer *messaging.GameEventConsumer
+	TimeoutScheduler  *scheduler.TimeoutScheduler
+	GrabService       *application.GrabService
+	PenaltyService    *application.PenaltyService
+	RoomAppService    *application.RoomAppService
+	SeatAppService    *application.SeatAppService
+	GameAppService    *application.GameAppService
+	UserService       *application.UserService
+	SettlementSvc     *settlementService.SettlementService
+	DeductSvc         *settlementService.DeductService
+	RefundSvc         *settlementService.RefundService
+	BalanceService    *settlementService.BalanceService
+	HistoryService    *application.HistoryService
+	PacketGenerator   *algorithm.PacketGenerator
+	SchedulerRegistry *csched.Registry
 
 	// TaskRunner manages fire-and-forget async tasks for the application layer.
 	TaskRunner *async.TaskRunner
@@ -65,15 +64,14 @@ type Container struct {
 	UserLimiter *limiter.UserLimiter
 
 	// Robot system services
-	RobotCfg                    *config.RobotConfig
-	VirtualBalanceService       *redisRepo.VirtualBalanceService
-	RobotPoolService            *redisRepo.RobotPoolService
-	RobotSchedulerRedis         *redisRepo.RobotSchedulerRedis
-	RobotAccountService         *application.RobotAccountService
-	RobotPlayer                 *application.RobotPlayer
-	RobotBehaviorEngine         *application.RobotBehaviorEngine
-	RobotSchedulerService       *application.RobotSchedulerService
-	VirtualBalanceSyncScheduler *scheduler.VirtualBalanceSyncScheduler
+	RobotCfg              *config.RobotConfig
+	VirtualBalanceService *redisRepo.VirtualBalanceService
+	RobotPoolService      *redisRepo.RobotPoolService
+	RobotSchedulerRedis   *redisRepo.RobotSchedulerRedis
+	RobotAccountService   *application.RobotAccountService
+	RobotPlayer           *application.RobotPlayer
+	RobotBehaviorEngine   *application.RobotBehaviorEngine
+	RobotSchedulerService *application.RobotSchedulerService
 
 	// Shared settlement service instances (created in app.go, not recreated)
 	platformClient           platform.Client
@@ -117,44 +115,52 @@ func NewContainer(
 	robotChecker settlementService.RobotChecker,
 	settlementVirtualBalance *settlementService.VirtualBalanceService,
 	taskRunner *async.TaskRunner,
+	settlementSchedulerCfg *config.SettlementSchedulerConfig,
 ) *Container {
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	broadcaster := broadcast.NewGameBroadcaster(broadcastCfg, kafkaProducer, redis)
 	eventPublisher := messaging.NewRoomEventPublisher(kafkaProducer, kafka.TopicRoomEvents)
 	gameEventPublisher := messaging.NewGameEventPublisher(kafkaProducer)
 	timeoutScheduler := scheduler.NewTimeoutScheduler(redis, &scheduler.Config{
-		Seat:    timeoutCfg.Seat,
-		Ready:   timeoutCfg.Ready,
-		Grab:    timeoutCfg.Grab,
-		Send:    timeoutCfg.Send,
-		Replace: timeoutCfg.Replace,
+		Seat:          timeoutCfg.Seat,
+		Ready:         timeoutCfg.Ready,
+		Grab:          timeoutCfg.Grab,
+		Send:          timeoutCfg.Send,
+		Replace:       timeoutCfg.Replace,
+		Robot:         timeoutCfg.Robot,
+		CheckInterval: timeoutCfg.CheckInterval,
 	})
+
+	registry := csched.NewRegistry()
+	registry.Register(timeoutScheduler)
 
 	grabService := application.NewGrabService(redis, timeoutCfg.Grab, timeoutCfg.Send)
 	penaltyService := application.NewPenaltyService(redis, nil, settlementSvc)
 
 	return &Container{
-		PlatformCfg:        platformCfg,
-		TimeoutCfg:         timeoutCfg,
-		AvatarCfg:          avatarCfg,
-		RobotCfg:           robotCfg,
-		DB:                 db,
-		Redis:              redis,
-		KafkaProducer:      kafkaProducer,
-		DBRepo:             dbRepo,
-		RoomRepo:           roomRepo,
-		Broadcaster:        broadcaster,
-		EventPublisher:     eventPublisher,
-		GameEventPublisher: gameEventPublisher,
-		TimeoutScheduler:   timeoutScheduler,
-		GrabService:        grabService,
-		PenaltyService:     penaltyService,
-		SettlementSvc:      settlementSvc,
-		DeductSvc:          deductSvc,
-		RefundSvc:          refundSvc,
-		PacketGenerator:    packetGenerator,
-		UserLimiter:        limiter.NewUserLimiter(redis),
-		TaskRunner:         taskRunner,
+		PlatformCfg:            platformCfg,
+		TimeoutCfg:             timeoutCfg,
+		AvatarCfg:              avatarCfg,
+		SettlementSchedulerCfg: settlementSchedulerCfg,
+		RobotCfg:               robotCfg,
+		DB:                     db,
+		Redis:                  redis,
+		KafkaProducer:          kafkaProducer,
+		DBRepo:                 dbRepo,
+		RoomRepo:               roomRepo,
+		Broadcaster:            broadcaster,
+		EventPublisher:         eventPublisher,
+		GameEventPublisher:     gameEventPublisher,
+		TimeoutScheduler:       timeoutScheduler,
+		SchedulerRegistry:      registry,
+		GrabService:            grabService,
+		PenaltyService:         penaltyService,
+		SettlementSvc:          settlementSvc,
+		DeductSvc:              deductSvc,
+		RefundSvc:              refundSvc,
+		PacketGenerator:        packetGenerator,
+		UserLimiter:            limiter.NewUserLimiter(redis),
+		TaskRunner:             taskRunner,
 
 		platformClient:           platformClient,
 		billMgr:                  billMgr,
@@ -289,6 +295,7 @@ func (c *Container) initRobotServices() {
 		c.RobotAccountService, c.RobotPlayer, c.RoomRepo, c.DBRepo,
 		c.Redis, c.RobotSchedulerRedis, c.RobotPoolService, c.RobotCfg,
 	)
+	c.SchedulerRegistry.Register(c.RobotSchedulerService)
 
 	// Wire behavior engine to scheduler service (breaks circular dependency)
 	c.RobotSchedulerService.SetBehaviorEngine(c.RobotBehaviorEngine)
@@ -299,16 +306,12 @@ func (c *Container) initRobotServices() {
 	})
 
 	// Create virtual balance sync scheduler
-	c.VirtualBalanceSyncScheduler = scheduler.NewVirtualBalanceSyncScheduler(
-		c.VirtualBalanceService, c.RobotCfg.Account.SyncInterval,
-	)
+	c.SchedulerRegistry.Register(scheduler.NewVirtualBalanceSyncScheduler(
+		c.VirtualBalanceService, c.RobotCfg.Account.SyncInterval, c.Redis,
+	))
 }
 
 func (c *Container) initSettlementSchedulers() {
-	// TODO Phase 6.7: pass appCtx to settlement scheduler constructors so their
-	// internal contexts are tied to the application lifecycle instead of
-	// context.Background(). appCtx is not available on the Container yet; it
-	// lives on Application and is created in NewApplicationWithConfig.
 	settlementCheckSvc := settlementService.NewSettlementCheckService(
 		c.billMgr,
 		c.exceptionMgr,
@@ -316,11 +319,11 @@ func (c *Container) initSettlementSchedulers() {
 		c.traceIDGen,
 	)
 
-	c.CreditRetryScheduler = settlementScheduler.NewCreditRetryScheduler(context.Background(), c.creditRetrySvc, c.Redis)
-	c.RefundProcessScheduler = settlementScheduler.NewRefundProcessScheduler(context.Background(), c.RefundSvc, c.billMgr, c.Redis)
-	c.SettlementCheckScheduler = settlementScheduler.NewSettlementCheckScheduler(context.Background(), settlementCheckSvc, c.Redis)
-	c.GameSettleRetryScheduler = settlementScheduler.NewGameSettleRetryScheduler(context.Background(), c.billMgr, c.gameSettleSvc, c.Redis)
-	c.GameSettleTimeoutScheduler = settlementScheduler.NewGameSettleTimeoutScheduler(context.Background(), c.billMgr, c.gameSettleSvc, c.Redis)
+	c.SchedulerRegistry.Register(settlementScheduler.NewCreditRetryScheduler(c.creditRetrySvc, c.Redis, c.SettlementSchedulerCfg.CreditRetry))
+	c.SchedulerRegistry.Register(settlementScheduler.NewRefundProcessScheduler(c.RefundSvc, c.billMgr, c.Redis, c.SettlementSchedulerCfg.RefundProcess))
+	c.SchedulerRegistry.Register(settlementScheduler.NewSettlementCheckScheduler(settlementCheckSvc, c.Redis, c.SettlementSchedulerCfg.SettlementCheck))
+	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleRetryScheduler(c.billMgr, c.gameSettleSvc, c.Redis, c.SettlementSchedulerCfg.GameSettleRetry))
+	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleTimeoutScheduler(c.billMgr, c.gameSettleSvc, c.Redis, c.SettlementSchedulerCfg.GameSettleTimeout))
 }
 
 func (c *Container) NewRoomEventConsumer(cfg kafka.ConsumerConfig) (*messaging.RoomEventConsumer, error) {
@@ -338,63 +341,18 @@ func (c *Container) GetRobotBehaviorEngine() messaging.RobotBehaviorEngineInterf
 	return c.RobotBehaviorEngine
 }
 
-func (c *Container) StartSchedulers(appCtx context.Context) {
-	if c.TimeoutScheduler != nil {
-		c.TimeoutScheduler.Start()
+// StartSchedulers starts all registered schedulers.
+func (c *Container) StartSchedulers(appCtx context.Context) error {
+	if err := c.SchedulerRegistry.StartAll(appCtx); err != nil {
+		return err
 	}
-	if c.CreditRetryScheduler != nil {
-		c.CreditRetryScheduler.Start()
+	// Validate robot reserve ratio after schedulers start
+	if c.RobotSchedulerService != nil {
+		c.RobotSchedulerService.ValidateReserveRatio(appCtx)
 	}
-	if c.RefundProcessScheduler != nil {
-		c.RefundProcessScheduler.Start()
-	}
-	if c.SettlementCheckScheduler != nil {
-		c.SettlementCheckScheduler.Start()
-	}
-	if c.GameSettleRetryScheduler != nil {
-		c.GameSettleRetryScheduler.Start()
-	}
-	if c.GameSettleTimeoutScheduler != nil {
-		c.GameSettleTimeoutScheduler.Start()
-	}
-
-	// Start robot schedulers only when robot is enabled
-	if c.RobotCfg != nil && c.RobotCfg.Enabled {
-		if c.RobotSchedulerService != nil {
-			c.RobotSchedulerService.Start(appCtx)
-		}
-		if c.VirtualBalanceSyncScheduler != nil {
-			c.VirtualBalanceSyncScheduler.Start()
-		}
-		if c.RobotSchedulerService != nil {
-			c.RobotSchedulerService.ValidateReserveRatio(appCtx)
-		}
-	}
+	return nil
 }
 
 func (c *Container) Stop() {
-	if c.VirtualBalanceSyncScheduler != nil {
-		c.VirtualBalanceSyncScheduler.Stop()
-	}
-	if c.RobotSchedulerService != nil {
-		c.RobotSchedulerService.Stop()
-	}
-	if c.TimeoutScheduler != nil {
-		c.TimeoutScheduler.Stop()
-	}
-	if c.CreditRetryScheduler != nil {
-		c.CreditRetryScheduler.Stop()
-	}
-	if c.RefundProcessScheduler != nil {
-		c.RefundProcessScheduler.Stop()
-	}
-	if c.SettlementCheckScheduler != nil {
-		c.SettlementCheckScheduler.Stop()
-	}
-	if c.GameSettleRetryScheduler != nil {
-		c.GameSettleRetryScheduler.Stop()
-	}
-	if c.GameSettleTimeoutScheduler != nil {
-		c.GameSettleTimeoutScheduler.Stop()
-	}
+	c.SchedulerRegistry.StopAll(30 * time.Second)
 }

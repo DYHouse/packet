@@ -2,40 +2,43 @@ package scheduler
 
 import (
 	"context"
-	"time"
 
+	commonconfig "github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type RefundProcessScheduler struct {
-	base      *BaseScheduler
+	base      *csched.BaseScheduler
 	refundSvc *service.RefundService
 	billMgr   *service.BillManager
 }
 
-func NewRefundProcessScheduler(ctx context.Context, refundSvc *service.RefundService, billMgr *service.BillManager, redis *cRedis.Client) *RefundProcessScheduler {
-	config := SchedulerConfig{
+func NewRefundProcessScheduler(refundSvc *service.RefundService, billMgr *service.BillManager, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *RefundProcessScheduler {
+	config := csched.BaseSchedulerConfig{
 		Name:         "refund_process",
-		Interval:     time.Minute,
-		InitialDelay: 30 * time.Second,
+		Interval:     cfg.Interval,
+		InitialDelay: cfg.InitialDelay,
 		LockKey:      rediskeys.KeySchedulerRefundProcessLock,
-		LockTTL:      120,
+		LockTTL:      cfg.LockTTL,
 	}
 
-	return &RefundProcessScheduler{
-		base:      NewBaseScheduler(ctx, config, nil, redis),
+	s := &RefundProcessScheduler{
 		refundSvc: refundSvc,
 		billMgr:   billMgr,
 	}
+	s.base = csched.NewBaseScheduler(config, s.execute, redis)
+	return s
 }
 
-func (s *RefundProcessScheduler) Start() {
-	s.base.task = s.execute
-	s.base.Start()
+func (s *RefundProcessScheduler) Name() string { return s.base.Name() }
+
+func (s *RefundProcessScheduler) Start(ctx context.Context) error {
+	return s.base.Start(ctx)
 }
 
 func (s *RefundProcessScheduler) execute(ctx context.Context) error {

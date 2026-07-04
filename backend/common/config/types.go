@@ -52,11 +52,13 @@ func SetGatewayDefaults(cfg *GatewayConfig) {
 }
 
 type TimeoutConfig struct {
-	Seat    time.Duration `mapstructure:"seat" yaml:"seat"`
-	Ready   time.Duration `mapstructure:"ready" yaml:"ready"`
-	Grab    time.Duration `mapstructure:"grab" yaml:"grab"`
-	Send    time.Duration `mapstructure:"send" yaml:"send"`
-	Replace time.Duration `mapstructure:"replace" yaml:"replace"`
+	Seat          time.Duration `mapstructure:"seat" yaml:"seat"`
+	Ready         time.Duration `mapstructure:"ready" yaml:"ready"`
+	Grab          time.Duration `mapstructure:"grab" yaml:"grab"`
+	Send          time.Duration `mapstructure:"send" yaml:"send"`
+	Replace       time.Duration `mapstructure:"replace" yaml:"replace"`
+	Robot         time.Duration `mapstructure:"robot" yaml:"robot"`
+	CheckInterval time.Duration `mapstructure:"check_interval" yaml:"check_interval"`
 }
 
 func SetTimeoutDefaults(cfg *TimeoutConfig) {
@@ -74,6 +76,12 @@ func SetTimeoutDefaults(cfg *TimeoutConfig) {
 	}
 	if cfg.Replace == 0 {
 		cfg.Replace = 30 * time.Second
+	}
+	if cfg.Robot == 0 {
+		cfg.Robot = 5 * time.Second
+	}
+	if cfg.CheckInterval == 0 {
+		cfg.CheckInterval = 1 * time.Second
 	}
 }
 
@@ -134,14 +142,83 @@ type AvatarConfig struct {
 	DefaultCount int    `mapstructure:"default_count" yaml:"default_count"`
 }
 
-type RobotConfig struct {
-	Enabled   bool            `mapstructure:"enabled" yaml:"enabled"`
-	Scheduler SchedulerConfig `mapstructure:"scheduler" yaml:"scheduler"`
-	Behavior  BehaviorConfig  `mapstructure:"behavior" yaml:"behavior"`
-	Account   AccountConfig   `mapstructure:"account" yaml:"account"`
+// SettlementSchedulerConfig configures the 5 settlement schedulers.
+type SettlementSchedulerConfig struct {
+	CreditRetry       SettlementSchedulerSubConfig `mapstructure:"credit_retry" yaml:"credit_retry"`
+	SettlementCheck   SettlementSchedulerSubConfig `mapstructure:"settlement_check" yaml:"settlement_check"`
+	RefundProcess     SettlementSchedulerSubConfig `mapstructure:"refund_process" yaml:"refund_process"`
+	GameSettleRetry   SettlementSchedulerSubConfig `mapstructure:"game_settle_retry" yaml:"game_settle_retry"`
+	GameSettleTimeout SettlementSchedulerSubConfig `mapstructure:"game_settle_timeout" yaml:"game_settle_timeout"`
 }
 
-type SchedulerConfig struct {
+// SettlementSchedulerSubConfig is the per-scheduler sub-config.
+type SettlementSchedulerSubConfig struct {
+	Interval     time.Duration `mapstructure:"interval" yaml:"interval"`
+	InitialDelay time.Duration `mapstructure:"initial_delay" yaml:"initial_delay"`
+	LockTTL      int           `mapstructure:"lock_ttl" yaml:"lock_ttl"`
+}
+
+func SetSettlementSchedulerDefaults(cfg *SettlementSchedulerConfig) {
+	// CreditRetry: Interval=30s, InitialDelay=10s, LockTTL=60
+	if cfg.CreditRetry.Interval == 0 {
+		cfg.CreditRetry.Interval = 30 * time.Second
+	}
+	if cfg.CreditRetry.InitialDelay == 0 {
+		cfg.CreditRetry.InitialDelay = 10 * time.Second
+	}
+	if cfg.CreditRetry.LockTTL == 0 {
+		cfg.CreditRetry.LockTTL = 60
+	}
+	// SettlementCheck: Interval=5m, InitialDelay=1m, LockTTL=300
+	if cfg.SettlementCheck.Interval == 0 {
+		cfg.SettlementCheck.Interval = 5 * time.Minute
+	}
+	if cfg.SettlementCheck.InitialDelay == 0 {
+		cfg.SettlementCheck.InitialDelay = time.Minute
+	}
+	if cfg.SettlementCheck.LockTTL == 0 {
+		cfg.SettlementCheck.LockTTL = 300
+	}
+	// RefundProcess: Interval=1m, InitialDelay=30s, LockTTL=120
+	if cfg.RefundProcess.Interval == 0 {
+		cfg.RefundProcess.Interval = time.Minute
+	}
+	if cfg.RefundProcess.InitialDelay == 0 {
+		cfg.RefundProcess.InitialDelay = 30 * time.Second
+	}
+	if cfg.RefundProcess.LockTTL == 0 {
+		cfg.RefundProcess.LockTTL = 120
+	}
+	// GameSettleRetry: Interval=30s, InitialDelay=15s, LockTTL=60
+	if cfg.GameSettleRetry.Interval == 0 {
+		cfg.GameSettleRetry.Interval = 30 * time.Second
+	}
+	if cfg.GameSettleRetry.InitialDelay == 0 {
+		cfg.GameSettleRetry.InitialDelay = 15 * time.Second
+	}
+	if cfg.GameSettleRetry.LockTTL == 0 {
+		cfg.GameSettleRetry.LockTTL = 60
+	}
+	// GameSettleTimeout: Interval=5m, InitialDelay=1m, LockTTL=300
+	if cfg.GameSettleTimeout.Interval == 0 {
+		cfg.GameSettleTimeout.Interval = 5 * time.Minute
+	}
+	if cfg.GameSettleTimeout.InitialDelay == 0 {
+		cfg.GameSettleTimeout.InitialDelay = time.Minute
+	}
+	if cfg.GameSettleTimeout.LockTTL == 0 {
+		cfg.GameSettleTimeout.LockTTL = 300
+	}
+}
+
+type RobotConfig struct {
+	Enabled   bool                 `mapstructure:"enabled" yaml:"enabled"`
+	Scheduler RobotSchedulerConfig `mapstructure:"scheduler" yaml:"scheduler"`
+	Behavior  BehaviorConfig       `mapstructure:"behavior" yaml:"behavior"`
+	Account   AccountConfig        `mapstructure:"account" yaml:"account"`
+}
+
+type RobotSchedulerConfig struct {
 	ScanInterval       time.Duration `mapstructure:"scan_interval" yaml:"scan_interval"`
 	MinRealPlayers     int           `mapstructure:"min_real_players" yaml:"min_real_players"`
 	MaxRobotsPerRoom   int           `mapstructure:"max_robots_per_room" yaml:"max_robots_per_room"`

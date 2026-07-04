@@ -24,6 +24,7 @@
 14. [格式化与 gofmt](#14-格式化与-gofmt)
 15. [禁止的写法（Anti-Patterns）](#15-禁止的写法anti-patterns)
 16. [字符串拼接](#16-字符串拼接)
+17. [调度器（Scheduler）](#17-调度器scheduler)
 
 ---
 
@@ -277,9 +278,11 @@
 
 ### 6.2 调度器根 context（SHOULD）
 
-后台调度器（`scheduler/`）可以创建自己的根 context（`context.WithCancel(context.Background())`），因为它们由 `bootstrap` 启动、生命周期独立于请求。但调度器内部派生的每次扫描必须有 per-scan 超时。
+后台调度器（`scheduler/`）的根 context MUST 由 `bootstrap` 传入的 appCtx 派生（`context.WithCancel(appCtx)`），禁止 `context.Background()`。调度器内部派生的每次扫描必须有 per-scan 超时。
 
-参考：[game/scheduler/virtual_balance_sync.go:83](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/scheduler/virtual_balance_sync.go) 的 `context.WithTimeout(s.ctx, 10*time.Second)`。
+完整调度器规约见 [§17](#17-调度器scheduler)。
+
+参考：[common/scheduler/base.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/scheduler/base.go) 的 `Start(ctx)` 接收 appCtx 并 `context.WithCancel(ctx)` 派生。
 
 ### 6.3 热配置并发（MUST）
 
@@ -807,6 +810,125 @@ func respondError(c *gin.Context, httpStatus int, code int, msg string) {
 
 ---
 
+## 17. 调度器（Scheduler）
+
+后台调度器（`scheduler/`）统一遵循本节规约。`AsyncTaskRunner`（§6.1）用于应用层 fire-and-forget 异步任务，调度器用于周期性后台任务，二者分工不同但生命周期管理要求一致。
+
+### 17.1 SCH-1：统一 Scheduler 接口（MUST）
+
+所有调度器 MUST 实现 `common/scheduler.Scheduler` 接口：
+
+```go
+type Scheduler interface {
+    Name() string
+    Start(ctx context.Context) error
+    Stop()
+}
+```
+
+- `Name()` 返回调度器名称，用于日志、metrics、健康检查。
+- `Start(ctx)` 接收 appCtx，返回 error（启动失败可聚合）。
+- `Stop()` 阻塞等待 goroutine 退出，带超时兜底。
+
+### 17.2 SCH-2：注册到 SchedulerRegistry（MUST）
+
+调度器 MUST 注册到 `common/scheduler.Registry`，禁止散落在 `Container` 中的 ad-hoc 字段。
+
+- `Registry.Register(s Scheduler)` 在构造时调用。
+- `Registry.StartAll(appCtx)` 并行启动，`Registry.StopAll(timeout)` 并行停止。
+- 仅对需要被其他服务注入的调度器（如 `TimeoutScheduler` 被 `RoomAppService` 注入）保留单独字段。
+
+参考：[game/bootstrap/container.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/bootstrap/container.go) 的 `SchedulerRegistry` 字段 + `initSettlementSchedulers`。
+
+### 17.3 SCH-3：appCtx 作为父 context（MUST）
+
+`Start(ctx)` MUST 接收 appCtx 作为父 ctx，内部 `context.WithCancel(ctx)` 派生调度器 ctx。**禁止** `context.Background()` 作为调度器根 ctx。
+
+- 调度器 ctx 随 appCtx 取消而取消，确保优雅关停。
+- 构造函数不得接收 ctx 参数，ctx 只在 `Start` 时传入。
+
+### 17.4 SCH-4：InitialDelay 使用 select（MUST）
+
+`InitialDelay` MUST 用 `select` 实现，禁止 `time.Sleep`：
+
+```go
+select {
+case <-s.ctx.Done():
+    return
+case <-time.After(s.config.InitialDelay):
+}
+```
+
+- `time.Sleep` 阻塞期间无法响应 `Stop()`，导致关停延迟最长等于 `InitialDelay`。
+
+### 17.5 SCH-5：检查 WithRedisLock 返回值（MUST）
+
+`lock.WithRedisLock` 返回值 MUST 被检查并记录。锁获取失败与 task 错误均 MUST 记录到日志和 metrics。
+
+- **禁止**丢弃返回值（`_ = lock.WithRedisLock(...)`）。
+- 错误 MUST 记录 `name`、`lock_key`、`error` 字段。
+
+参考：[common/scheduler/base.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/scheduler/base.go) 的 `executeTask`。
+
+### 17.6 SCH-6：检查 service 返回值（MUST）
+
+调度器 `execute` 中调用的 service 方法返回的 error MUST 被检查并记录；**禁止**丢弃返回值。
+
+- service 方法返回 error 时，`execute` MUST `return err`，让 `BaseScheduler.executeTask` 记录到 metrics。
+- 多个 service 调用串联时，每个错误都 MUST 记录，但可选择性 `return` 第一个错误。
+
+### 17.7 SCH-7：配置外部化（MUST）
+
+调度器的 `Interval`、`InitialDelay`、`LockTTL`、`CheckInterval` 等参数 MUST 通过配置文件设置，**禁止**硬编码。
+
+- 新增调度器配置结构体定义在 `common/config/types.go`，服务特有配置放在各自 `config/` 包。
+- 默认值在 `Set*Defaults` 函数中设置，与历史硬编码值保持一致。
+- YAML 配置段必须与配置结构体字段对应。
+
+### 17.8 SCH-8：并行 Stop 带全局预算（MUST）
+
+`SchedulerRegistry.StopAll(timeout)` MUST 并行停止所有调度器，带全局预算（默认 30s）。
+
+- 串行 Stop 在最坏情况下总耗时 = 所有调度器 Stop 超时之和（可达 80s+）。
+- 并行 Stop 总耗时 = max(单调度器 Stop 超时, 全局预算)。
+
+### 17.9 SCH-9：Metrics 收集（SHOULD）
+
+调度器 SHOULD 收集 metrics：执行次数、耗时、错误数、panic 数。
+
+- `common/scheduler.Metrics` 提供 `RecordExecution`、`RecordError`、`RecordPanic`、`Snapshot` 方法。
+- metrics 数据用于健康检查和问题诊断。
+
+### 17.10 SCH-10：BaseScheduler 跨服务共享（MUST）
+
+`BaseScheduler` 定义在 `common/scheduler/base.go`，跨服务共享。**禁止**在 `settlement/scheduler/` 或其他服务包内重复定义 `BaseScheduler`。
+
+- `settlement/scheduler/base.go`（旧）MUST 删除。
+- 各调度器通过组合 `*csched.BaseScheduler` 复用通用逻辑。
+
+### 17.11 SCH-11：TaskFunc 在构造函数中传入（MUST）
+
+`TaskFunc` MUST 在 `NewBaseScheduler` 构造函数中传入，**禁止**在 `Start()` 中赋值。
+
+- 在 `Start()` 中赋值会导致 `nil task` 风险（如果 `Start` 前被调用）。
+- 使用闭包模式传递方法值：`s := &Scheduler{...}; s.base = csched.NewBaseScheduler(config, s.execute, redis)`。
+
+### 17.12 SCH-12：ZSET-based 调度器豁免与 handler ctx（MUST）
+
+ZSET-based 调度器（如 `TimeoutScheduler`）依赖 `ZRem` 原子性去重，可豁免分布式锁要求。但 handler goroutine MUST 派生 per-handler ctx：
+
+```go
+handlerCtx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+defer cancel()
+handler(handlerCtx, roomID, data)
+```
+
+- **禁止**直接使用调度器根 ctx（`s.ctx`）作为 handler ctx，避免单个 handler 阻塞影响整体调度。
+
+参考：[game/scheduler/timeout_scheduler.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/scheduler/timeout_scheduler.go) 的 `checkTimeouts`。
+
+---
+
 ## 附录 A：参考实现索引
 
 | 主题 | 参考文件 |
@@ -821,7 +943,7 @@ func respondError(c *gin.Context, httpStatus int, code int, msg string) {
 | 乐观锁 UPDATE | [settlement/service/bill_manager.go:99-119](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/bill_manager.go) |
 | atomic.Pointer 热配置 | [game/algorithm/packet_generator.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/algorithm/packet_generator.go) |
 | AsyncTaskRunner | [game/application/game_app_service.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/application/game_app_service.go) |
-| 调度器 + Redis 锁 | [settlement/scheduler/base.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/scheduler/base.go) |
+| 调度器 + Redis 锁 | [common/scheduler/base.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/scheduler/base.go) |
 | TraceID 生成 | [settlement/service/trace_id_generator.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/trace_id_generator.go) |
 | gRPC 拦截器 | [game/server/generic_service.go:778-790](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/server/generic_service.go) |
 | 健康检查三端点 | [gateway/health/health.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/gateway/health/health.go) |
@@ -834,3 +956,4 @@ func respondError(c *gin.Context, httpStatus int, code int, msg string) {
 |---|---|
 | 2026-07-04 | 初版，基于 backend/ 全量代码（171 文件）分析制定 |
 | 2026-07-04 | 新增 §16 字符串拼接规约（SC-1~SC-10）；§4.3 补充 `%w` vs `%v` 说明；§7.1 补充 `common/rediskeys` 统一包说明、Prefix 尾随冒号约定、Lua 孤儿 key 禁止规则 |
+| 2026-07-04 | 新增 §17 调度器规约（SCH-1~SCH-12）；§6.2 更新为引用 §17；附录 A 调度器参考实现指向 `common/scheduler/base.go` |

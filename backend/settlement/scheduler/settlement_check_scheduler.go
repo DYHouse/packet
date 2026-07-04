@@ -4,39 +4,50 @@ import (
 	"context"
 	"time"
 
+	commonconfig "github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type SettlementCheckScheduler struct {
-	base            *BaseScheduler
+	base            *csched.BaseScheduler
 	settlementCheck *service.SettlementCheckService
 }
 
-func NewSettlementCheckScheduler(ctx context.Context, settlementCheck *service.SettlementCheckService, redis *cRedis.Client) *SettlementCheckScheduler {
-	config := SchedulerConfig{
+func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *SettlementCheckScheduler {
+	config := csched.BaseSchedulerConfig{
 		Name:         "settlement_check",
-		Interval:     5 * time.Minute,
-		InitialDelay: time.Minute,
+		Interval:     cfg.Interval,
+		InitialDelay: cfg.InitialDelay,
 		LockKey:      rediskeys.KeySchedulerSettlementCheckLock,
-		LockTTL:      300,
+		LockTTL:      cfg.LockTTL,
 	}
 
-	return &SettlementCheckScheduler{
-		base:            NewBaseScheduler(ctx, config, nil, redis),
+	s := &SettlementCheckScheduler{
 		settlementCheck: settlementCheck,
 	}
+	s.base = csched.NewBaseScheduler(config, s.execute, redis)
+	return s
 }
 
-func (s *SettlementCheckScheduler) Start() {
-	s.base.task = s.execute
-	s.base.Start()
+func (s *SettlementCheckScheduler) Name() string { return s.base.Name() }
+
+func (s *SettlementCheckScheduler) Start(ctx context.Context) error {
+	return s.base.Start(ctx)
 }
 
 func (s *SettlementCheckScheduler) execute(ctx context.Context) error {
-	s.settlementCheck.CheckFirstRoundDeductFailure(ctx)
-	s.settlementCheck.CheckDeductedButNotSettled(ctx, time.Now().Add(-5*time.Minute))
+	if err := s.settlementCheck.CheckFirstRoundDeductFailure(ctx); err != nil {
+		logger.Error("check first round deduct failure failed", "error", err)
+		return err
+	}
+	if err := s.settlementCheck.CheckDeductedButNotSettled(ctx, time.Now().Add(-5*time.Minute)); err != nil {
+		logger.Error("check deducted but not settled failed", "error", err)
+		return err
+	}
 	return nil
 }
 

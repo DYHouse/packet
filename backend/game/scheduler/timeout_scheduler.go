@@ -30,21 +30,13 @@ type TimeoutConfig struct {
 }
 
 type Config struct {
-	Seat    time.Duration
-	Ready   time.Duration
-	Grab    time.Duration
-	Send    time.Duration
-	Replace time.Duration
-	Robot   time.Duration
-}
-
-var defaultCheckIntervals = map[TimeoutType]time.Duration{
-	TimeoutTypeSeat:    1 * time.Second,
-	TimeoutTypeReady:   500 * time.Millisecond,
-	TimeoutTypeGrab:    500 * time.Millisecond,
-	TimeoutTypeSend:    1 * time.Second,
-	TimeoutTypeReplace: 1 * time.Second,
-	TimeoutTypeRobot:   500 * time.Millisecond,
+	Seat          time.Duration
+	Ready         time.Duration
+	Grab          time.Duration
+	Send          time.Duration
+	Replace       time.Duration
+	Robot         time.Duration
+	CheckInterval time.Duration
 }
 
 type TimeoutHandler func(ctx context.Context, roomID string, data string)
@@ -60,7 +52,10 @@ type TimeoutScheduler struct {
 }
 
 func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
-	ctx, cancel := context.WithCancel(context.Background())
+	checkInterval := cfg.CheckInterval
+	if checkInterval == 0 {
+		checkInterval = 1 * time.Second
+	}
 
 	configs := make(map[TimeoutType]TimeoutConfig)
 
@@ -68,44 +63,42 @@ func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
 	if seatDuration == 0 {
 		seatDuration = 30 * time.Second
 	}
-	configs[TimeoutTypeSeat] = TimeoutConfig{Duration: seatDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeSeat]}
+	configs[TimeoutTypeSeat] = TimeoutConfig{Duration: seatDuration, CheckInterval: checkInterval}
 
 	readyDuration := cfg.Ready
 	if readyDuration == 0 {
 		readyDuration = 3 * time.Second
 	}
-	configs[TimeoutTypeReady] = TimeoutConfig{Duration: readyDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeReady]}
+	configs[TimeoutTypeReady] = TimeoutConfig{Duration: readyDuration, CheckInterval: checkInterval}
 
 	grabDuration := cfg.Grab
 	if grabDuration == 0 {
 		grabDuration = 20 * time.Second
 	}
-	configs[TimeoutTypeGrab] = TimeoutConfig{Duration: grabDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeGrab]}
+	configs[TimeoutTypeGrab] = TimeoutConfig{Duration: grabDuration, CheckInterval: checkInterval}
 
 	sendDuration := cfg.Send
 	if sendDuration == 0 {
 		sendDuration = 30 * time.Second
 	}
-	configs[TimeoutTypeSend] = TimeoutConfig{Duration: sendDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeSend]}
+	configs[TimeoutTypeSend] = TimeoutConfig{Duration: sendDuration, CheckInterval: checkInterval}
 
 	replaceDuration := cfg.Replace
 	if replaceDuration == 0 {
 		replaceDuration = 30 * time.Second
 	}
-	configs[TimeoutTypeReplace] = TimeoutConfig{Duration: replaceDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeReplace]}
+	configs[TimeoutTypeReplace] = TimeoutConfig{Duration: replaceDuration, CheckInterval: checkInterval}
 
 	robotDuration := cfg.Robot
 	if robotDuration == 0 {
 		robotDuration = 5 * time.Second
 	}
-	configs[TimeoutTypeRobot] = TimeoutConfig{Duration: robotDuration, CheckInterval: defaultCheckIntervals[TimeoutTypeRobot]}
+	configs[TimeoutTypeRobot] = TimeoutConfig{Duration: robotDuration, CheckInterval: checkInterval}
 
 	return &TimeoutScheduler{
 		redis:    redis,
 		handlers: make(map[TimeoutType]TimeoutHandler),
 		configs:  configs,
-		ctx:      ctx,
-		cancel:   cancel,
 	}
 }
 
@@ -113,16 +106,24 @@ func (s *TimeoutScheduler) RegisterHandler(timeoutType TimeoutType, handler Time
 	s.handlers[timeoutType] = handler
 }
 
-func (s *TimeoutScheduler) Start() {
+func (s *TimeoutScheduler) Name() string {
+	return "timeout_scheduler"
+}
+
+func (s *TimeoutScheduler) Start(ctx context.Context) error {
+	s.ctx, s.cancel = context.WithCancel(ctx)
 	for timeoutType, config := range s.configs {
 		s.wg.Add(1)
 		go s.runChecker(timeoutType, config)
 	}
 	logger.Info("timeout scheduler started")
+	return nil
 }
 
 func (s *TimeoutScheduler) Stop() {
-	s.cancel()
+	if s.cancel != nil {
+		s.cancel()
+	}
 	s.wg.Wait() // 等 checker goroutine 退出
 
 	// 等 handler goroutine 退出，带超时防止永久阻塞
@@ -266,7 +267,9 @@ func (s *TimeoutScheduler) checkTimeouts(timeoutType TimeoutType) {
 							"panic", r, "stack", string(debug.Stack()))
 					}
 				}()
-				handler(s.ctx, roomID, data)
+				handlerCtx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+				defer cancel()
+				handler(handlerCtx, roomID, data)
 			}(handler, roomID, data)
 		}
 	}

@@ -4,4 +4,3 @@ rate_limiter:
   user_requests_per_second: 5000
   user_burst_size: 10000
   global_requests_per_sec: 10000
-  cleanup_interval: 1m

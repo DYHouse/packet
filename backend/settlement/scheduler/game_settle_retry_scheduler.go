@@ -2,40 +2,43 @@ package scheduler
 
 import (
 	"context"
-	"time"
 
+	commonconfig "github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type GameSettleRetryScheduler struct {
-	base          *BaseScheduler
+	base          *csched.BaseScheduler
 	billMgr       *service.BillManager
 	gameSettleSvc *service.GameSettleService
 }
 
-func NewGameSettleRetryScheduler(ctx context.Context, billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client) *GameSettleRetryScheduler {
-	config := SchedulerConfig{
+func NewGameSettleRetryScheduler(billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleRetryScheduler {
+	config := csched.BaseSchedulerConfig{
 		Name:         "game_settle_retry",
-		Interval:     30 * time.Second,
-		InitialDelay: 15 * time.Second,
+		Interval:     cfg.Interval,
+		InitialDelay: cfg.InitialDelay,
 		LockKey:      rediskeys.KeySchedulerGameSettleRetryLock,
-		LockTTL:      60,
+		LockTTL:      cfg.LockTTL,
 	}
 
-	return &GameSettleRetryScheduler{
-		base:          NewBaseScheduler(ctx, config, nil, redis),
+	s := &GameSettleRetryScheduler{
 		billMgr:       billMgr,
 		gameSettleSvc: gameSettleSvc,
 	}
+	s.base = csched.NewBaseScheduler(config, s.execute, redis)
+	return s
 }
 
-func (s *GameSettleRetryScheduler) Start() {
-	s.base.task = s.execute
-	s.base.Start()
+func (s *GameSettleRetryScheduler) Name() string { return s.base.Name() }
+
+func (s *GameSettleRetryScheduler) Start(ctx context.Context) error {
+	return s.base.Start(ctx)
 }
 
 func (s *GameSettleRetryScheduler) execute(ctx context.Context) error {
@@ -63,7 +66,9 @@ func (s *GameSettleRetryScheduler) execute(ctx context.Context) error {
 		}
 
 		if allSuccess && len(userIDs) > 0 {
-			s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusSuccess)
+			if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusSuccess); err != nil {
+				logger.Error("update game settle status by session failed", "session_id", sessionID, "error", err)
+			}
 		}
 	}
 

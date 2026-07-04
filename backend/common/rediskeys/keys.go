@@ -255,7 +255,7 @@ const (
 )
 
 // ============================================================================
-// Scheduler 锁相关 key（settlement/scheduler 层，P1-3 修复：补齐 cashparty: 前缀）
+// Scheduler 锁相关 key（settlement/scheduler 与 game/scheduler 层，P1-3 修复：补齐 cashparty: 前缀）
 // ============================================================================
 
 const (
@@ -269,6 +269,8 @@ const (
 	KeySchedulerGameSettleRetryLock = KeyPrefix + ":scheduler:game_settle_retry:lock"
 	// KeySchedulerGameSettleTimeoutLock 游戏结算超时调度器锁。
 	KeySchedulerGameSettleTimeoutLock = KeyPrefix + ":scheduler:game_settle_timeout:lock"
+	// KeySchedulerVirtualBalanceSyncLock 虚拟余额同步调度器锁。
+	KeySchedulerVirtualBalanceSyncLock = KeyPrefix + ":scheduler:virtual_balance_sync:lock"
 )
 
 // ============================================================================

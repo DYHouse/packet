@@ -20,7 +20,6 @@ func DefaultRateLimiterConfig() *gatewayConfig.RateLimiterConfig {
 		UserRequestsPerSecond: 50,
 		UserBurstSize:         100,
 		GlobalRequestsPerSec:  10000,
-		CleanupInterval:       time.Minute,
 	}
 }
 

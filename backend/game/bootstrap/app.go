@@ -144,7 +144,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	}
 
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
-		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner)
+		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler)
 	container.InitAppServices()
 
 	return &Application{
@@ -178,7 +178,11 @@ func (a *Application) Start(ctx context.Context) error {
 	a.Container.GameEventConsumer = gameEventConsumer
 	a.kafkaConsumers = append(a.kafkaConsumers, gameEventConsumer)
 
-	a.Container.StartSchedulers(a.appCtx)
+	if err := a.Container.StartSchedulers(a.appCtx); err != nil {
+		logger.Error("some schedulers failed to start", "error", err)
+		// Don't return error - some schedulers may have started successfully
+		// and we want the application to continue starting (consistent with previous behavior)
+	}
 
 	a.wg.Add(2)
 	go func() {
