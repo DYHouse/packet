@@ -15,7 +15,6 @@ import (
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/idgen"
-	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/nacos"
 	cRedis "github.com/cashparty/backend/common/redis"
@@ -84,11 +83,6 @@ func NewApplicationWithConfig(cfg *gatewayConfig.Config, routerPath string) (*Ap
 		return nil, err
 	}
 
-	var kafkaProducer *kafka.Producer
-	if cfg.Kafka.Enabled {
-		kafkaProducer = kafka.NewProducerWithBrokers(cfg.Kafka.Brokers)
-	}
-
 	if nacosClient != nil && cfg.Nacos.RateLimiterDataID != "" {
 		rlCfg, err := loadRateLimiterConfigFromNacos(nacosClient, cfg)
 		if err != nil {
@@ -98,7 +92,7 @@ func NewApplicationWithConfig(cfg *gatewayConfig.Config, routerPath string) (*Ap
 		}
 	}
 
-	container := NewContainer(cfg, redisClient, kafkaProducer, nodeID, taskRunner)
+	container := NewContainer(cfg, redisClient, nodeID, taskRunner)
 
 	routerConfig, err := loadRouterConfig(nacosClient, cfg, routerPath)
 	if err != nil {

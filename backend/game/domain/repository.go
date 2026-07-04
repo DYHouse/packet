@@ -78,15 +78,6 @@ type SubstituteResult struct {
 	Player               *Player
 }
 
-type EventPublisher interface {
-	Publish(ctx context.Context, event *RoomEvent) error
-}
-
-type Broadcaster interface {
-	Broadcast(ctx context.Context, roomID string, cmd string, data interface{}, excludeUserID string) error
-	BroadcastToUser(ctx context.Context, userID string, cmd string, data interface{}) error
-}
-
 type JoinResult struct {
 	RoomID   string
 	RoomNo   string

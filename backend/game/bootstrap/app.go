@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -13,7 +14,6 @@ import (
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/idgen"
-	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/mysql"
@@ -22,7 +22,6 @@ import (
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
 	gameconfig "github.com/cashparty/backend/game/config"
-	"github.com/cashparty/backend/game/infrastructure/messaging"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	redisRepo "github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/server"
@@ -31,15 +30,16 @@ import (
 )
 
 type Application struct {
-	Container  *Container
-	config     *gameconfig.Config
-	grpcServer *server.GRPCServer
-	cancel     context.CancelFunc
-	nacos      *nacos.Client
-	grpcPort   int
-	appCtx     context.Context
-	taskRunner *async.TaskRunner
-	wg         sync.WaitGroup
+	Container      *Container
+	config         *gameconfig.Config
+	grpcServer     *server.GRPCServer
+	cancel         context.CancelFunc
+	nacos          *nacos.Client
+	grpcPort       int
+	appCtx         context.Context
+	taskRunner     *async.TaskRunner
+	wg             sync.WaitGroup
+	kafkaConsumers []io.Closer
 }
 
 func NewApplication(cfgPath string) (*Application, error) {
@@ -92,7 +92,11 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 		return nil, fmt.Errorf("failed to create mysql client: %w", err)
 	}
 
-	kafkaProducer := kafka.NewProducerWithBrokers(cfg.Kafka.Brokers)
+	kafkaProducer, err := createKafkaProducer(cfg)
+	if err != nil {
+		redisClient.Close()
+		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
+	}
 
 	platformClient, err := platform.NewClient(&cfg.Platform)
 	if err != nil {
@@ -157,20 +161,22 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 func (a *Application) Start(ctx context.Context) error {
 	nodeID := idgen.GetNodeIDString()
 
-	roomEventConsumerCfg := kafka.NewConsumerConfig(
-		a.config.Kafka.Brokers,
-		kafka.TopicRoomEvents,
-		fmt.Sprintf("game-room-events-%s", nodeID),
-	)
-	a.Container.RoomEventConsumer = a.Container.NewRoomEventConsumer(roomEventConsumerCfg)
+	roomEventConsumer, err := createRoomEventConsumer(a.config, a.Container.DBRepo, a.Container.Redis, nodeID)
+	if err != nil {
+		return fmt.Errorf("failed to create room event consumer: %w", err)
+	}
+	a.Container.RoomEventConsumer = roomEventConsumer
+	a.kafkaConsumers = append(a.kafkaConsumers, roomEventConsumer)
 
-	gameEventConsumer := messaging.NewGameEventConsumer(a.Container.DB, a.Container.Redis, a.Container.SettlementSvc, a.Container.GetRobotBehaviorEngine())
-	a.Container.GameEventKafkaConsumer = kafka.NewConsumer(
-		a.config.Kafka.Brokers,
-		kafka.TopicGameEvents,
-		fmt.Sprintf("game-events-%s", nodeID),
-		gameEventConsumer.HandleEvent,
+	gameEventConsumer, err := createGameEventConsumer(
+		a.config, a.Container.DB, a.Container.Redis, a.Container.SettlementSvc,
+		a.Container.GetRobotBehaviorEngine(), nodeID,
 	)
+	if err != nil {
+		return fmt.Errorf("failed to create game event consumer: %w", err)
+	}
+	a.Container.GameEventConsumer = gameEventConsumer
+	a.kafkaConsumers = append(a.kafkaConsumers, gameEventConsumer)
 
 	a.Container.StartSchedulers(a.appCtx)
 
@@ -191,12 +197,12 @@ func (a *Application) Start(ctx context.Context) error {
 		defer a.wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Error("game event kafka consumer panic",
+				logger.Error("game event consumer panic",
 					"panic", r, "stack", string(debug.Stack()))
 			}
 		}()
-		if err := a.Container.GameEventKafkaConsumer.Start(a.appCtx); err != nil {
-			logger.Error("game event kafka consumer failed", "error", err)
+		if err := a.Container.GameEventConsumer.Start(a.appCtx); err != nil {
+			logger.Error("game event consumer failed", "error", err)
 		}
 	}()
 
@@ -264,7 +270,23 @@ func (a *Application) Stop() error {
 		}
 	}
 
-	// 5. 关闭底层资源
+	// 5. 关闭 Kafka consumer（每个加 5s 超时兜底，LF-2）
+	for _, c := range a.kafkaConsumers {
+		done := make(chan struct{})
+		go func(cl io.Closer) {
+			if err := cl.Close(); err != nil {
+				logger.Warn("failed to close kafka consumer", "error", err)
+			}
+			close(done)
+		}(c)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			logger.Warn("kafka consumer close timeout, force shutdown")
+		}
+	}
+
+	// 6. 关闭底层资源
 	if a.grpcServer != nil {
 		a.grpcServer.Stop()
 	}

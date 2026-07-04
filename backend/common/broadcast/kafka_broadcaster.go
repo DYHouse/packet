@@ -15,7 +15,7 @@ type KafkaBroadcaster struct {
 
 func NewKafkaBroadcaster(producer *kafka.Producer, topic string) *KafkaBroadcaster {
 	if topic == "" {
-		topic = BroadcastTopicKafka
+		topic = kafka.TopicGatewayBroadcast
 	}
 	return &KafkaBroadcaster{
 		producer: producer,
@@ -37,7 +37,7 @@ func (b *KafkaBroadcaster) Broadcast(ctx context.Context, roomID string, event s
 		return err
 	}
 
-	if err := b.producer.Send(ctx, b.topic, nil, msgData); err != nil {
+	if err := b.producer.Send(ctx, b.topic, []byte(roomID), msgData); err != nil {
 		logger.Error("failed to send broadcast message via kafka", "error", err)
 		return err
 	}
@@ -63,7 +63,7 @@ func (b *KafkaBroadcaster) BroadcastToUser(ctx context.Context, userID string, e
 		return err
 	}
 
-	if err := b.producer.Send(ctx, b.topic, nil, msgData); err != nil {
+	if err := b.producer.Send(ctx, b.topic, []byte(userID), msgData); err != nil {
 		logger.Error("failed to send broadcast message via kafka", "error", err)
 		return err
 	}

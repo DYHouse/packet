@@ -110,7 +110,7 @@ func (s *SeatAppService) SelectSeat(ctx context.Context, req *SelectSeatRequest)
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar))
+		s.publisher.PublishRoomEvent(ctx, domain.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar))
 	}
 
 	stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
@@ -172,7 +172,7 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname))
+		s.publisher.PublishRoomEvent(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname))
 	}
 
 	var roomState *RoomState
@@ -280,7 +280,7 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		}
 		json.Unmarshal([]byte(playerDataStr), &player)
 
-		s.publisher.Publish(ctx, domain.NewPlayerReadyEvent(
+		s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
 			req.RoomID, req.UserID, player.SeatNo, player.Nickname, player.Avatar))
 	}
 
@@ -387,7 +387,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout))
+		s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout))
 	}
 
 	if s.broadcaster != nil {

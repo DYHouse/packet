@@ -128,7 +128,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 	roomNo := result.RoomNo
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewSpectatorJoinEvent(roomID, req.UserID, userInfo.Nickname, userInfo.Avatar))
+		s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorJoinEvent(roomID, req.UserID, userInfo.Nickname, userInfo.Avatar))
 	}
 
 	stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
@@ -207,7 +207,7 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 	}
 
 	if s.publisher != nil && autoResult.Player != nil {
-		s.publisher.Publish(ctx, domain.NewPlayerReadyEvent(
+		s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
 			joinResult.RoomID, req.UserID, autoResult.SeatNo,
 			autoResult.Player.Nickname, autoResult.Player.Avatar))
 	}
@@ -336,7 +336,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	if s.publisher != nil && subResult.Player != nil {
-		s.publisher.Publish(ctx, domain.NewSubstituteEvent(
+		s.publisher.PublishRoomEvent(ctx, domain.NewSubstituteEvent(
 			roomID, subResult.SubstituteUserID, subResult.SeatNo,
 			subResult.Player.Nickname, subResult.Player.Avatar))
 	}
@@ -395,7 +395,7 @@ func (s *RoomAppService) Enqueue(ctx context.Context, req *EnqueueRequest) (*Enq
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar))
+		s.publisher.PublishRoomEvent(ctx, domain.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar))
 	}
 
 	var roomState *RoomState
@@ -437,7 +437,7 @@ func (s *RoomAppService) Dequeue(ctx context.Context, req *DequeueRequest) (*Deq
 	}
 
 	if s.publisher != nil {
-		s.publisher.Publish(ctx, domain.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel"))
+		s.publisher.PublishRoomEvent(ctx, domain.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel"))
 	}
 
 	var roomState *RoomState
@@ -519,7 +519,7 @@ func (s *RoomAppService) LeaveRoom(ctx context.Context, req *LeaveRoomRequest) (
 
 	if spectator != nil {
 		if s.publisher != nil {
-			s.publisher.Publish(ctx, domain.NewSpectatorLeaveEvent(req.RoomID, req.UserID, req.Reason))
+			s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorLeaveEvent(req.RoomID, req.UserID, req.Reason))
 		}
 	}
 
@@ -593,7 +593,7 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 		nickname = player.Nickname
 		seatNo = player.SeatNo
 		if s.publisher != nil {
-			s.publisher.Publish(ctx, domain.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo))
+			s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo))
 		}
 	} else if spectator != nil {
 		nickname = spectator.Nickname

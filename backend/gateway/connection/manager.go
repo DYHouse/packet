@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/gateway"
+	"github.com/redis/go-redis/v9"
 )
 
 type ManagerConfig struct {
@@ -156,8 +158,15 @@ func (m *Manager) kickLocalConnection(connID string) {
 		Reason:  message.ReasonLoginElsewhere,
 		Message: message.GetKickMessage(message.ReasonLoginElsewhere),
 	})
-	data, _ := pushMsg.ToJSON()
-	c.Send(data)
+	data, err := pushMsg.ToJSON()
+	if err != nil {
+		logger.Error("failed to marshal kick push message",
+			"conn_id", connID,
+			"user_id", c.UserID,
+			"error", err)
+	} else {
+		c.Send(data)
+	}
 
 	c.Close()
 	m.localConnections.Delete(connID)
@@ -178,10 +187,20 @@ func (m *Manager) publishKickNotification(userID, oldConnID, oldNodeID string) {
 		ConnID: oldConnID,
 		Reason: message.ReasonLoginElsewhere,
 	}
-	data, _ := json.Marshal(kickMsg)
+	data, err := json.Marshal(kickMsg)
+	if err != nil {
+		logger.Error("failed to marshal kick notification",
+			"user_id", userID,
+			"conn_id", oldConnID,
+			"error", err)
+		return
+	}
 	m.redis.Publish(m.ctx, channel, string(data))
 }
 
+// subscribeKickChannel runs a reconnect loop. On disconnect it retries with
+// exponential backoff (initial 1s, cap 30s) plus jitter, mirroring the
+// RedisPubSubConsumer pattern.
 func (m *Manager) subscribeKickChannel() {
 	defer m.wg.Done()
 	defer func() {
@@ -196,20 +215,69 @@ func (m *Manager) subscribeKickChannel() {
 	}
 
 	channel := gateway.GatewayKickKey(m.nodeID)
-	sub := m.redis.Subscribe(m.ctx, channel)
-	defer sub.Close()
+	backoff := time.Second
 
+	for {
+		if err := m.ctx.Err(); err != nil {
+			return
+		}
+
+		sub := m.redis.Subscribe(m.ctx, channel)
+
+		if _, err := sub.Receive(m.ctx); err != nil {
+			_ = sub.Close()
+			logger.Warn("kick channel subscribe failed, reconnecting",
+				"channel", channel,
+				"error", err,
+				"backoff", backoff)
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-time.After(backoff + time.Duration(rand.Intn(100))*time.Millisecond):
+			}
+			backoff = min(backoff*2, 30*time.Second)
+			continue
+		}
+
+		disconnected := m.consumeKickMessages(sub)
+		_ = sub.Close()
+		if !disconnected {
+			return
+		}
+		if m.ctx.Err() != nil {
+			return
+		}
+		logger.Warn("kick channel disconnected, reconnecting",
+			"channel", channel,
+			"backoff", backoff)
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-time.After(backoff + time.Duration(rand.Intn(100))*time.Millisecond):
+		}
+		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+// consumeKickMessages blocks on the pubsub channel. It returns true when the
+// channel closes (should reconnect) and false when ctx is cancelled (exit).
+func (m *Manager) consumeKickMessages(sub *redis.PubSub) bool {
 	ch := sub.Channel()
 	for {
 		select {
 		case <-m.ctx.Done():
-			return
+			return false
 		case msg, ok := <-ch:
 			if !ok {
-				return
+				return true
 			}
 			var kickMsg KickMessage
-			json.Unmarshal([]byte(msg.Payload), &kickMsg)
+			if err := json.Unmarshal([]byte(msg.Payload), &kickMsg); err != nil {
+				logger.Error("failed to unmarshal kick message",
+					"error", err,
+					"payload", msg.Payload)
+				continue
+			}
 			m.kickLocalConnection(kickMsg.ConnID)
 		}
 	}

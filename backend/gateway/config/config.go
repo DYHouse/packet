@@ -8,16 +8,16 @@ import (
 )
 
 type Config struct {
-	Server      ServerConfig       `mapstructure:"server" yaml:"server"`
-	Gateway     GatewayConfig      `mapstructure:"gateway" yaml:"gateway"`
-	Redis       RedisConfig        `mapstructure:"redis" yaml:"redis"`
-	Nacos       GatewayNacosConfig `mapstructure:"nacos" yaml:"nacos"`
-	Kafka       KafkaConfig        `mapstructure:"kafka" yaml:"kafka"`
-	Broadcast   BroadcastConfig    `mapstructure:"broadcast" yaml:"broadcast"`
-	Merchant    MerchantConfig     `mapstructure:"merchant" yaml:"merchant"`
-	Token       TokenConfig        `mapstructure:"token" yaml:"token"`
-	Log         LogConfig          `mapstructure:"log" yaml:"log"`
-	RateLimiter RateLimiterConfig  `mapstructure:"rate_limiter" yaml:"rate_limiter"`
+	Server      ServerConfig                 `mapstructure:"server" yaml:"server"`
+	Gateway     GatewayConfig                `mapstructure:"gateway" yaml:"gateway"`
+	Redis       RedisConfig                  `mapstructure:"redis" yaml:"redis"`
+	Nacos       GatewayNacosConfig           `mapstructure:"nacos" yaml:"nacos"`
+	Kafka       commonconfig.KafkaConfig     `mapstructure:"kafka" yaml:"kafka"`
+	Broadcast   commonconfig.BroadcastConfig `mapstructure:"broadcast" yaml:"broadcast"`
+	Merchant    MerchantConfig               `mapstructure:"merchant" yaml:"merchant"`
+	Token       TokenConfig                  `mapstructure:"token" yaml:"token"`
+	Log         LogConfig                    `mapstructure:"log" yaml:"log"`
+	RateLimiter RateLimiterConfig            `mapstructure:"rate_limiter" yaml:"rate_limiter"`
 }
 
 type ServerConfig struct {
@@ -42,25 +42,6 @@ type RedisConfig struct {
 	Password string `mapstructure:"password" yaml:"password"`
 	DB       int    `mapstructure:"db" yaml:"db"`
 	PoolSize int    `mapstructure:"pool_size" yaml:"pool_size"`
-}
-
-type KafkaConfig struct {
-	Enabled bool     `mapstructure:"enabled" yaml:"enabled"`
-	Brokers []string `mapstructure:"brokers" yaml:"brokers"`
-}
-
-type BroadcastConfig struct {
-	Mode     string               `mapstructure:"mode" yaml:"mode"`
-	Kafka    BroadcastKafkaConfig `mapstructure:"kafka" yaml:"kafka"`
-	RedisPub BroadcastRedisConfig `mapstructure:"redis_pubsub" yaml:"redis_pubsub"`
-}
-
-type BroadcastKafkaConfig struct {
-	Topic string `mapstructure:"topic" yaml:"topic"`
-}
-
-type BroadcastRedisConfig struct {
-	Channel string `mapstructure:"channel" yaml:"channel"`
 }
 
 type MerchantConfig struct {

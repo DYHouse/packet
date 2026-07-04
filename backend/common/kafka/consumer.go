@@ -14,56 +14,52 @@ type Message = kafka.Message
 
 type MessageHandler func(ctx context.Context, msg Message) error
 
-type ConsumerConfig struct {
-	Brokers        []string
-	Topic          string
-	GroupID        string
-	MinBytes       int
-	MaxBytes       int
-	MaxWait        time.Duration
-	CommitInterval time.Duration
-	StartOffset    int64
-}
-
-func NewConsumerConfig(brokers []string, topic, groupID string) *ConsumerConfig {
-	return &ConsumerConfig{
-		Brokers:        brokers,
-		Topic:          topic,
-		GroupID:        groupID,
-		MinBytes:       1,
-		MaxBytes:       10e6,
-		MaxWait:        500 * time.Millisecond,
-		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
-	}
-}
-
 type Consumer struct {
 	reader  *kafka.Reader
 	handler MessageHandler
+	cfg     ConsumerConfig
 	topic   string
+	dlq     *Producer
 }
 
-func NewConsumer(brokers []string, topic string, groupID string, handler MessageHandler) *Consumer {
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        brokers,
-		Topic:          topic,
-		GroupID:        groupID,
-		MinBytes:       1,
-		MaxBytes:       10e6,
-		MaxWait:        500 * time.Millisecond,
-		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
-	})
-
-	return &Consumer{
-		reader:  reader,
-		handler: handler,
-		topic:   topic,
+// NewConsumer 创建 Kafka 消费者。
+// 校验 Brokers/Topic/GroupID 非空，否则返回 error。
+// 若 cfg.DLQTopic != "" 则 dlq 必须非 nil。
+func NewConsumer(cfg ConsumerConfig, handler MessageHandler, dlq *Producer) (*Consumer, error) {
+	if len(cfg.Brokers) == 0 {
+		return nil, fmt.Errorf("kafka consumer config: brokers must not be empty")
 	}
-}
+	if cfg.Topic == "" {
+		return nil, fmt.Errorf("kafka consumer config: topic must not be empty")
+	}
+	if cfg.GroupID == "" {
+		return nil, fmt.Errorf("kafka consumer config: group_id must not be empty")
+	}
+	if cfg.DLQTopic != "" && dlq == nil {
+		return nil, fmt.Errorf("kafka consumer config: DLQTopic set but dlq producer is nil")
+	}
 
-func NewConsumerWithConfig(cfg *ConsumerConfig, handler MessageHandler) *Consumer {
+	def := defaultConsumerConfig()
+	if cfg.MinBytes == 0 {
+		cfg.MinBytes = def.MinBytes
+	}
+	if cfg.MaxBytes == 0 {
+		cfg.MaxBytes = def.MaxBytes
+	}
+	if cfg.MaxWait == 0 {
+		cfg.MaxWait = def.MaxWait
+	}
+	if cfg.StartOffset == 0 {
+		cfg.StartOffset = def.StartOffset
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = def.MaxRetries
+	}
+	if cfg.RetryBackoff == 0 {
+		cfg.RetryBackoff = def.RetryBackoff
+	}
+	// CommitInterval=0 即为禁用自动 commit（默认）
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        cfg.Brokers,
 		Topic:          cfg.Topic,
@@ -78,10 +74,13 @@ func NewConsumerWithConfig(cfg *ConsumerConfig, handler MessageHandler) *Consume
 	return &Consumer{
 		reader:  reader,
 		handler: handler,
+		cfg:     cfg,
 		topic:   cfg.Topic,
-	}
+		dlq:     dlq,
+	}, nil
 }
 
+// Start 启动消费循环：FetchMessage → processWithRetry → 成功才 commit；失败投 DLQ 后再 commit。
 func (c *Consumer) Start(ctx context.Context) error {
 	defer func() {
 		if r := recover(); r != nil {
@@ -110,32 +109,37 @@ func (c *Consumer) Start(ctx context.Context) error {
 			continue
 		}
 
-		if err := c.processMessage(ctx, msg); err != nil {
-			logger.Error("kafka process message failed",
+		// processWithRetry 内部对 handler 做 panic recovery
+		if err := processWithRetry(ctx, c.handler, msg, c.cfg); err != nil {
+			logger.Error("kafka process message failed after retries",
 				"topic", c.topic,
 				"partition", msg.Partition,
 				"offset", msg.Offset,
-				"error", err,
-			)
+				"error", err)
+
+			// 投递 DLQ（若配置）；DLQ 投递失败仅记日志，仍 commit 避免毒消息永久阻塞
+			if c.dlq != nil && c.cfg.DLQTopic != "" {
+				if dlqErr := sendToDLQ(ctx, c.dlq, c.cfg.DLQTopic, msg, err); dlqErr != nil {
+					logger.Error("send to DLQ failed",
+						"topic", c.topic,
+						"dlq_topic", c.cfg.DLQTopic,
+						"partition", msg.Partition,
+						"offset", msg.Offset,
+						"error", dlqErr)
+				} else {
+					logger.Info("message moved to DLQ",
+						"topic", c.topic,
+						"dlq_topic", c.cfg.DLQTopic,
+						"partition", msg.Partition,
+						"offset", msg.Offset)
+				}
+			}
 		}
 
 		if err := c.reader.CommitMessages(ctx, msg); err != nil {
 			logger.Error("kafka commit failed", "topic", c.topic, "error", err)
 		}
 	}
-}
-
-func (c *Consumer) processMessage(ctx context.Context, msg Message) error {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Error("kafka handler panic recovered",
-				"topic", c.topic,
-				"panic", fmt.Sprintf("%v", r),
-			)
-		}
-	}()
-
-	return c.handler(ctx, msg)
 }
 
 func (c *Consumer) Close() error {

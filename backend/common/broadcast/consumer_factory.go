@@ -43,11 +43,15 @@ func (f *ConsumerFactory) CreateConsumer(handler MessageHandler) Consumer {
 func (f *ConsumerFactory) createKafkaConsumer(handler MessageHandler) Consumer {
 	topic := f.config.Kafka.Topic
 	if topic == "" {
-		topic = BroadcastTopicKafka
+		topic = kafka.TopicGatewayBroadcast
 	}
 
 	logger.Info("creating kafka consumer", "topic", topic, "group_id", f.kafkaGroupID)
 
+	// wrapper parses the raw Kafka message into a BroadcastMessage before
+	// delegating to the domain handler. On parse failure it returns an error
+	// (fail-closed) so that common/kafka.Consumer retries the message and,
+	// once retries are exhausted, routes it to the DLQ when configured.
 	wrapper := func(ctx context.Context, msg kafka.Message) error {
 		broadcastMsg, err := message.ParseBroadcastMessage(msg.Value)
 		if err != nil {
@@ -58,7 +62,12 @@ func (f *ConsumerFactory) createKafkaConsumer(handler MessageHandler) Consumer {
 		return handler(ctx, broadcastMsg)
 	}
 
-	consumer := kafka.NewConsumer(f.kafkaBrokers, topic, f.kafkaGroupID, wrapper)
+	cfg := kafka.NewConsumerConfig(f.kafkaBrokers, topic, f.kafkaGroupID)
+	consumer, err := kafka.NewConsumer(cfg, wrapper, nil)
+	if err != nil {
+		logger.Error("failed to create kafka consumer", "topic", topic, "error", err)
+		return nil
+	}
 	return NewKafkaConsumer(consumer)
 }
 

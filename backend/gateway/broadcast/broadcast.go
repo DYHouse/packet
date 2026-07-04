@@ -2,6 +2,7 @@ package broadcast
 
 import (
 	"context"
+	"fmt"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -14,6 +15,10 @@ import (
 	"github.com/cashparty/backend/gateway"
 	"github.com/cashparty/backend/gateway/connection"
 )
+
+// maxRoomUsersCacheSize bounds the roomUsersCache to prevent unbounded memory
+// growth. When exceeded the cache is cleared (simplified LRU eviction).
+const maxRoomUsersCacheSize = 10000
 
 type roomUsersCacheEntry struct {
 	users     []string
@@ -59,27 +64,56 @@ func NewBroadcastService(
 	return service
 }
 
+// Start runs the broadcast consumer with retry. It blocks until the consumer
+// exits gracefully (ctx cancelled) or until retries are exhausted. On fatal
+// failure the error is returned so the caller (Application) can surface it via
+// its errChan.
 func (s *BroadcastService) Start() error {
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("broadcast consumer panic",
-					"panic", r, "stack", string(debug.Stack()))
-			}
-		}()
-
-		if err := s.consumer.Start(s.ctx); err != nil {
-			logger.Error("broadcast consumer stopped with error", "error", err)
-		}
-	}()
-
 	logger.Info("broadcast service started")
+
+	backoff := time.Second
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := s.ctx.Err(); err != nil {
+			return nil
+		}
+
+		err := s.consumer.Start(s.ctx)
+		if err == nil {
+			return nil
+		}
+		if s.ctx.Err() != nil {
+			return nil
+		}
+
+		logger.Error("broadcast consumer failed",
+			"attempt", attempt,
+			"max_retries", maxRetries,
+			"error", err)
+
+		if attempt < maxRetries {
+			select {
+			case <-s.ctx.Done():
+				return nil
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+
+		return fmt.Errorf("broadcast consumer failed after %d attempts: %w", maxRetries, err)
+	}
 	return nil
 }
 
 func (s *BroadcastService) handleBroadcastMessage(ctx context.Context, msg *message.BroadcastMessage) error {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("handle broadcast message panic",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+
 	pushMsg := message.NewPushMessage(msg.Event, msg.Data)
 	msgBytes, err := pushMsg.ToJSON()
 	if err != nil {
@@ -144,7 +178,35 @@ func (s *BroadcastService) GetRoomUsers(ctx context.Context, roomID string) ([]s
 		expiresAt: time.Now().Add(s.cacheTTL),
 	})
 
+	// Enforce max cache size to prevent unbounded memory growth.
+	// Simplified LRU: when the cache exceeds the limit, clear all entries
+	// and re-store only the current one.
+	if s.roomUsersCacheExceedsLimit() {
+		s.roomUsersCache.Range(func(key, _ interface{}) bool {
+			s.roomUsersCache.Delete(key)
+			return true
+		})
+		s.roomUsersCache.Store(roomID, &roomUsersCacheEntry{
+			users:     users,
+			expiresAt: time.Now().Add(s.cacheTTL),
+		})
+	}
+
 	return users, nil
+}
+
+func (s *BroadcastService) roomUsersCacheExceedsLimit() bool {
+	count := 0
+	exceeded := false
+	s.roomUsersCache.Range(func(_, _ interface{}) bool {
+		count++
+		if count > maxRoomUsersCacheSize {
+			exceeded = true
+			return false
+		}
+		return true
+	})
+	return exceeded
 }
 
 func (s *BroadcastService) broadcastToRoom(roomID string, messageData []byte, excludeUserID string) {

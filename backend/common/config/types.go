@@ -78,6 +78,7 @@ func SetTimeoutDefaults(cfg *TimeoutConfig) {
 }
 
 type KafkaConfig struct {
+	Enabled bool     `mapstructure:"enabled" yaml:"enabled"`
 	Brokers []string `mapstructure:"brokers" yaml:"brokers"`
 }
 

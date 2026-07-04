@@ -1,11 +1,9 @@
 package bootstrap
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/async"
-	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
@@ -25,7 +23,6 @@ import (
 type Container struct {
 	Config              *gatewayConfig.Config
 	Redis               *cRedis.Client
-	KafkaProducer       *kafka.Producer
 	KafkaConsumer       *kafka.Consumer
 	ConnMgr             *connection.Manager
 	BroadcastSvc        *broadcast.BroadcastService
@@ -46,7 +43,7 @@ type Container struct {
 	nodeID              string
 }
 
-func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, kafkaProducer *kafka.Producer, nodeID string, taskRunner *async.TaskRunner) *Container {
+func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, nodeID string, taskRunner *async.TaskRunner) *Container {
 	connMgr := connection.NewManager(&connection.ManagerConfig{
 		MaxConnections:       cfg.Gateway.MaxConnections,
 		DisconnectTimeout:    30 * time.Second,
@@ -55,12 +52,11 @@ func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, kafkaProducer
 	}, redis, nodeID)
 
 	return &Container{
-		Config:        cfg,
-		Redis:         redis,
-		KafkaProducer: kafkaProducer,
-		ConnMgr:       connMgr,
-		TaskRunner:    taskRunner,
-		nodeID:        nodeID,
+		Config:     cfg,
+		Redis:      redis,
+		ConnMgr:    connMgr,
+		TaskRunner: taskRunner,
+		nodeID:     nodeID,
 	}
 }
 
@@ -130,17 +126,12 @@ func (c *Container) InitServer() {
 }
 
 func (c *Container) InitKafkaConsumer() {
-	kafkaGroupID := fmt.Sprintf("gateway-broadcast-%s", c.nodeID)
-	broadcastCfg := &config.BroadcastConfig{
-		Mode: c.Config.Broadcast.Mode,
-		Kafka: config.BroadcastKafkaConfig{
-			Topic: c.Config.Broadcast.Kafka.Topic,
-		},
-		RedisPub: config.BroadcastRedisConfig{
-			Channel: c.Config.Broadcast.RedisPub.Channel,
-		},
+	svc, err := createBroadcastService(c.Config, c.Redis, c.ConnMgr, c.nodeID)
+	if err != nil {
+		logger.Warn("failed to create broadcast service", "error", err)
+		return
 	}
-	c.BroadcastSvc = broadcast.NewBroadcastService(c.ConnMgr, c.Redis, broadcastCfg, c.Config.Kafka.Brokers, kafkaGroupID)
+	c.BroadcastSvc = svc
 }
 
 func (c *Container) Stop() {
@@ -158,8 +149,5 @@ func (c *Container) Stop() {
 	}
 	if c.ConnMgr != nil {
 		c.ConnMgr.Stop()
-	}
-	if c.KafkaProducer != nil {
-		c.KafkaProducer.Close()
 	}
 }

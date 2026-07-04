@@ -3,50 +3,76 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"time"
+	"sync"
 
-	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/segmentio/kafka-go"
 )
 
 type Producer struct {
+	mu      sync.RWMutex
 	writers map[string]*kafka.Writer
-	brokers []string
+	cfg     ProducerConfig
 }
 
-func NewProducer(cfg *config.KafkaConfig) *Producer {
-	return &Producer{
-		writers: make(map[string]*kafka.Writer),
-		brokers: cfg.Brokers,
+// NewProducer 创建 Kafka 生产者。brokers 为空时返回 error。
+// 用户传入的字段优先于默认值（零值字段使用默认值填充）。
+func NewProducer(cfg ProducerConfig) (*Producer, error) {
+	if len(cfg.Brokers) == 0 {
+		return nil, fmt.Errorf("kafka producer config: brokers must not be empty")
 	}
-}
 
-func NewProducerWithBrokers(brokers []string) *Producer {
+	def := defaultProducerConfig()
+	if cfg.Balancer == nil {
+		cfg.Balancer = def.Balancer
+	}
+	if cfg.BatchSize == 0 {
+		cfg.BatchSize = def.BatchSize
+	}
+	if cfg.BatchTimeout == 0 {
+		cfg.BatchTimeout = def.BatchTimeout
+	}
+	if cfg.WriteTimeout == 0 {
+		cfg.WriteTimeout = def.WriteTimeout
+	}
+	if cfg.RequiredAcks == 0 {
+		cfg.RequiredAcks = def.RequiredAcks
+	}
+
 	return &Producer{
 		writers: make(map[string]*kafka.Writer),
-		brokers: brokers,
-	}
+		cfg:     cfg,
+	}, nil
 }
 
 func (p *Producer) Brokers() []string {
-	return p.brokers
+	return p.cfg.Brokers
 }
 
 func (p *Producer) GetWriter(topic string) *kafka.Writer {
+	p.mu.RLock()
+	if w, ok := p.writers[topic]; ok {
+		p.mu.RUnlock()
+		return w
+	}
+	p.mu.RUnlock()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// 双检：可能在升级锁期间已被其他 goroutine 创建
 	if w, ok := p.writers[topic]; ok {
 		return w
 	}
 
 	w := &kafka.Writer{
-		Addr:         kafka.TCP(p.brokers...),
+		Addr:         kafka.TCP(p.cfg.Brokers...),
 		Topic:        topic,
-		Balancer:     &kafka.LeastBytes{},
-		BatchSize:    100,
-		BatchTimeout: 10 * time.Millisecond,
-		WriteTimeout: 10 * time.Second,
-		RequiredAcks: kafka.RequireOne,
-		Async:        false,
+		Balancer:     p.cfg.Balancer,
+		BatchSize:    p.cfg.BatchSize,
+		BatchTimeout: p.cfg.BatchTimeout,
+		WriteTimeout: p.cfg.WriteTimeout,
+		RequiredAcks: p.cfg.RequiredAcks,
+		Async:        p.cfg.Async,
 	}
 	p.writers[topic] = w
 	return w
@@ -76,10 +102,17 @@ func (p *Producer) SendBatch(ctx context.Context, topic string, messages []Messa
 }
 
 func (p *Producer) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	var firstErr error
 	for topic, w := range p.writers {
 		if err := w.Close(); err != nil {
 			logger.Error("failed to close kafka writer", "topic", topic, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }

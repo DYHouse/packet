@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -31,6 +32,7 @@ type GameEventConsumer struct {
 	redis               *cRedis.Client
 	settlementService   *settlementService.SettlementService
 	robotBehaviorEngine RobotBehaviorEngineInterface
+	consumer            *kafka.Consumer
 }
 
 func NewGameEventConsumer(
@@ -38,16 +40,41 @@ func NewGameEventConsumer(
 	redis *cRedis.Client,
 	settlementService *settlementService.SettlementService,
 	robotBehaviorEngine RobotBehaviorEngineInterface,
-) *GameEventConsumer {
-	return &GameEventConsumer{
+	cfg kafka.ConsumerConfig,
+) (*GameEventConsumer, error) {
+	c := &GameEventConsumer{
 		db:                  db,
 		redis:               redis,
 		settlementService:   settlementService,
 		robotBehaviorEngine: robotBehaviorEngine,
 	}
+	consumer, err := kafka.NewConsumer(cfg, c.HandleEvent, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create game event kafka consumer failed: %w", err)
+	}
+	c.consumer = consumer
+	return c, nil
+}
+
+func (c *GameEventConsumer) Start(ctx context.Context) error {
+	logger.Info("game event consumer started")
+	return c.consumer.Start(ctx)
+}
+
+// Close 委托给内部 kafka.Consumer，由 bootstrap 统一管理生命周期。
+func (c *GameEventConsumer) Close() error {
+	return c.consumer.Close()
 }
 
 func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) error {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("game event consumer panic",
+				"panic", r,
+				"stack", string(debug.Stack()))
+		}
+	}()
+
 	var event domain.GameEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		logger.Error("unmarshal game event failed", "error", err)
@@ -91,13 +118,8 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 }
 
 func (c *GameEventConsumer) handleSessionStart(ctx context.Context, event *domain.GameEvent) error {
-	dataBytes, err := json.Marshal(event.Data)
-	if err != nil {
-		return fmt.Errorf("marshal session start data failed: %w", err)
-	}
-
 	var data domain.SessionStartData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal session start data failed: %w", err)
 	}
 
@@ -162,13 +184,8 @@ func (c *GameEventConsumer) handleSessionStart(ctx context.Context, event *domai
 }
 
 func (c *GameEventConsumer) handlePacketCreated(ctx context.Context, event *domain.GameEvent) error {
-	dataBytes, err := json.Marshal(event.Data)
-	if err != nil {
-		return fmt.Errorf("marshal packet created data failed: %w", err)
-	}
-
 	var data domain.PacketCreatedData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal packet created data failed: %w", err)
 	}
 
@@ -230,13 +247,8 @@ func (c *GameEventConsumer) handlePacketCreated(ctx context.Context, event *doma
 }
 
 func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain.GameEvent) error {
-	dataBytes, err := json.Marshal(event.Data)
-	if err != nil {
-		return fmt.Errorf("marshal round settle data failed: %w", err)
-	}
-
 	var data domain.RoundSettleData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal round settle data failed: %w", err)
 	}
 
@@ -415,13 +427,8 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 }
 
 func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.GameEvent) error {
-	dataBytes, err := json.Marshal(event.Data)
-	if err != nil {
-		return fmt.Errorf("marshal session end data failed: %w", err)
-	}
-
 	var data domain.SessionEndData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal session end data failed: %w", err)
 	}
 

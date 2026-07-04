@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/cashparty/backend/common/kafka"
@@ -21,21 +22,34 @@ type RoomEventConsumer struct {
 func NewRoomEventConsumer(
 	dbRepo domain.DBRepository,
 	redis *cRedis.Client,
-	cfg *kafka.ConsumerConfig,
-) *RoomEventConsumer {
+	cfg kafka.ConsumerConfig,
+) (*RoomEventConsumer, error) {
 	c := &RoomEventConsumer{
 		dbRepo: dbRepo,
 		redis:  redis,
 	}
-	c.consumer = kafka.NewConsumerWithConfig(cfg, c.handleMessage)
-	return c
+	consumer, err := kafka.NewConsumer(cfg, c.handleMessage, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create room event kafka consumer failed: %w", err)
+	}
+	c.consumer = consumer
+	return c, nil
 }
 
 func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message) error {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("room event consumer panic",
+				"panic", r,
+				"stack", string(debug.Stack()))
+		}
+	}()
+
 	event, err := domain.ParseRoomEvent(msg.Value)
 	if err != nil {
+		// fail-closed: return error to trigger common/kafka.Consumer retry + DLQ.
 		logger.Error("failed to parse room event", "error", err)
-		return nil
+		return fmt.Errorf("parse room event failed: %w", err)
 	}
 
 	acquired, acquireErr := c.tryAcquire(ctx, event)
@@ -64,10 +78,11 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 	case domain.RoomEventSpectatorKick:
 		handleErr = c.handleSpectatorKick(ctx, event)
 	default:
+		// fail-closed: unknown event type returns error to trigger retry + DLQ.
 		logger.Warn("unknown event type",
 			"event_type", event.EventType,
 			"room_id", event.RoomID)
-		return nil
+		return fmt.Errorf("unknown event type: %s", event.EventType)
 	}
 
 	if handleErr != nil {
@@ -135,7 +150,7 @@ func (c *RoomEventConsumer) tryAcquire(ctx context.Context, event *domain.RoomEv
 		return true, nil
 	}
 	key := redisKeys.RoomEventProcessedKey(event.EventID)
-	ok, err := c.redis.SetNX(ctx, key, "1", 24*time.Hour).Result()
+	ok, err := c.redis.SetNX(ctx, key, "1", 7*24*time.Hour).Result()
 	if err != nil {
 		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
 			"event_id", event.EventID,
@@ -161,4 +176,9 @@ func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, event *domain.Ro
 func (c *RoomEventConsumer) Start(ctx context.Context) error {
 	logger.Info("room event consumer started")
 	return c.consumer.Start(ctx)
+}
+
+// Close 委托给内部 kafka.Consumer，由 bootstrap 统一管理生命周期。
+func (c *RoomEventConsumer) Close() error {
+	return c.consumer.Close()
 }

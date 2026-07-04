@@ -18,7 +18,6 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/messaging"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/model"
@@ -32,7 +31,7 @@ type GameAppService struct {
 	dbRepo            domain.DBRepository
 	broadcaster       domain.Broadcaster
 	publisher         domain.EventPublisher
-	eventPublisher    *messaging.GameEventPublisher
+	eventPublisher    domain.EventPublisher
 	grabService       *GrabService
 	penaltyService    *PenaltyService
 	scheduler         *scheduler.TimeoutScheduler
@@ -71,7 +70,7 @@ func NewGameAppService(
 	dbRepo domain.DBRepository,
 	broadcaster domain.Broadcaster,
 	publisher domain.EventPublisher,
-	eventPublisher *messaging.GameEventPublisher,
+	eventPublisher domain.EventPublisher,
 	grabService *GrabService,
 	penaltyService *PenaltyService,
 	scheduler *scheduler.TimeoutScheduler,
@@ -500,19 +499,20 @@ func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta 
 		event := &domain.GameEvent{
 			RoomID:    roomID,
 			SessionID: sessionID,
-			Timestamp: time.Now().Unix(),
+			EventType: domain.GameEventSessionStart,
+			Timestamp: time.Now().UnixMilli(),
 			TraceID:   idgen.GenerateString(),
-			Data: &domain.SessionStartData{
-				RoomNo:     meta.RoomNo,
-				ConfigID:   meta.ConfigID,
-				ConfigName: meta.ConfigName,
-				RoomFee:    meta.RoomFee,
-				MaxRounds:  meta.MaxRounds,
-				Players:    players,
-			},
 		}
+		_ = event.SetPayload(&domain.SessionStartData{
+			RoomNo:     meta.RoomNo,
+			ConfigID:   meta.ConfigID,
+			ConfigName: meta.ConfigName,
+			RoomFee:    meta.RoomFee,
+			MaxRounds:  meta.MaxRounds,
+			Players:    players,
+		})
 		if err := s.taskRunner.Submit("publish_session_start", 5*time.Second, func(ctx context.Context) {
-			if err := s.eventPublisher.PublishSessionStart(ctx, event); err != nil {
+			if err := s.eventPublisher.PublishGameEvent(ctx, event); err != nil {
 				logger.Error("publish session start event failed", "error", err)
 			}
 		}); err != nil {
@@ -1030,26 +1030,27 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 				RoomID:    roomID,
 				SessionID: meta.CurrentSessionID,
 				RoundID:   roundID,
-				Timestamp: time.Now().Unix(),
+				EventType: domain.GameEventRoundSettle,
+				Timestamp: time.Now().UnixMilli(),
 				TraceID:   idgen.GenerateString(),
-				Data: &domain.RoundSettleData{
-					RoundNo:          roundNo,
-					SenderID:         senderID,
-					SenderType:       senderType,
-					TotalAmount:      totalAmount,
-					Commission:       commission,
-					RoomFeePerPlayer: roomFeePerPlayer,
-					PacketCount:      len(results),
-					Results:          roundResults,
-					MinPlayerID:      minAmountPlayer,
-					IsGameEnd:        isGameEnd,
-					RewardType:       rewardType,
-					RewardAmount:     rewardAmount,
-					TriggerType:      0,
-				},
 			}
+			_ = event.SetPayload(&domain.RoundSettleData{
+				RoundNo:          roundNo,
+				SenderID:         senderID,
+				SenderType:       senderType,
+				TotalAmount:      totalAmount,
+				Commission:       commission,
+				RoomFeePerPlayer: roomFeePerPlayer,
+				PacketCount:      len(results),
+				Results:          roundResults,
+				MinPlayerID:      minAmountPlayer,
+				IsGameEnd:        isGameEnd,
+				RewardType:       rewardType,
+				RewardAmount:     rewardAmount,
+				TriggerType:      0,
+			})
 			if err := s.taskRunner.Submit("publish_round_settle", 5*time.Second, func(ctx context.Context) {
-				if err := s.eventPublisher.PublishRoundSettle(ctx, event); err != nil {
+				if err := s.eventPublisher.PublishGameEvent(ctx, event); err != nil {
 					logger.Error("publish round settle event failed", "error", err)
 				}
 			}); err != nil {
@@ -1202,16 +1203,17 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 		sessionEndEvent := &domain.GameEvent{
 			RoomID:    roomID,
 			SessionID: opts.SessionID,
-			Timestamp: time.Now().Unix(),
+			EventType: domain.GameEventSessionEnd,
+			Timestamp: time.Now().UnixMilli(),
 			TraceID:   idgen.GenerateString(),
-			Data: &domain.SessionEndData{
-				ActualRounds: opts.ActualRounds,
-				EndReason:    opts.EndReason,
-				FinalResults: opts.FinalResults,
-			},
 		}
+		_ = sessionEndEvent.SetPayload(&domain.SessionEndData{
+			ActualRounds: opts.ActualRounds,
+			EndReason:    opts.EndReason,
+			FinalResults: opts.FinalResults,
+		})
 		if err := s.taskRunner.Submit("publish_session_end", 5*time.Second, func(ctx context.Context) {
-			if err := s.eventPublisher.PublishSessionEnd(ctx, sessionEndEvent); err != nil {
+			if err := s.eventPublisher.PublishGameEvent(ctx, sessionEndEvent); err != nil {
 				logger.Error("publish session end event failed", "room_id", roomID, "error", err)
 			}
 		}); err != nil {
@@ -1485,23 +1487,24 @@ func (s *GameAppService) publishPacketCreatedEvent(ctx context.Context, roomID, 
 		RoomID:    roomID,
 		SessionID: meta.CurrentSessionID,
 		RoundID:   roundID,
-		Timestamp: time.Now().Unix(),
+		EventType: domain.GameEventPacketCreated,
+		Timestamp: time.Now().UnixMilli(),
 		TraceID:   idgen.GenerateString(),
-		Data: &domain.PacketCreatedData{
-			RoomID:      roomID,
-			SessionID:   meta.CurrentSessionID,
-			RoundID:     roundID,
-			RoundNo:     roundNo,
-			SenderID:    senderID,
-			SenderType:  senderType,
-			TotalAmount: totalAmount,
-			Commission:  commission,
-			Packets:     packets,
-		},
 	}
+	_ = event.SetPayload(&domain.PacketCreatedData{
+		RoomID:      roomID,
+		SessionID:   meta.CurrentSessionID,
+		RoundID:     roundID,
+		RoundNo:     roundNo,
+		SenderID:    senderID,
+		SenderType:  senderType,
+		TotalAmount: totalAmount,
+		Commission:  commission,
+		Packets:     packets,
+	})
 
 	if err := s.taskRunner.Submit("publish_packet_created", 5*time.Second, func(ctx context.Context) {
-		if err := s.eventPublisher.PublishPacketCreated(ctx, event); err != nil {
+		if err := s.eventPublisher.PublishGameEvent(ctx, event); err != nil {
 			logger.Error("publish packet created event failed", "error", err)
 		}
 	}); err != nil {

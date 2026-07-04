@@ -24,19 +24,21 @@ import (
 )
 
 type Container struct {
-	PlatformCfg                *config.PlatformConfig
-	TimeoutCfg                 *config.TimeoutConfig
-	AvatarCfg                  *config.AvatarConfig
-	DB                         *gorm.DB
-	Redis                      *cRedis.Client
-	KafkaProducer              *kafka.Producer
-	DBRepo                     domain.DBRepository
-	RoomRepo                   domain.RoomRepository
-	Broadcaster                domain.Broadcaster
-	EventPublisher             domain.EventPublisher
-	GameEventPublisher         *messaging.GameEventPublisher
+	PlatformCfg        *config.PlatformConfig
+	TimeoutCfg         *config.TimeoutConfig
+	AvatarCfg          *config.AvatarConfig
+	DB                 *gorm.DB
+	Redis              *cRedis.Client
+	KafkaProducer      *kafka.Producer
+	DBRepo             domain.DBRepository
+	RoomRepo           domain.RoomRepository
+	Broadcaster        domain.Broadcaster
+	EventPublisher     domain.EventPublisher
+	GameEventPublisher *messaging.GameEventPublisher
+	// RoomEventConsumer / GameEventConsumer 的 Close 生命周期由 Application.kafkaConsumers
+	// 统一管理（PLAN §6 LF-2），Container 不持有 io.Closer 列表，避免双重关闭。
 	RoomEventConsumer          *messaging.RoomEventConsumer
-	GameEventKafkaConsumer     *kafka.Consumer
+	GameEventConsumer          *messaging.GameEventConsumer
 	TimeoutScheduler           *scheduler.TimeoutScheduler
 	GrabService                *application.GrabService
 	PenaltyService             *application.PenaltyService
@@ -321,12 +323,8 @@ func (c *Container) initSettlementSchedulers() {
 	c.GameSettleTimeoutScheduler = settlementScheduler.NewGameSettleTimeoutScheduler(context.Background(), c.billMgr, c.gameSettleSvc, c.Redis)
 }
 
-func (c *Container) NewRoomEventConsumer(cfg *kafka.ConsumerConfig) *messaging.RoomEventConsumer {
+func (c *Container) NewRoomEventConsumer(cfg kafka.ConsumerConfig) (*messaging.RoomEventConsumer, error) {
 	return messaging.NewRoomEventConsumer(c.DBRepo, c.Redis, cfg)
-}
-
-func (c *Container) NewGameEventConsumer(cfg *kafka.ConsumerConfig) *messaging.GameEventConsumer {
-	return messaging.NewGameEventConsumer(c.DB, c.Redis, c.SettlementSvc, c.GetRobotBehaviorEngine())
 }
 
 // GetRobotBehaviorEngine returns the robot behavior engine as the messaging

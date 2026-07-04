@@ -14,6 +14,9 @@ const (
 	ModeRedisPubSub BroadcastMode = "redis_pubsub"
 )
 
+// BroadcastChannelGateway 是 gateway 广播的 Redis Pub/Sub 频道名。
+const BroadcastChannelGateway = "cashparty:gateway:broadcast"
+
 type BroadcastFactory struct {
 	config   *config.BroadcastConfig
 	producer *kafka.Producer
@@ -47,7 +50,7 @@ func (f *BroadcastFactory) CreateBroadcaster() Broadcaster {
 func (f *BroadcastFactory) createKafkaBroadcaster() Broadcaster {
 	topic := f.config.Kafka.Topic
 	if topic == "" {
-		topic = BroadcastTopicKafka
+		topic = kafka.TopicGatewayBroadcast
 	}
 
 	logger.Info("creating kafka broadcaster", "topic", topic)
