@@ -17,27 +17,27 @@ type PlayerHistoryReq struct {
 
 // PlayerHistoryItem 玩家历史对局列表项（含会话信息 + 玩家个人数据）
 type PlayerHistoryItem struct {
-	SessionID    string         `json:"session_id"`
-	RoomNo       string         `json:"room_no"`
-	ConfigName   string         `json:"config_name"`
-	RoomFee      currency.Money `json:"room_fee"`
-	MaxRounds    int            `json:"max_rounds"`
-	ActualRounds int            `json:"actual_rounds"`
-	Status       int            `json:"status"`
-	StartedAt    int64          `json:"started_at"`
-	EndedAt      int64          `json:"ended_at"`
-	EndReason    string         `json:"end_reason"`
-	SeatNo       int            `json:"seat_no"`
-	SendCount    int            `json:"send_count"`
-	GrabCount    int            `json:"grab_count"`
-	TotalSend    currency.Money `json:"total_send"`
+	SessionID     string         `json:"session_id"`
+	RoomNo        string         `json:"room_no"`
+	ConfigName    string         `json:"config_name"`
+	RoomFee       currency.Money `json:"room_fee"`
+	MaxRounds     int            `json:"max_rounds"`
+	ActualRounds  int            `json:"actual_rounds"`
+	Status        int            `json:"status"`
+	StartedAt     int64          `json:"started_at"`
+	EndedAt       int64          `json:"ended_at"`
+	EndReason     string         `json:"end_reason"`
+	SeatNo        int            `json:"seat_no"`
+	SendCount     int            `json:"send_count"`
+	GrabCount     int            `json:"grab_count"`
+	TotalSend     currency.Money `json:"total_send"`
 	FirstRoundFee currency.Money `json:"first_round_fee"`
 	Penalty       currency.Money `json:"penalty"`
 	TotalBet      currency.Money `json:"total_bet"`
-	TotalGrab    currency.Money `json:"total_grab"`
-	Profit       currency.Money `json:"profit"`
-	JoinedAt     int64          `json:"joined_at"`
-	LeftAt       int64          `json:"left_at"`
+	TotalGrab     currency.Money `json:"total_grab"`
+	Profit        currency.Money `json:"profit"`
+	JoinedAt      int64          `json:"joined_at"`
+	LeftAt        int64          `json:"left_at"`
 }
 
 // PlayerHistoryResp 玩家历史对局列表响应

@@ -2,6 +2,7 @@ package broadcast
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 
 	"github.com/cashparty/backend/common/logger"
@@ -25,18 +26,16 @@ func NewRedisPubSubConsumer(redis *cRedis.Client, channel string, handler Messag
 		channel = BroadcastChannelGateway
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	return &RedisPubSubConsumer{
 		redis:   redis,
 		channel: channel,
 		handler: handler,
-		ctx:     ctx,
-		cancel:  cancel,
 	}
 }
 
 func (c *RedisPubSubConsumer) Start(ctx context.Context) error {
+	c.ctx, c.cancel = context.WithCancel(ctx) // 派生自参数 ctx
+
 	c.pubsub = c.redis.Subscribe(c.ctx, c.channel)
 
 	_, err := c.pubsub.Receive(c.ctx)
@@ -54,6 +53,12 @@ func (c *RedisPubSubConsumer) Start(ctx context.Context) error {
 
 func (c *RedisPubSubConsumer) consumeMessages() {
 	defer c.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("consume messages panic",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 
 	ch := c.pubsub.Channel()
 
@@ -80,7 +85,9 @@ func (c *RedisPubSubConsumer) consumeMessages() {
 }
 
 func (c *RedisPubSubConsumer) Close() error {
-	c.cancel()
+	if c.cancel != nil {
+		c.cancel()
+	}
 
 	if c.pubsub != nil {
 		c.pubsub.Close()

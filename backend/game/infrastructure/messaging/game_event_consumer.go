@@ -281,10 +281,10 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 				isAutoAssigned = 1
 			}
 			grabRecord := &model.RoundGrabRecord{
-				RoundID:        parseInt64(event.RoundID),
-				PacketID:       parseInt64(r.PacketID),
-				SessionID:      sessionIDInt64,
-				UserID:         parseInt64(r.UserID),
+				RoundID:   parseInt64(event.RoundID),
+				PacketID:  parseInt64(r.PacketID),
+				SessionID: sessionIDInt64,
+				UserID:    parseInt64(r.UserID),
 			}
 			// 用 FirstOrCreate 防止 Kafka 重试时重复插入（按 round_id + user_id 查重）
 			result := tx.Where(grabRecord).

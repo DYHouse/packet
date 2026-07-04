@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cashparty/backend/api/platform"
+	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/limiter"
@@ -34,7 +35,8 @@ type Container struct {
 	Broadcaster                domain.Broadcaster
 	EventPublisher             domain.EventPublisher
 	GameEventPublisher         *messaging.GameEventPublisher
-	EventConsumer              *messaging.RoomEventConsumer
+	RoomEventConsumer          *messaging.RoomEventConsumer
+	GameEventKafkaConsumer     *kafka.Consumer
 	TimeoutScheduler           *scheduler.TimeoutScheduler
 	GrabService                *application.GrabService
 	PenaltyService             *application.PenaltyService
@@ -53,6 +55,9 @@ type Container struct {
 	SettlementCheckScheduler   *settlementScheduler.SettlementCheckScheduler
 	GameSettleRetryScheduler   *settlementScheduler.GameSettleRetryScheduler
 	GameSettleTimeoutScheduler *settlementScheduler.GameSettleTimeoutScheduler
+
+	// TaskRunner manages fire-and-forget async tasks for the application layer.
+	TaskRunner *async.TaskRunner
 
 	// Rate limiter (grab command)
 	UserLimiter *limiter.UserLimiter
@@ -109,6 +114,7 @@ func NewContainer(
 	gameSettleSvc *settlementService.GameSettleService,
 	robotChecker settlementService.RobotChecker,
 	settlementVirtualBalance *settlementService.VirtualBalanceService,
+	taskRunner *async.TaskRunner,
 ) *Container {
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	broadcaster := broadcast.NewGameBroadcaster(broadcastCfg, kafkaProducer, redis)
@@ -146,6 +152,7 @@ func NewContainer(
 		RefundSvc:          refundSvc,
 		PacketGenerator:    packetGenerator,
 		UserLimiter:        limiter.NewUserLimiter(redis),
+		TaskRunner:         taskRunner,
 
 		platformClient:           platformClient,
 		billMgr:                  billMgr,
@@ -178,6 +185,7 @@ func (c *Container) InitAppServices() {
 		c.TimeoutScheduler,
 		c.SettlementSvc,
 		c.BalanceService,
+		c.TaskRunner,
 	)
 
 	c.GameAppService = application.NewGameAppService(
@@ -197,6 +205,7 @@ func (c *Container) InitAppServices() {
 		c.rewardSettler,
 		c.Redis,
 		c.TimeoutCfg,
+		c.TaskRunner,
 	)
 
 	c.SeatAppService = application.NewSeatAppService(
@@ -210,6 +219,7 @@ func (c *Container) InitAppServices() {
 		c.Redis,
 		c.BalanceService,
 		c.TimeoutCfg.Ready,
+		c.TaskRunner,
 	)
 
 	// 注入 RoomAppService 引用（用于 CancelSeat/Kick 后触发自动替补）
@@ -293,6 +303,10 @@ func (c *Container) initRobotServices() {
 }
 
 func (c *Container) initSettlementSchedulers() {
+	// TODO Phase 6.7: pass appCtx to settlement scheduler constructors so their
+	// internal contexts are tied to the application lifecycle instead of
+	// context.Background(). appCtx is not available on the Container yet; it
+	// lives on Application and is created in NewApplicationWithConfig.
 	settlementCheckSvc := settlementService.NewSettlementCheckService(
 		c.billMgr,
 		c.exceptionMgr,
@@ -300,11 +314,11 @@ func (c *Container) initSettlementSchedulers() {
 		c.traceIDGen,
 	)
 
-	c.CreditRetryScheduler = settlementScheduler.NewCreditRetryScheduler(c.creditRetrySvc, c.Redis)
-	c.RefundProcessScheduler = settlementScheduler.NewRefundProcessScheduler(c.RefundSvc, c.billMgr, c.Redis)
-	c.SettlementCheckScheduler = settlementScheduler.NewSettlementCheckScheduler(settlementCheckSvc, c.Redis)
-	c.GameSettleRetryScheduler = settlementScheduler.NewGameSettleRetryScheduler(c.billMgr, c.gameSettleSvc, c.Redis)
-	c.GameSettleTimeoutScheduler = settlementScheduler.NewGameSettleTimeoutScheduler(c.billMgr, c.gameSettleSvc, c.Redis)
+	c.CreditRetryScheduler = settlementScheduler.NewCreditRetryScheduler(context.Background(), c.creditRetrySvc, c.Redis)
+	c.RefundProcessScheduler = settlementScheduler.NewRefundProcessScheduler(context.Background(), c.RefundSvc, c.billMgr, c.Redis)
+	c.SettlementCheckScheduler = settlementScheduler.NewSettlementCheckScheduler(context.Background(), settlementCheckSvc, c.Redis)
+	c.GameSettleRetryScheduler = settlementScheduler.NewGameSettleRetryScheduler(context.Background(), c.billMgr, c.gameSettleSvc, c.Redis)
+	c.GameSettleTimeoutScheduler = settlementScheduler.NewGameSettleTimeoutScheduler(context.Background(), c.billMgr, c.gameSettleSvc, c.Redis)
 }
 
 func (c *Container) NewRoomEventConsumer(cfg *kafka.ConsumerConfig) *messaging.RoomEventConsumer {
@@ -326,7 +340,7 @@ func (c *Container) GetRobotBehaviorEngine() messaging.RobotBehaviorEngineInterf
 	return c.RobotBehaviorEngine
 }
 
-func (c *Container) StartSchedulers() {
+func (c *Container) StartSchedulers(appCtx context.Context) {
 	if c.TimeoutScheduler != nil {
 		c.TimeoutScheduler.Start()
 	}
@@ -349,13 +363,13 @@ func (c *Container) StartSchedulers() {
 	// Start robot schedulers only when robot is enabled
 	if c.RobotCfg != nil && c.RobotCfg.Enabled {
 		if c.RobotSchedulerService != nil {
-			c.RobotSchedulerService.Start()
+			c.RobotSchedulerService.Start(appCtx)
 		}
 		if c.VirtualBalanceSyncScheduler != nil {
 			c.VirtualBalanceSyncScheduler.Start()
 		}
 		if c.RobotSchedulerService != nil {
-			c.RobotSchedulerService.ValidateReserveRatio(context.Background())
+			c.RobotSchedulerService.ValidateReserveRatio(appCtx)
 		}
 	}
 }

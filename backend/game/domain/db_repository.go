@@ -121,10 +121,10 @@ type PlayerSessionBillRow struct {
 	FirstRoundFee int64 // bill_type=2 求和（ABS）
 	Penalty       int64 // bill_type=8 求和（ABS）
 	TotalBet      int64 // bill_type IN (2,4,8) 且 amount<0 求和（ABS）
-	TotalIncome int64 // bill_type IN (3,10,11) 且 amount>0 求和
-	Profit      int64 // TotalIncome - TotalBet
-	GrabCount   int64 // bill_type=3 计数
-	SendCount   int64 // bill_type=4 计数
+	TotalIncome   int64 // bill_type IN (3,10,11) 且 amount>0 求和
+	Profit        int64 // TotalIncome - TotalBet
+	GrabCount     int64 // bill_type=3 计数
+	SendCount     int64 // bill_type=4 计数
 }
 
 // PlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）
@@ -134,10 +134,10 @@ type PlayerSessionBillSummary struct {
 	FirstRoundFee int64
 	Penalty       int64
 	TotalBet      int64
-	TotalIncome int64
-	Profit      int64
-	GrabCount   int64
-	SendCount   int64
+	TotalIncome   int64
+	Profit        int64
+	GrabCount     int64
+	SendCount     int64
 }
 
 // PlayerStatsBillAggregate 玩家累计统计（基于 bill_record 聚合）

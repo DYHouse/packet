@@ -15,7 +15,7 @@ type GameSettleTimeoutScheduler struct {
 	gameSettleSvc *service.GameSettleService
 }
 
-func NewGameSettleTimeoutScheduler(billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client) *GameSettleTimeoutScheduler {
+func NewGameSettleTimeoutScheduler(ctx context.Context, billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client) *GameSettleTimeoutScheduler {
 	config := SchedulerConfig{
 		Name:         "game_settle_timeout",
 		Interval:     5 * time.Minute,
@@ -25,7 +25,7 @@ func NewGameSettleTimeoutScheduler(billMgr *service.BillManager, gameSettleSvc *
 	}
 
 	return &GameSettleTimeoutScheduler{
-		base:          NewBaseScheduler(config, nil, redis),
+		base:          NewBaseScheduler(ctx, config, nil, redis),
 		billMgr:       billMgr,
 		gameSettleSvc: gameSettleSvc,
 	}

@@ -2,6 +2,7 @@ package broadcast
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -62,6 +63,12 @@ func (s *BroadcastService) Start() error {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("broadcast consumer panic",
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
 
 		if err := s.consumer.Start(s.ctx); err != nil {
 			logger.Error("broadcast consumer stopped with error", "error", err)
@@ -141,7 +148,7 @@ func (s *BroadcastService) GetRoomUsers(ctx context.Context, roomID string) ([]s
 }
 
 func (s *BroadcastService) broadcastToRoom(roomID string, messageData []byte, excludeUserID string) {
-	ctx := context.Background()
+	ctx := s.ctx
 
 	userIDs, err := s.GetRoomUsers(ctx, roomID)
 	if err != nil {

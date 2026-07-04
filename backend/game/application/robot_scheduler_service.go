@@ -3,8 +3,10 @@ package application
 import (
 	"context"
 	"math/rand"
+	"runtime/debug"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cashparty/backend/common/config"
@@ -41,6 +43,7 @@ type RobotSchedulerService struct {
 	config              *config.RobotConfig
 	ctx                 context.Context
 	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // NewRobotSchedulerService creates a new RobotSchedulerService instance.
@@ -73,23 +76,41 @@ func (s *RobotSchedulerService) SetBehaviorEngine(engine *RobotBehaviorEngine) {
 }
 
 // Start launches the scan loop in a background goroutine. The scan interval
-// is taken from the scheduler config.
-func (s *RobotSchedulerService) Start() {
-	s.ctx, s.cancel = context.WithCancel(context.Background())
+// is taken from the scheduler config. The provided ctx is used as the parent
+// of the service's internal context so that cancellation propagates from the
+// application lifecycle.
+func (s *RobotSchedulerService) Start(ctx context.Context) {
+	s.ctx, s.cancel = context.WithCancel(ctx)
+	s.wg.Add(1)
 	go s.scanLoop()
 	logger.Info("robot scheduler service started", "scan_interval", s.config.Scheduler.ScanInterval)
 }
 
-// Stop signals the scan loop to exit. It is safe to call multiple times.
+// Stop signals the scan loop to exit and waits for it to drain (with a 10s
+// fallback timeout). It is safe to call multiple times.
 func (s *RobotSchedulerService) Stop() {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		logger.Warn("robot scheduler stop timeout")
 	}
 	logger.Info("robot scheduler service stopped")
 }
 
 // scanLoop periodically calls scanRooms until the service context is cancelled.
 func (s *RobotSchedulerService) scanLoop() {
+	defer s.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("scan loop panic",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 	if s.config.Scheduler.ScanInterval <= 0 {
 		logger.Warn("robot scheduler scan interval is zero, scan loop disabled")
 		return
@@ -107,11 +128,14 @@ func (s *RobotSchedulerService) scanLoop() {
 }
 
 // scanRooms is the main inspection routine. It runs within a time budget of
-// 80% of the scan interval to avoid overlapping with the next tick.
+// 80% of the scan interval to avoid overlapping with the next tick. The
+// per-scan context is derived from the service context so the scan is bound
+// both by the per-scan budget and the application lifecycle.
 func (s *RobotSchedulerService) scanRooms() {
-	ctx := context.Background()
 	// Time budget: 80% of scan interval
 	budget := time.Duration(float64(s.config.Scheduler.ScanInterval) * 0.8)
+	ctx, cancel := context.WithTimeout(s.ctx, budget)
+	defer cancel()
 	deadline := time.Now().Add(budget)
 
 	// 1. Get all Waiting status rooms from Redis

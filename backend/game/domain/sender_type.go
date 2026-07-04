@@ -53,11 +53,11 @@ func (s SendScenario) SenderNickname(userNickname string) string {
 }
 
 type SendPacketParams struct {
-	RoomID       string
-	SenderID     string
-	Scenario     SendScenario
-	TotalAmount  int64
-	RoundNo      int
-	RoundID      int64
-	PlayerCount  int
+	RoomID      string
+	SenderID    string
+	Scenario    SendScenario
+	TotalAmount int64
+	RoundNo     int
+	RoundID     int64
+	PlayerCount int
 }

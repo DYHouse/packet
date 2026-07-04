@@ -67,14 +67,14 @@ func (s *SettlementCheckService) CheckDeductedButNotSettled(ctx context.Context,
 
 func (s *SettlementCheckService) handleDeductedNotSettled(ctx context.Context, settlement *model.RoundSettlement) error {
 	exception := &model.ExceptionRecord{
-		ExceptionNo:   s.traceIDGen.GenerateExceptionNo(),
-		ExceptionType: model.ExceptionTypeDeductedNotSettled,
-		RoundTraceID:  settlement.RoundTraceID,
-		RoundID:       settlement.RoundID,
-		BillType:      0,
-		UserID:        0,
-		Amount:        0,
-		Status:        model.ExceptionStatusPending,
+		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(),
+		ExceptionType:   model.ExceptionTypeDeductedNotSettled,
+		RoundTraceID:    settlement.RoundTraceID,
+		RoundID:         settlement.RoundID,
+		BillType:        0,
+		UserID:          0,
+		Amount:          0,
+		Status:          model.ExceptionStatusPending,
 		ExceptionDetail: fmt.Sprintf("扣款成功但未结算，可能游戏结果事件丢失，round_trace_id: %s, round_id: %d", settlement.RoundTraceID, settlement.RoundID),
 	}
 

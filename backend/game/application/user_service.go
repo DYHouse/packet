@@ -17,9 +17,9 @@ import (
 )
 
 type UserService struct {
-	dbRepo      domain.DBRepository
-	redis       *cRedis.Client
-	avatarCfg   *config.AvatarConfig
+	dbRepo    domain.DBRepository
+	redis     *cRedis.Client
+	avatarCfg *config.AvatarConfig
 }
 
 func NewUserService(dbRepo domain.DBRepository, redis *cRedis.Client, avatarCfg *config.AvatarConfig) *UserService {

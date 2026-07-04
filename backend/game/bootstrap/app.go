@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/cashparty/backend/api/platform"
+	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/lock"
@@ -33,6 +37,9 @@ type Application struct {
 	cancel     context.CancelFunc
 	nacos      *nacos.Client
 	grpcPort   int
+	appCtx     context.Context
+	taskRunner *async.TaskRunner
+	wg         sync.WaitGroup
 }
 
 func NewApplication(cfgPath string) (*Application, error) {
@@ -125,22 +132,29 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	// Validate robot configuration before assembling robot services.
 	application.ValidateRobotConfig(&cfg.Robot)
 
+	appCtx, cancel := context.WithCancel(context.Background())
+	taskRunner := async.NewTaskRunner(appCtx, 10*time.Second)
+	if err := taskRunner.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("start task runner failed: %w", err)
+	}
+
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
-		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance)
+		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner)
 	container.InitAppServices()
 
 	return &Application{
-		Container: container,
-		config:    cfg,
-		nacos:     nacosClient,
-		grpcPort:  cfg.Server.GRPCPort,
+		Container:  container,
+		config:     cfg,
+		nacos:      nacosClient,
+		grpcPort:   cfg.Server.GRPCPort,
+		appCtx:     appCtx,
+		cancel:     cancel,
+		taskRunner: taskRunner,
 	}, nil
 }
 
 func (a *Application) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	a.cancel = cancel
-
 	nodeID := idgen.GetNodeIDString()
 
 	roomEventConsumerCfg := kafka.NewConsumerConfig(
@@ -148,20 +162,43 @@ func (a *Application) Start(ctx context.Context) error {
 		kafka.TopicRoomEvents,
 		fmt.Sprintf("game-room-events-%s", nodeID),
 	)
-	roomEventConsumer := a.Container.NewRoomEventConsumer(roomEventConsumerCfg)
+	a.Container.RoomEventConsumer = a.Container.NewRoomEventConsumer(roomEventConsumerCfg)
 
 	gameEventConsumer := messaging.NewGameEventConsumer(a.Container.DB, a.Container.Redis, a.Container.SettlementSvc, a.Container.GetRobotBehaviorEngine())
-	gameEventKafkaConsumer := kafka.NewConsumer(
+	a.Container.GameEventKafkaConsumer = kafka.NewConsumer(
 		a.config.Kafka.Brokers,
 		kafka.TopicGameEvents,
 		fmt.Sprintf("game-events-%s", nodeID),
 		gameEventConsumer.HandleEvent,
 	)
 
-	a.Container.StartSchedulers()
+	a.Container.StartSchedulers(a.appCtx)
 
-	go roomEventConsumer.Start(ctx)
-	go gameEventKafkaConsumer.Start(ctx)
+	a.wg.Add(2)
+	go func() {
+		defer a.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("room event consumer panic",
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		if err := a.Container.RoomEventConsumer.Start(a.appCtx); err != nil {
+			logger.Error("room event consumer failed", "error", err)
+		}
+	}()
+	go func() {
+		defer a.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("game event kafka consumer panic",
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		if err := a.Container.GameEventKafkaConsumer.Start(a.appCtx); err != nil {
+			logger.Error("game event kafka consumer failed", "error", err)
+		}
+	}()
 
 	a.grpcServer = server.NewGRPCServer(
 		a.grpcPort,
@@ -193,15 +230,41 @@ func (a *Application) Start(ctx context.Context) error {
 	return nil
 }
 
-func (a *Application) Stop() {
+func (a *Application) Stop() error {
 	logger.Info("shutting down game service...")
 
+	// 1. 停止接受新异步任务 + cancel appCtx
+	if a.taskRunner != nil {
+		a.taskRunner.Stop()
+	}
 	if a.cancel != nil {
 		a.cancel()
 	}
 
+	// 2. 停止 container（含 schedulers, connMgr 等）
 	a.Container.Stop()
 
+	// 3. 等待 consumer goroutine 退出（带 10s 兜底超时）
+	waitDone := make(chan struct{})
+	go func() { a.wg.Wait(); close(waitDone) }()
+	select {
+	case <-waitDone:
+	case <-time.After(10 * time.Second):
+		logger.Warn("consumer goroutines wait timeout, force shutdown")
+	}
+
+	// 4. 等待在飞异步任务退出（带 30s 兜底超时）
+	if a.taskRunner != nil {
+		waitRunner := make(chan struct{})
+		go func() { a.taskRunner.Wait(); close(waitRunner) }()
+		select {
+		case <-waitRunner:
+		case <-time.After(30 * time.Second):
+			logger.Warn("task runner wait timeout, force shutdown")
+		}
+	}
+
+	// 5. 关闭底层资源
 	if a.grpcServer != nil {
 		a.grpcServer.Stop()
 	}
@@ -221,6 +284,14 @@ func (a *Application) Stop() {
 	}
 
 	logger.Info("game service stopped")
+	return nil
+}
+
+// Wait blocks until the application context is cancelled (i.e. Stop is called
+// or the appCtx is otherwise done).
+func (a *Application) Wait() error {
+	<-a.appCtx.Done()
+	return nil
 }
 
 func Run() {
@@ -231,19 +302,21 @@ func Run() {
 
 	app, err := NewApplication(cfgPath)
 	if err != nil {
-		panic(err)
+		logger.Fatal("failed to create application", "error", err)
 	}
 
 	ctx := context.Background()
 	if err := app.Start(ctx); err != nil {
-		panic(err)
+		logger.Fatal("failed to start application", "error", err)
 	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	app.Stop()
+	if err := app.Stop(); err != nil {
+		logger.Error("failed to stop application", "error", err)
+	}
 }
 
 func convertAlgorithmConfig(cfg *gameconfig.AlgorithmConfig) *algorithm.Config {

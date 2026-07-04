@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -24,27 +25,39 @@ type BaseScheduler struct {
 	config SchedulerConfig
 	task   TaskFunc
 	redis  *cRedis.Client
-	stopCh chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 	mu     sync.Mutex
 }
 
-func NewBaseScheduler(config SchedulerConfig, task TaskFunc, redis *cRedis.Client) *BaseScheduler {
+func NewBaseScheduler(ctx context.Context, config SchedulerConfig, task TaskFunc, redis *cRedis.Client) *BaseScheduler {
+	ctx, cancel := context.WithCancel(ctx)
 	return &BaseScheduler{
 		config: config,
 		task:   task,
 		redis:  redis,
-		stopCh: make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
 func (s *BaseScheduler) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	s.wg.Add(1)
 	go s.run()
 }
 
 func (s *BaseScheduler) run() {
+	defer s.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("scheduler run panic",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+
 	if s.config.InitialDelay > 0 {
 		time.Sleep(s.config.InitialDelay)
 	}
@@ -56,17 +69,18 @@ func (s *BaseScheduler) run() {
 
 	for {
 		select {
-		case <-ticker.C:
-			s.executeTask()
-		case <-s.stopCh:
+		case <-s.ctx.Done():
 			logger.Info("scheduler stopped", "name", s.config.Name)
 			return
+		case <-ticker.C:
+			s.executeTask()
 		}
 	}
 }
 
 func (s *BaseScheduler) executeTask() {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(s.ctx, s.config.Interval)
+	defer cancel()
 
 	lock.WithRedisLock(ctx, s.redis, s.config.LockKey, s.config.LockTTL, func() error {
 		return s.task(ctx)
@@ -76,5 +90,13 @@ func (s *BaseScheduler) executeTask() {
 func (s *BaseScheduler) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	close(s.stopCh)
+	s.cancel()
+
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		logger.Warn("scheduler stop timeout", "lock_key", s.config.LockKey)
+	}
 }

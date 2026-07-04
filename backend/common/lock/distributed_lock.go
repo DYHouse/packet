@@ -3,6 +3,7 @@ package lock
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -115,6 +116,12 @@ func (l *Lock) startWatchdog(interval time.Duration) {
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("watchdog panic",
+					"key", l.key, "panic", r, "stack", string(debug.Stack()))
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 

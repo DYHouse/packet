@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ type ServiceClient interface {
 
 type nacosResolverBuilder struct {
 	nacosClient *nacos.Client
+	appCtx      context.Context
 }
 
 func (b *nacosResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
@@ -35,7 +37,7 @@ func (b *nacosResolverBuilder) Build(target resolver.Target, cc resolver.ClientC
 		serviceName: serviceName,
 		cc:          cc,
 	}
-	r.start()
+	r.start(b.appCtx)
 	return r, nil
 }
 
@@ -48,16 +50,26 @@ type nacosResolver struct {
 	serviceName string
 	cc          resolver.ClientConn
 	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
-func (r *nacosResolver) start() {
-	ctx, cancel := context.WithCancel(context.Background())
+func (r *nacosResolver) start(parentCtx context.Context) {
+	ctx, cancel := context.WithCancel(parentCtx)
 	r.cancel = cancel
 	r.updateAddresses()
+	r.wg.Add(1)
 	go r.watch(ctx)
 }
 
 func (r *nacosResolver) watch(ctx context.Context) {
+	defer r.wg.Done()
+	defer func() {
+		if rec := recover(); rec != nil {
+			logger.Error("nacos resolver watch panic",
+				"panic", rec, "stack", string(debug.Stack()))
+		}
+	}()
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -98,6 +110,13 @@ func (r *nacosResolver) Close() {
 	if r.cancel != nil {
 		r.cancel()
 	}
+	done := make(chan struct{})
+	go func() { r.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		logger.Warn("nacos resolver close timeout")
+	}
 }
 
 type ServiceDiscovery struct {
@@ -107,10 +126,10 @@ type ServiceDiscovery struct {
 	builder     *nacosResolverBuilder
 }
 
-func NewServiceDiscovery(nacosClient *nacos.Client) *ServiceDiscovery {
+func NewServiceDiscovery(nacosClient *nacos.Client, appCtx context.Context) *ServiceDiscovery {
 	return &ServiceDiscovery{
 		nacosClient: nacosClient,
-		builder:     &nacosResolverBuilder{nacosClient: nacosClient},
+		builder:     &nacosResolverBuilder{nacosClient: nacosClient, appCtx: appCtx},
 	}
 }
 

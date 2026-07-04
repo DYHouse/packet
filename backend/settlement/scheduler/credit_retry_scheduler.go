@@ -14,7 +14,7 @@ type CreditRetryScheduler struct {
 	creditRetry *service.CreditRetryService
 }
 
-func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis *cRedis.Client) *CreditRetryScheduler {
+func NewCreditRetryScheduler(ctx context.Context, creditRetry *service.CreditRetryService, redis *cRedis.Client) *CreditRetryScheduler {
 	config := SchedulerConfig{
 		Name:         "credit_retry",
 		Interval:     30 * time.Second,
@@ -24,7 +24,7 @@ func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis *cRe
 	}
 
 	return &CreditRetryScheduler{
-		base:        NewBaseScheduler(config, nil, redis),
+		base:        NewBaseScheduler(ctx, config, nil, redis),
 		creditRetry: creditRetry,
 	}
 }

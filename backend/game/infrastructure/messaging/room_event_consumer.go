@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/kafka"
@@ -37,7 +38,12 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		return nil
 	}
 
-	if !c.tryAcquire(ctx, event) {
+	acquired, acquireErr := c.tryAcquire(ctx, event)
+	if acquireErr != nil {
+		// Redis 不可用（fail-closed），返回 error 让 Kafka 重试
+		return acquireErr
+	}
+	if !acquired {
 		logger.Debug("event already processed, skipping",
 			"event_type", event.EventType,
 			"room_id", event.RoomID,
@@ -120,20 +126,23 @@ func (c *RoomEventConsumer) handleSpectatorKick(ctx context.Context, event *doma
 }
 
 // tryAcquire 用 SetNX 原子抢占事件处理权。
-// 返回 true 表示抢占成功（首次处理），false 表示已被其他 consumer 处理过。
-func (c *RoomEventConsumer) tryAcquire(ctx context.Context, event *domain.RoomEvent) bool {
+// 返回 (true, nil) 表示抢占成功（首次处理）。
+// 返回 (false, nil) 表示已被其他 consumer 处理过（幂等跳过）。
+// 返回 (false, err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
+// 业务侧幂等（DB 唯一索引/FirstOrCreate/状态机）仍作为兜底防线。
+func (c *RoomEventConsumer) tryAcquire(ctx context.Context, event *domain.RoomEvent) (bool, error) {
 	if c.redis == nil {
-		return true
+		return true, nil
 	}
 	key := redisKeys.RoomEventProcessedKey(event.EventID)
 	ok, err := c.redis.SetNX(ctx, key, "1", 24*time.Hour).Result()
 	if err != nil {
-		logger.Warn("tryAcquire SetNX failed, fail-open",
+		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
 			"event_id", event.EventID,
 			"error", err)
-		return true
+		return false, fmt.Errorf("tryAcquire SetNX failed: %w", err)
 	}
-	return ok
+	return ok, nil
 }
 
 // releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。

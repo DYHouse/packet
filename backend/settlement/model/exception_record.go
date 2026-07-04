@@ -5,9 +5,9 @@ import "time"
 type ExceptionType int
 
 const (
-	ExceptionTypeDebitFailed         ExceptionType = 1
-	ExceptionTypeCreditRetryExceed   ExceptionType = 2
-	ExceptionTypeDeductedNotSettled  ExceptionType = 3
+	ExceptionTypeDebitFailed        ExceptionType = 1
+	ExceptionTypeCreditRetryExceed  ExceptionType = 2
+	ExceptionTypeDeductedNotSettled ExceptionType = 3
 )
 
 type ExceptionStatus int

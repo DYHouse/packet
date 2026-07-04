@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cashparty/backend/api/platform"
@@ -144,6 +146,7 @@ func (s *DeductService) executeBatchDeduct(ctx context.Context, bills []*model.B
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var panicCount int32
 	maxConcurrent := s.maxConcurrentDeduct
 	if maxConcurrent <= 0 {
 		maxConcurrent = defaultMaxConcurrentDeduct
@@ -156,6 +159,13 @@ func (s *DeductService) executeBatchDeduct(ctx context.Context, bills []*model.B
 		go func(b *model.BillRecord) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if rec := recover(); rec != nil {
+					atomic.AddInt32(&panicCount, 1)
+					logger.Error("execute single deduct panic",
+						"bill_id", b.ID, "panic", rec, "stack", string(debug.Stack()))
+				}
+			}()
 
 			err := s.executeSingleDeduct(ctx, b, amount)
 
@@ -177,6 +187,9 @@ func (s *DeductService) executeBatchDeduct(ctx context.Context, bills []*model.B
 	}
 
 	wg.Wait()
+	if panicCount > 0 {
+		logger.Warn("batch deduct completed with panics", "panic_count", panicCount)
+	}
 
 	result.AllSuccess = result.FailedCount == 0
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
@@ -29,6 +30,7 @@ type SeatAppService struct {
 	redis             *cRedis.Client
 	balanceService    *settlementService.BalanceService
 	readyCountdown    time.Duration
+	taskRunner        *async.TaskRunner
 }
 
 // SetRoomAppService 注入 RoomAppService（用于 CancelSeat 后触发自动替补）
@@ -47,6 +49,7 @@ func NewSeatAppService(
 	redis *cRedis.Client,
 	balanceService *settlementService.BalanceService,
 	readyCountdown time.Duration,
+	taskRunner *async.TaskRunner,
 ) *SeatAppService {
 	return &SeatAppService{
 		repo:              repo,
@@ -59,6 +62,7 @@ func NewSeatAppService(
 		redis:             redis,
 		balanceService:    balanceService,
 		readyCountdown:    readyCountdown,
+		taskRunner:        taskRunner,
 	}
 }
 
@@ -112,7 +116,7 @@ func (s *SeatAppService) SelectSeat(ctx context.Context, req *SelectSeatRequest)
 	stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 
 	if s.broadcaster != nil && stateData != nil {
-		s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, BuildFullRoomState(stateData), req.UserID)
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, BuildFullRoomState(stateData), req.UserID)
 	}
 
 	logger.Info("seat selected",
@@ -176,15 +180,17 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 		if stateData != nil {
 			roomState = BuildFullRoomState(stateData)
-			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, roomState, req.UserID)
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, roomState, req.UserID)
 		}
 	}
 
 	// 座位释放后从排队队列自动替补
 	if freedSeatNo > 0 && s.roomAppService != nil {
-		go func() {
-			s.roomAppService.TryAutoSubstitute(context.Background(), req.RoomID, freedSeatNo)
-		}()
+		if err := s.taskRunner.Submit("auto_substitute_on_cancel", 10*time.Second, func(ctx context.Context) {
+			s.roomAppService.TryAutoSubstitute(ctx, req.RoomID, freedSeatNo)
+		}); err != nil {
+			logger.Warn("submit auto_substitute_on_cancel task failed", "error", err)
+		}
 	}
 
 	logger.Info("seat cancelled",
@@ -283,13 +289,13 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 		if stateData != nil {
 			roomState = BuildFullRoomState(stateData)
-			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, roomState, req.UserID)
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, roomState, req.UserID)
 		}
 	}
 
 	if shouldStartCountdown == 1 {
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(req.RoomID, message.PushCountdownStart, &message.CountdownStartPush{
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushCountdownStart, &message.CountdownStartPush{
 				RoomID:    req.RoomID,
 				Countdown: int32(s.readyCountdown.Seconds()),
 			}, "")
@@ -306,10 +312,14 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		)
 	} else if shouldStartCountdown == 2 {
 		if s.gameService != nil {
-			go s.gameService.ResumeGame(context.Background(), &ResumeGameRequest{
-				RoomID:       req.RoomID,
-				CurrentRound: currentRound,
-			})
+			if err := s.taskRunner.Submit("resume_game_on_ready", 10*time.Second, func(ctx context.Context) {
+				s.gameService.ResumeGame(ctx, &ResumeGameRequest{
+					RoomID:       req.RoomID,
+					CurrentRound: currentRound,
+				})
+			}); err != nil {
+				logger.Warn("submit resume_game_on_ready task failed", "error", err)
+			}
 		}
 
 		logger.Info("game resume triggered",
@@ -381,7 +391,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.BroadcastToUser(userID, message.PushKicked, &message.KickedPush{
+		s.broadcaster.BroadcastToUser(ctx, userID, message.PushKicked, &message.KickedPush{
 			RoomID:  roomID,
 			UserID:  userID,
 			Reason:  message.ReasonSeatTimeout,
@@ -390,7 +400,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 
 		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
 		if stateData != nil {
-			s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
+			s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
 		}
 	}
 

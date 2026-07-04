@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/logger"
@@ -16,15 +17,16 @@ import (
 )
 
 type RoomAppService struct {
-	repo              domain.RoomRepository
-	dbRepo            domain.DBRepository
-	userService       *UserService
-	broadcaster       domain.Broadcaster
-	publisher         domain.EventPublisher
-	scheduler         *scheduler.TimeoutScheduler
-	settlementService *settlementService.SettlementService
-	balanceService    *settlementService.BalanceService
+	repo               domain.RoomRepository
+	dbRepo             domain.DBRepository
+	userService        *UserService
+	broadcaster        domain.Broadcaster
+	publisher          domain.EventPublisher
+	scheduler          *scheduler.TimeoutScheduler
+	settlementService  *settlementService.SettlementService
+	balanceService     *settlementService.BalanceService
 	resumeGameCallback ResumeGameCallback
+	taskRunner         *async.TaskRunner
 }
 
 // ResumeGameCallback 由 GameAppService 注入，用于自动上座补满后恢复中断游戏
@@ -44,6 +46,7 @@ func NewRoomAppService(
 	scheduler *scheduler.TimeoutScheduler,
 	settlementSvc *settlementService.SettlementService,
 	balanceSvc *settlementService.BalanceService,
+	taskRunner *async.TaskRunner,
 ) *RoomAppService {
 	return &RoomAppService{
 		repo:              repo,
@@ -51,9 +54,10 @@ func NewRoomAppService(
 		userService:       userService,
 		broadcaster:       broadcaster,
 		publisher:         publisher,
-		scheduler:          scheduler,
+		scheduler:         scheduler,
 		settlementService: settlementSvc,
 		balanceService:    balanceSvc,
+		taskRunner:        taskRunner,
 	}
 }
 
@@ -130,7 +134,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 	stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
 
 	if s.broadcaster != nil && stateData != nil {
-		s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), req.UserID)
+		s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), req.UserID)
 	}
 
 	logger.Info("user joined room",
@@ -213,7 +217,7 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 		stateData, _ := s.repo.GetRoomStateData(ctx, joinResult.RoomID)
 		if stateData != nil {
 			roomState = BuildFullRoomState(stateData)
-			s.broadcaster.Broadcast(joinResult.RoomID, message.PushRoomState, roomState, req.UserID)
+			s.broadcaster.Broadcast(ctx, joinResult.RoomID, message.PushRoomState, roomState, req.UserID)
 		}
 	}
 
@@ -246,7 +250,7 @@ func (s *RoomAppService) handleCountdownAfterSeat(ctx context.Context, roomID st
 			countdownDuration = 3
 		}
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(roomID, message.PushCountdownStart, &message.CountdownStartPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushCountdownStart, &message.CountdownStartPush{
 				RoomID:    roomID,
 				Countdown: int32(countdownDuration),
 			}, "")
@@ -259,7 +263,11 @@ func (s *RoomAppService) handleCountdownAfterSeat(ctx context.Context, roomID st
 			"room_id", roomID, "countdown_end_time", countdownEndTime)
 	} else if shouldStartCountdown == 2 {
 		if s.resumeGameCallback != nil {
-			go s.resumeGameCallback(context.Background(), roomID, currentRound)
+			if err := s.taskRunner.Submit("resume_game_callback", 10*time.Second, func(ctx context.Context) {
+				s.resumeGameCallback(ctx, roomID, currentRound)
+			}); err != nil {
+				logger.Warn("submit resume_game_callback task failed", "error", err)
+			}
 		}
 		logger.Info("game resume triggered (auto seat substitute)",
 			"room_id", roomID, "current_round", currentRound)
@@ -299,7 +307,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 				// 余额不足：移出队列并通知
 				s.repo.Dequeue(ctx, roomID, q.UserID)
 				if s.broadcaster != nil {
-					s.broadcaster.BroadcastToUser(q.UserID, message.PushDequeued, &message.DequeuedPush{
+					s.broadcaster.BroadcastToUser(ctx, q.UserID, message.PushDequeued, &message.DequeuedPush{
 						RoomID:  roomID,
 						UserID:  q.UserID,
 						Reason:  "insufficient_balance",
@@ -334,7 +342,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(roomID, message.PushSubstitute, &message.SubstitutePush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushSubstitute, &message.SubstitutePush{
 			RoomID: roomID,
 			UserID: subResult.SubstituteUserID,
 			SeatNo: int32(subResult.SeatNo),
@@ -342,7 +350,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 
 		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
 		if stateData != nil {
-			s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
+			s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
 		}
 	}
 
@@ -395,7 +403,7 @@ func (s *RoomAppService) Enqueue(ctx context.Context, req *EnqueueRequest) (*Enq
 		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 		if stateData != nil {
 			roomState = BuildFullRoomState(stateData)
-			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, roomState, req.UserID)
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, roomState, req.UserID)
 		}
 	}
 
@@ -437,7 +445,7 @@ func (s *RoomAppService) Dequeue(ctx context.Context, req *DequeueRequest) (*Deq
 		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 		if stateData != nil {
 			roomState = BuildFullRoomState(stateData)
-			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, roomState, req.UserID)
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, roomState, req.UserID)
 		}
 	}
 
@@ -518,15 +526,17 @@ func (s *RoomAppService) LeaveRoom(ctx context.Context, req *LeaveRoomRequest) (
 	if s.broadcaster != nil {
 		stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 		if stateData != nil {
-			s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, BuildFullRoomState(stateData), req.UserID)
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, BuildFullRoomState(stateData), req.UserID)
 		}
 	}
 
 	// 玩家离开释放座位 → 尝试从排队队列自动替补
 	if freedSeatNo > 0 {
-		go func() {
-			s.tryAutoSubstitute(context.Background(), req.RoomID, freedSeatNo)
-		}()
+		if err := s.taskRunner.Submit("auto_substitute_on_leave", 10*time.Second, func(ctx context.Context) {
+			s.tryAutoSubstitute(ctx, req.RoomID, freedSeatNo)
+		}); err != nil {
+			logger.Warn("submit auto_substitute_on_leave task failed", "error", err)
+		}
 	}
 
 	logger.Info("user left room",
@@ -591,7 +601,7 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(req.RoomID, message.PushPlayerReconnected, &message.PlayerReconnectedPush{
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushPlayerReconnected, &message.PlayerReconnectedPush{
 			UserID:   req.UserID,
 			Nickname: nickname,
 			SeatNo:   seatNo,
@@ -618,7 +628,7 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 
 func (s *RoomAppService) BroadcastToUser(ctx context.Context, userID string, msgType string, data interface{}) {
 	if s.broadcaster != nil {
-		s.broadcaster.BroadcastToUser(userID, msgType, data)
+		s.broadcaster.BroadcastToUser(ctx, userID, msgType, data)
 	}
 }
 
@@ -635,17 +645,17 @@ func (s *RoomAppService) GetSpectator(ctx context.Context, roomID, userID string
 }
 
 type RoomListItem struct {
-	RoomID         string      `json:"room_id"`
-	RoomNo         string      `json:"room_no"`
+	RoomID         string         `json:"room_id"`
+	RoomNo         string         `json:"room_no"`
 	RoomFee        currency.Money `json:"room_fee"`
-	MaxPlayers     int         `json:"max_players"`
-	MaxRounds      int         `json:"max_rounds"`
-	MaxSpectators  int         `json:"max_spectators"`
-	CurrentRound   int         `json:"current_round"`
-	PlayerCount    int         `json:"player_count"`
-	SpectatorCount int         `json:"spectator_count"`
-	Status         int         `json:"status"`
-	Seats          []*SeatInfo `json:"seats"`
+	MaxPlayers     int            `json:"max_players"`
+	MaxRounds      int            `json:"max_rounds"`
+	MaxSpectators  int            `json:"max_spectators"`
+	CurrentRound   int            `json:"current_round"`
+	PlayerCount    int            `json:"player_count"`
+	SpectatorCount int            `json:"spectator_count"`
+	Status         int            `json:"status"`
+	Seats          []*SeatInfo    `json:"seats"`
 }
 
 func (s *RoomAppService) GetRoomList(ctx context.Context, roomType, status, page, pageSize int) ([]*RoomListItem, int) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type AuthMiddleware struct {
 	lockDuration   time.Duration
 	ctx            context.Context
 	cancel         context.CancelFunc
+	wg             sync.WaitGroup
 }
 
 func NewAuthMiddleware(tokenService *service.TokenService, redis *cRedis.Client) *AuthMiddleware {
@@ -43,11 +45,12 @@ func NewAuthMiddleware(tokenService *service.TokenService, redis *cRedis.Client)
 		ctx:          ctx,
 		cancel:       cancel,
 	}
+	m.wg.Add(1)
 	go m.cleanupRoutine()
 	return m
 }
 
-func (m *AuthMiddleware) OnConnect(conn *connection.Connection, firstMessage []byte) error {
+func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connection, firstMessage []byte) error {
 	var req message.Request
 	if err := json.Unmarshal(firstMessage, &req); err != nil {
 		logger.Warn("failed to parse first message", "conn_id", conn.ConnID, "error", err)
@@ -84,7 +87,7 @@ func (m *AuthMiddleware) OnConnect(conn *connection.Connection, firstMessage []b
 
 	claims, err := m.tokenService.VerifyToken(authData.Token)
 	if err != nil {
-		m.recordFailedAttempt(conn.IP)
+		m.recordFailedAttempt(ctx, conn.IP)
 		logger.Warn("token verification failed", "conn_id", conn.ConnID, "error", err)
 		m.sendError(conn, req.Cmd, req.RequestID, message.CodeAuthFailed)
 		return ErrAuthFailed
@@ -130,13 +133,12 @@ func (m *AuthMiddleware) isLocked(ip string) bool {
 	return attempts.(int) >= m.maxAttempts
 }
 
-func (m *AuthMiddleware) recordFailedAttempt(ip string) {
+func (m *AuthMiddleware) recordFailedAttempt(ctx context.Context, ip string) {
 	attempts, _ := m.failedAttempts.LoadOrStore(ip, 0)
 	newAttempts := attempts.(int) + 1
 	m.failedAttempts.Store(ip, newAttempts)
 
 	if newAttempts >= m.maxAttempts {
-		ctx := context.Background()
 		key := gateway.GatewayLockedIPKey(ip)
 		m.redis.Set(ctx, key, "1", m.lockDuration)
 		logger.Warn("IP locked due to too many failed attempts", "ip", ip, "attempts", newAttempts)
@@ -148,6 +150,14 @@ func (m *AuthMiddleware) clearFailedAttempts(ip string) {
 }
 
 func (m *AuthMiddleware) cleanupRoutine() {
+	defer m.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("cleanup routine panic",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
@@ -166,4 +176,12 @@ func (m *AuthMiddleware) cleanupRoutine() {
 
 func (m *AuthMiddleware) Stop() {
 	m.cancel()
+	// v3 新增：等待 cleanupRoutine 退出
+	done := make(chan struct{})
+	go func() { m.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		logger.Warn("auth middleware stop timeout")
+	}
 }

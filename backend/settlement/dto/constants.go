@@ -3,16 +3,16 @@ package dto
 import "time"
 
 const (
-	BillTypeFirstRoundDeduct   = 2
-	BillTypeGrabPacket         = 3
-	BillTypeLaterRoundDeduct   = 4
-	BillTypeCommission         = 7
-	BillTypePenaltyIncome      = 8
-	BillTypeSystemPacket       = 9
-	BillTypePenaltyDistribute  = 10
-	BillTypeSystemReward       = 11
-	BillTypeSessionCredit      = 12
-	BillTypeGameSettle         = 13
+	BillTypeFirstRoundDeduct  = 2
+	BillTypeGrabPacket        = 3
+	BillTypeLaterRoundDeduct  = 4
+	BillTypeCommission        = 7
+	BillTypePenaltyIncome     = 8
+	BillTypeSystemPacket      = 9
+	BillTypePenaltyDistribute = 10
+	BillTypeSystemReward      = 11
+	BillTypeSessionCredit     = 12
+	BillTypeGameSettle        = 13
 )
 
 const (
@@ -21,10 +21,10 @@ const (
 )
 
 const (
-	PlatformAccountID int64 = 0
-	MaxRetryCount     int   = 3
-	PenaltyRoundID    int64 = 0
-	CreditRetryBaseDelay = 5 * time.Second
+	PlatformAccountID    int64 = 0
+	MaxRetryCount        int   = 3
+	PenaltyRoundID       int64 = 0
+	CreditRetryBaseDelay       = 5 * time.Second
 )
 
 const (

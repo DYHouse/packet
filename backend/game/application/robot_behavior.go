@@ -60,9 +60,9 @@ func NewRobotBehaviorEngine(
 // Data format with retry: "robotUserID:action:uuid:retryCount"
 // Note: grab actions are scheduled directly via OnPacketCreated with an
 // extended format that includes the round id.
-func (e *RobotBehaviorEngine) ScheduleAction(roomID string, robotUserID string, action string, delay time.Duration) {
+func (e *RobotBehaviorEngine) ScheduleAction(ctx context.Context, roomID string, robotUserID string, action string, delay time.Duration) {
 	data := fmt.Sprintf("%s:%s:%s:0", robotUserID, action, uuid.New().String()[:8])
-	e.scheduler.SetTimeout(context.Background(), scheduler.TimeoutTypeRobot, roomID, data, delay)
+	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 }
 
 // scheduleRetry schedules a retry for a failed robot action with an
@@ -73,7 +73,7 @@ func (e *RobotBehaviorEngine) ScheduleAction(roomID string, robotUserID string, 
 // across retries (grab data format: "robotUserID:grab:roundID:uuid:retryCount").
 // For other actions, roundID is ignored and the standard format is used
 // ("robotUserID:action:uuid:retryCount").
-func (e *RobotBehaviorEngine) scheduleRetry(roomID string, robotUserID string, action string, retryCount int, roundID string) {
+func (e *RobotBehaviorEngine) scheduleRetry(ctx context.Context, roomID string, robotUserID string, action string, retryCount int, roundID string) {
 	maxRetry := e.config.Behavior.ActionRetryMax
 	if maxRetry <= 0 {
 		maxRetry = 2
@@ -98,7 +98,7 @@ func (e *RobotBehaviorEngine) scheduleRetry(roomID string, robotUserID string, a
 	} else {
 		data = fmt.Sprintf("%s:%s:%s:%d", robotUserID, action, uuid.New().String()[:8], retryCount+1)
 	}
-	e.scheduler.SetTimeout(context.Background(), scheduler.TimeoutTypeRobot, roomID, data, delay)
+	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 	logger.Info("robot action retry scheduled",
 		"action", action,
 		"room_id", roomID,
@@ -178,7 +178,7 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 		)
 		// Schedule retry for transient failures (seat, ready, grab)
 		if action == "seat" || action == "ready" || action == "grab" {
-			e.scheduleRetry(roomID, robotUserID, action, retryCount, roundID)
+			e.scheduleRetry(ctx, roomID, robotUserID, action, retryCount, roundID)
 		}
 	}
 }

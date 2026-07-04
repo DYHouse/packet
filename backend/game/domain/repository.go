@@ -58,24 +58,24 @@ type RoomStateData struct {
 }
 
 type AutoSeatResult struct {
-	SeatNo              int
-	PlayerCount         int
-	MaxPlayers          int
+	SeatNo               int
+	PlayerCount          int
+	MaxPlayers           int
 	ShouldStartCountdown int
-	CountdownEndTime    int64
-	CurrentRound        int
-	Player              *Player
+	CountdownEndTime     int64
+	CurrentRound         int
+	Player               *Player
 }
 
 type SubstituteResult struct {
-	SubstituteUserID    string
-	SeatNo              int
-	PlayerCount         int
-	MaxPlayers          int
+	SubstituteUserID     string
+	SeatNo               int
+	PlayerCount          int
+	MaxPlayers           int
 	ShouldStartCountdown int
-	CountdownEndTime    int64
-	CurrentRound        int
-	Player              *Player
+	CountdownEndTime     int64
+	CurrentRound         int
+	Player               *Player
 }
 
 type EventPublisher interface {
@@ -83,8 +83,8 @@ type EventPublisher interface {
 }
 
 type Broadcaster interface {
-	Broadcast(roomID string, cmd string, data interface{}, excludeUserID string)
-	BroadcastToUser(userID string, cmd string, data interface{})
+	Broadcast(ctx context.Context, roomID string, cmd string, data interface{}, excludeUserID string) error
+	BroadcastToUser(ctx context.Context, userID string, cmd string, data interface{}) error
 }
 
 type JoinResult struct {

@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
@@ -82,6 +83,13 @@ func NewConsumerWithConfig(cfg *ConsumerConfig, handler MessageHandler) *Consume
 }
 
 func (c *Consumer) Start(ctx context.Context) error {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("kafka consumer start panic",
+				"topic", c.topic, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+
 	logger.Info("kafka consumer started", "topic", c.topic)
 
 	for {

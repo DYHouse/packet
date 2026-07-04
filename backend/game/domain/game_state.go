@@ -89,5 +89,3 @@ func DefaultCommissionConfig() *CommissionConfig {
 func (c *CommissionConfig) Calculate(totalAmount int64) int64 {
 	return int64(float64(totalAmount) * c.Rate)
 }
-
-

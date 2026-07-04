@@ -18,7 +18,7 @@ var ErrNoEmptySeat = errors.New("no empty seat available")
 // It is implemented by RobotBehaviorEngine (created later) to break the
 // circular dependency between RobotPlayer and RobotBehaviorEngine.
 type RobotActionScheduler interface {
-	ScheduleAction(roomID string, robotUserID string, action string, delay time.Duration)
+	ScheduleAction(ctx context.Context, roomID string, robotUserID string, action string, delay time.Duration)
 }
 
 // RobotPlayer drives a single robot through the room lifecycle: join, seat,
@@ -86,7 +86,7 @@ func (p *RobotPlayer) JoinAndReady(ctx context.Context, roomID string, robotUser
 	}
 
 	delay := p.randomDelay(p.config.Behavior.SeatDelayMin, p.config.Behavior.SeatDelayMax)
-	p.behaviorEngine.ScheduleAction(roomID, robotUserID, "seat", delay)
+	p.behaviorEngine.ScheduleAction(ctx, roomID, robotUserID, "seat", delay)
 	return nil
 }
 
@@ -122,7 +122,7 @@ func (p *RobotPlayer) SelectSeat(ctx context.Context, roomID string, robotUserID
 		})
 		if err == nil {
 			delay := p.randomDelay(p.config.Behavior.ReadyDelayMin, p.config.Behavior.ReadyDelayMax)
-			p.behaviorEngine.ScheduleAction(roomID, robotUserID, "ready", delay)
+			p.behaviorEngine.ScheduleAction(ctx, roomID, robotUserID, "ready", delay)
 			return nil
 		}
 		// Seat taken or other transient error; retry with a different seat
@@ -196,7 +196,7 @@ func (p *RobotPlayer) ScheduleLeave(ctx context.Context, roomID string, robotUse
 		)
 		return
 	}
-	p.behaviorEngine.ScheduleAction(roomID, robotUserID, "leave", delay)
+	p.behaviorEngine.ScheduleAction(ctx, roomID, robotUserID, "leave", delay)
 }
 
 // hasEmptySeat reports whether any seat in the room is still free. A seat is

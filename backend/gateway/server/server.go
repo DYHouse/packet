@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
@@ -45,6 +47,7 @@ type Server struct {
 	upgrader            websocket.Upgrader
 	engine              *gin.Engine
 	httpServer          *http.Server
+	wg                  sync.WaitGroup
 }
 
 func NewServer(
@@ -169,6 +172,15 @@ func (s *Server) Stop(ctx context.Context) {
 	s.broadcast.Stop()
 	s.auth.Stop()
 
+	// v3 新增：等待 connection goroutines 退出
+	waitDone := make(chan struct{})
+	go func() { s.wg.Wait(); close(waitDone) }()
+	select {
+	case <-waitDone:
+	case <-ctx.Done():
+		logger.Warn("server goroutines wait timeout")
+	}
+
 	logger.Info("gateway server stopped")
 }
 
@@ -194,16 +206,27 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	conn.IP = utils.GetClientIP(c.Request)
 	conn.UserAgent = c.Request.UserAgent()
 
-	go s.handleConnection(conn, token)
+	ctx := c.Request.Context()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("handle connection panic",
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		s.handleConnection(ctx, conn, token)
+	}()
 }
 
-func (s *Server) handleConnection(conn *connection.Connection, token string) {
+func (s *Server) handleConnection(ctx context.Context, conn *connection.Connection, token string) {
 	defer s.cleanupConnection(conn)
 
 	authReq := fmt.Sprintf(`{"cmd":"auth","request_id":"auth_%s","data":{"token":"%s"},"timestamp":%d}`,
 		conn.ConnID, token, time.Now().UnixMilli())
 
-	if err := s.auth.OnConnect(conn, []byte(authReq)); err != nil {
+	if err := s.auth.OnConnect(ctx, conn, []byte(authReq)); err != nil {
 		logger.Warn("authentication failed", "conn_id", conn.ConnID, "error", err)
 		return
 	}
@@ -211,7 +234,7 @@ func (s *Server) handleConnection(conn *connection.Connection, token string) {
 	roomID := s.connMgr.GetPlayerRoom(conn.UserID)
 
 	if roomID != "" {
-		s.handleReconnect(conn, roomID)
+		s.handleReconnect(ctx, conn, roomID)
 	} else {
 		if err := s.connMgr.Register(conn); err != nil {
 			logger.Error("failed to register connection", "conn_id", conn.ConnID, "error", err)
@@ -220,11 +243,21 @@ func (s *Server) handleConnection(conn *connection.Connection, token string) {
 		}
 	}
 
-	go s.writeAndHeartbeatPump(conn)
-	s.readPump(conn)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("write and heartbeat pump panic",
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		s.writeAndHeartbeatPump(conn)
+	}()
+	s.readPump(ctx, conn)
 }
 
-func (s *Server) handleReconnect(conn *connection.Connection, roomID string) {
+func (s *Server) handleReconnect(ctx context.Context, conn *connection.Connection, roomID string) {
 	s.connMgr.CleanupOldConnection(conn.UserID)
 
 	if err := s.connMgr.Register(conn); err != nil {
@@ -237,10 +270,10 @@ func (s *Server) handleReconnect(conn *connection.Connection, roomID string) {
 		conn.ConnID, roomID, conn.UserID,
 	)
 
-	s.router.Route(conn, []byte(reconnectReq))
+	s.router.Route(ctx, conn, []byte(reconnectReq))
 }
 
-func (s *Server) readPump(conn *connection.Connection) {
+func (s *Server) readPump(ctx context.Context, conn *connection.Connection) {
 	defer conn.Close()
 
 	conn.WebSocketConn().SetReadLimit(512 * 1024)
@@ -264,7 +297,7 @@ func (s *Server) readPump(conn *connection.Connection) {
 		conn.WebSocketConn().SetReadDeadline(time.Now().Add(60 * time.Second))
 		conn.UpdateHeartbeat()
 		logger.Debug("received message, heartbeat updated", "conn_id", conn.ConnID)
-		s.router.Route(conn, messageData)
+		s.router.Route(ctx, conn, messageData)
 	}
 }
 

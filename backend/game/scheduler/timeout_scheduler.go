@@ -210,6 +210,12 @@ func (s *TimeoutScheduler) getTimeoutKey(timeoutType TimeoutType) string {
 
 func (s *TimeoutScheduler) runChecker(timeoutType TimeoutType, config TimeoutConfig) {
 	defer s.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("run checker panic",
+				"type", timeoutType, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 
 	ticker := time.NewTicker(config.CheckInterval)
 	defer ticker.Stop()

@@ -410,7 +410,7 @@ func (m *BillManager) GetRefundsByStatus(ctx context.Context, status int, limit 
 // AggregateBetBySession 按玩家聚合该游戏的扣款金额（amount < 0 的 Bill），返回 map[userID]abs(sum(amount))
 func (m *BillManager) AggregateBetBySession(ctx context.Context, sessionID int64) (map[int64]int64, error) {
 	type result struct {
-		UserID     int64
+		UserID      int64
 		TotalAmount int64
 	}
 	var results []result
@@ -453,7 +453,7 @@ func (m *BillManager) CreateBillsOnly(ctx context.Context, bills []*model.BillRe
 // AggregatePayOutBySession 按玩家聚合该游戏的入账金额（amount > 0 的 Bill），返回 map[userID]sum(amount)
 func (m *BillManager) AggregatePayOutBySession(ctx context.Context, sessionID int64) (map[int64]int64, error) {
 	type result struct {
-		UserID     int64
+		UserID      int64
 		TotalAmount int64
 	}
 	var results []result

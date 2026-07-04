@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/kafka"
@@ -41,10 +42,11 @@ type Container struct {
 	GameStore           *store.MemoryGameStore
 	GameHandler         *handler.GameHandler
 	Server              *server.Server
+	TaskRunner          *async.TaskRunner
 	nodeID              string
 }
 
-func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, kafkaProducer *kafka.Producer, nodeID string) *Container {
+func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, kafkaProducer *kafka.Producer, nodeID string, taskRunner *async.TaskRunner) *Container {
 	connMgr := connection.NewManager(&connection.ManagerConfig{
 		MaxConnections:       cfg.Gateway.MaxConnections,
 		DisconnectTimeout:    30 * time.Second,
@@ -57,6 +59,7 @@ func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, kafkaProducer
 		Redis:         redis,
 		KafkaProducer: kafkaProducer,
 		ConnMgr:       connMgr,
+		TaskRunner:    taskRunner,
 		nodeID:        nodeID,
 	}
 }

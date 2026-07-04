@@ -7,6 +7,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/cashparty/backend/common/currency"
@@ -23,7 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type BroadcastFunc func(roomID string, cmd string, payload interface{}, excludeUserID string)
+type BroadcastFunc func(ctx context.Context, roomID string, cmd string, payload interface{}, excludeUserID string) error
 
 type GenericServiceServer struct {
 	commonPb.UnimplementedGenericServiceServer
@@ -670,6 +671,7 @@ func (s *GenericServiceServer) successResponse(req *commonPb.ForwardRequest, dat
 type GRPCServer struct {
 	server *grpc.Server
 	port   int
+	wg     sync.WaitGroup
 }
 
 func NewGRPCServer(
@@ -732,7 +734,15 @@ func (s *GRPCServer) Start() error {
 	// ready channel 用于捕获 Serve 启动后立即失败（如 lis 被关闭、端口异常）
 	// 100ms 内若无错误返回则视为启动成功
 	ready := make(chan error, 1)
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("grpc serve panic",
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
 		err := s.server.Serve(lis)
 		if err != nil && err != grpc.ErrServerStopped {
 			ready <- err
@@ -766,6 +776,15 @@ func (s *GRPCServer) Stop() {
 	case <-time.After(30 * time.Second):
 		logger.Warn("gRPC server graceful stop timeout, forcing stop")
 		s.server.Stop() // 强制关闭，立即中断所有连接
+	}
+
+	// v3 新增：等待 Serve goroutine 退出
+	waitDone := make(chan struct{})
+	go func() { s.wg.Wait(); close(waitDone) }()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		logger.Warn("grpc server goroutine wait timeout")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,7 +120,7 @@ func (m *Manager) registerInRedis(conn *Connection) (needKick bool, oldConnID, o
 	}
 
 	key := gateway.GatewayConnKey(conn.UserID)
-	result, err := m.redis.Eval(context.Background(), LuaRegisterConnection,
+	result, err := m.redis.Eval(m.ctx, LuaRegisterConnection,
 		[]string{key},
 		conn.ConnID, m.nodeID, conn.Platform, conn.DeviceID, time.Now().Unix()).Slice()
 	if err != nil {
@@ -178,11 +179,17 @@ func (m *Manager) publishKickNotification(userID, oldConnID, oldNodeID string) {
 		Reason: message.ReasonLoginElsewhere,
 	}
 	data, _ := json.Marshal(kickMsg)
-	m.redis.Publish(context.Background(), channel, string(data))
+	m.redis.Publish(m.ctx, channel, string(data))
 }
 
 func (m *Manager) subscribeKickChannel() {
 	defer m.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("subscribe kick channel panic",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 
 	if m.redis == nil {
 		return
@@ -239,7 +246,7 @@ func (m *Manager) deleteConnectionMapping(userID string) {
 		return
 	}
 	key := gateway.GatewayConnKey(userID)
-	m.redis.Del(context.Background(), key)
+	m.redis.Del(m.ctx, key)
 }
 
 func (m *Manager) GetPlayerRoom(userID string) string {
@@ -247,7 +254,7 @@ func (m *Manager) GetPlayerRoom(userID string) string {
 		return ""
 	}
 	key := gateway.PlayerRoomKey(userID)
-	roomID, _ := m.redis.Get(context.Background(), key).Result()
+	roomID, _ := m.redis.Get(m.ctx, key).Result()
 	return roomID
 }
 
@@ -256,7 +263,7 @@ func (m *Manager) RenewConnectionTTL(userID string) {
 		return
 	}
 	key := gateway.GatewayConnKey(userID)
-	m.redis.Expire(context.Background(), key, m.config.ConnRedisTTL)
+	m.redis.Expire(m.ctx, key, m.config.ConnRedisTTL)
 }
 
 func (m *Manager) Unregister(connID string) {

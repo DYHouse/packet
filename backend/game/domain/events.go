@@ -27,11 +27,11 @@ const (
 )
 
 type RoomEvent struct {
-	EventID   string        `json:"event_id"`
-	EventType RoomEventType `json:"event_type"`
-	RoomID    string        `json:"room_id"`
-	UserID    string        `json:"user_id,omitempty"`
-	Payload   interface{}   `json:"payload,omitempty"`
+	EventID    string        `json:"event_id"`
+	EventType  RoomEventType `json:"event_type"`
+	RoomID     string        `json:"room_id"`
+	UserID     string        `json:"user_id,omitempty"`
+	Payload    interface{}   `json:"payload,omitempty"`
 	OccurredAt time.Time     `json:"occurred_at"`
 }
 
@@ -71,7 +71,7 @@ type PlayerReconnectPayload struct {
 }
 
 type QueueJoinPayload struct {
-	QueuePosition int `json:"queue_position"`
+	QueuePosition int    `json:"queue_position"`
 	Nickname      string `json:"nickname,omitempty"`
 	Avatar        string `json:"avatar,omitempty"`
 }
@@ -142,26 +142,26 @@ type PacketData struct {
 }
 
 type RoundSettleData struct {
-	RoundNo           int            `json:"round_no"`
-	SenderID          string         `json:"sender_id"`
-	SenderType        string         `json:"sender_type"`
-	TotalAmount       int64          `json:"total_amount"`
-	Commission        int64          `json:"commission"`
-	RoomFeePerPlayer  int64          `json:"room_fee_per_player"`
-	PacketCount       int            `json:"packet_count"`
-	Results           []*RoundResult `json:"results"`
-	MinPlayerID       string         `json:"min_player_id"`
-	IsGameEnd         bool           `json:"is_game_end"`
-	RewardType        int            `json:"reward_type"`
-	RewardAmount      int64          `json:"reward_amount"`
-	TriggerType       int            `json:"trigger_type"`
+	RoundNo          int            `json:"round_no"`
+	SenderID         string         `json:"sender_id"`
+	SenderType       string         `json:"sender_type"`
+	TotalAmount      int64          `json:"total_amount"`
+	Commission       int64          `json:"commission"`
+	RoomFeePerPlayer int64          `json:"room_fee_per_player"`
+	PacketCount      int            `json:"packet_count"`
+	Results          []*RoundResult `json:"results"`
+	MinPlayerID      string         `json:"min_player_id"`
+	IsGameEnd        bool           `json:"is_game_end"`
+	RewardType       int            `json:"reward_type"`
+	RewardAmount     int64          `json:"reward_amount"`
+	TriggerType      int            `json:"trigger_type"`
 }
 
 type RoundResult struct {
-	UserID        string `json:"user_id"`
-	PacketID      string `json:"packet_id"`
-	Position      int    `json:"position"`
-	Amount        int64  `json:"amount"`
+	UserID         string `json:"user_id"`
+	PacketID       string `json:"packet_id"`
+	Position       int    `json:"position"`
+	Amount         int64  `json:"amount"`
 	IsAutoAssigned bool   `json:"is_auto_assigned"`
 }
 
@@ -281,7 +281,6 @@ func NewSpectatorKickEvent(roomID, userID string, seatNo int, reason string) *Ro
 		OccurredAt: time.Now(),
 	}
 }
-
 
 func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
 	return &RoomEvent{

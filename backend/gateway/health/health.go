@@ -25,18 +25,18 @@ func NewHealthChecker(redis *cRedis.Client, connMgr *connection.Manager) *Health
 }
 
 type HealthStatus struct {
-	Status           string                 `json:"status"`
-	Service          string                 `json:"service"`
-	Timestamp        int64                  `json:"timestamp"`
-	Connections      int64                  `json:"connections"`
-	MaxConnections   int                    `json:"max_connections"`
-	Dependencies     map[string]interface{} `json:"dependencies"`
-	SystemResources  map[string]interface{} `json:"system_resources"`
-	Uptime           int64                  `json:"uptime_seconds"`
+	Status          string                 `json:"status"`
+	Service         string                 `json:"service"`
+	Timestamp       int64                  `json:"timestamp"`
+	Connections     int64                  `json:"connections"`
+	MaxConnections  int                    `json:"max_connections"`
+	Dependencies    map[string]interface{} `json:"dependencies"`
+	SystemResources map[string]interface{} `json:"system_resources"`
+	Uptime          int64                  `json:"uptime_seconds"`
 }
 
 func (h *HealthChecker) CheckHealth(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
 
 	status := &HealthStatus{
@@ -83,17 +83,17 @@ func (h *HealthChecker) getSystemResources() map[string]interface{} {
 	runtime.ReadMemStats(&m)
 
 	return map[string]interface{}{
-		"goroutines":   runtime.NumGoroutine(),
-		"cpu_cores":    runtime.NumCPU(),
-		"memory_mb":    m.Alloc / 1024 / 1024,
-		"heap_mb":      m.HeapAlloc / 1024 / 1024,
-		"stack_mb":     m.StackInuse / 1024 / 1024,
-		"gc_pause_ns":  m.PauseTotalNs,
+		"goroutines":  runtime.NumGoroutine(),
+		"cpu_cores":   runtime.NumCPU(),
+		"memory_mb":   m.Alloc / 1024 / 1024,
+		"heap_mb":     m.HeapAlloc / 1024 / 1024,
+		"stack_mb":    m.StackInuse / 1024 / 1024,
+		"gc_pause_ns": m.PauseTotalNs,
 	}
 }
 
 func (h *HealthChecker) CheckReady(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
 
 	err := h.redis.Raw().Ping(ctx).Err()

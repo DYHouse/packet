@@ -16,7 +16,7 @@ type GameSettleRetryScheduler struct {
 	gameSettleSvc *service.GameSettleService
 }
 
-func NewGameSettleRetryScheduler(billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client) *GameSettleRetryScheduler {
+func NewGameSettleRetryScheduler(ctx context.Context, billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client) *GameSettleRetryScheduler {
 	config := SchedulerConfig{
 		Name:         "game_settle_retry",
 		Interval:     30 * time.Second,
@@ -26,7 +26,7 @@ func NewGameSettleRetryScheduler(billMgr *service.BillManager, gameSettleSvc *se
 	}
 
 	return &GameSettleRetryScheduler{
-		base:          NewBaseScheduler(config, nil, redis),
+		base:          NewBaseScheduler(ctx, config, nil, redis),
 		billMgr:       billMgr,
 		gameSettleSvc: gameSettleSvc,
 	}

@@ -65,7 +65,7 @@ func (r *MessageRouter) RemoveRoute(cmd string) {
 	delete(r.routes, cmd)
 }
 
-func (r *MessageRouter) Route(conn *connection.Connection, rawMessage []byte) {
+func (r *MessageRouter) Route(ctx context.Context, conn *connection.Connection, rawMessage []byte) {
 	var req message.Request
 	if err := json.Unmarshal(rawMessage, &req); err != nil {
 		if conn != nil {
@@ -116,7 +116,7 @@ func (r *MessageRouter) Route(conn *connection.Connection, rawMessage []byte) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	resp := r.forwardToService(ctx, serviceName, conn, &req)

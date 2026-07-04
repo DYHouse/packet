@@ -13,7 +13,7 @@ type SettlementCheckScheduler struct {
 	settlementCheck *service.SettlementCheckService
 }
 
-func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService, redis *cRedis.Client) *SettlementCheckScheduler {
+func NewSettlementCheckScheduler(ctx context.Context, settlementCheck *service.SettlementCheckService, redis *cRedis.Client) *SettlementCheckScheduler {
 	config := SchedulerConfig{
 		Name:         "settlement_check",
 		Interval:     5 * time.Minute,
@@ -23,7 +23,7 @@ func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService
 	}
 
 	return &SettlementCheckScheduler{
-		base:            NewBaseScheduler(config, nil, redis),
+		base:            NewBaseScheduler(ctx, config, nil, redis),
 		settlementCheck: settlementCheck,
 	}
 }

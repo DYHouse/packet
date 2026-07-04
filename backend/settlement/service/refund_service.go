@@ -110,7 +110,7 @@ func (s *RefundService) applyForRefundLocked(ctx context.Context, req *dto.Refun
 		if err := tx.Model(&model.BillRecord{}).
 			Where("id = ?", bill.ID).
 			Updates(map[string]interface{}{
-				"refund_status":    dto.RefundStatusPending,
+				"refund_status":   dto.RefundStatusPending,
 				"refund_order_no": refundOrderNo,
 			}).Error; err != nil {
 			return err

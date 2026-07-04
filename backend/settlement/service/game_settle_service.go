@@ -16,14 +16,14 @@ import (
 )
 
 type GameSettleService struct {
-	platform      platform.Client
-	billMgr       *BillManager
-	redis         *cRedis.Client
-	traceIDGen    *TraceIDGenerator
-	cfg           *config.PlatformConfig
-	userIDConvert *UserIDConvertService
-	callMgr       *PlatformCallManager
-	robotChecker  RobotChecker
+	platform       platform.Client
+	billMgr        *BillManager
+	redis          *cRedis.Client
+	traceIDGen     *TraceIDGenerator
+	cfg            *config.PlatformConfig
+	userIDConvert  *UserIDConvertService
+	callMgr        *PlatformCallManager
+	robotChecker   RobotChecker
 	virtualBalance *VirtualBalanceService
 }
 

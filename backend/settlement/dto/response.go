@@ -28,27 +28,27 @@ type BillQueryResult struct {
 }
 
 type BillInfo struct {
-	ID              int64  `json:"id"`
-	RoundTraceID    string `json:"round_trace_id"`
-	BizOrderNo      string `json:"biz_order_no"`
-	BillType        int    `json:"bill_type"`
-	DeductScene     int    `json:"deduct_scene"`
-	RoomID          int64  `json:"room_id"`
-	SessionID       int64  `json:"session_id"`
-	RoundID         int64  `json:"round_id"`
-	RoundNo         int    `json:"round_no"`
-	UserID          int64  `json:"user_id"`
-	Amount          int64  `json:"amount"`
-	BalanceBefore   int64  `json:"balance_before"`
-	BalanceAfter    int64  `json:"balance_after"`
-	Status          int    `json:"status"`
-	RefundStatus    int    `json:"refund_status"`
-	RefundAmount    int64  `json:"refund_amount"`
-	RefundOrderNo   string `json:"refund_order_no"`
-	ErrorMessage    string `json:"error_message"`
-	Remark          string `json:"remark"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID            int64  `json:"id"`
+	RoundTraceID  string `json:"round_trace_id"`
+	BizOrderNo    string `json:"biz_order_no"`
+	BillType      int    `json:"bill_type"`
+	DeductScene   int    `json:"deduct_scene"`
+	RoomID        int64  `json:"room_id"`
+	SessionID     int64  `json:"session_id"`
+	RoundID       int64  `json:"round_id"`
+	RoundNo       int    `json:"round_no"`
+	UserID        int64  `json:"user_id"`
+	Amount        int64  `json:"amount"`
+	BalanceBefore int64  `json:"balance_before"`
+	BalanceAfter  int64  `json:"balance_after"`
+	Status        int    `json:"status"`
+	RefundStatus  int    `json:"refund_status"`
+	RefundAmount  int64  `json:"refund_amount"`
+	RefundOrderNo string `json:"refund_order_no"`
+	ErrorMessage  string `json:"error_message"`
+	Remark        string `json:"remark"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 type RoundSettlementInfo struct {
@@ -115,11 +115,11 @@ type BatchBalanceCheckResult struct {
 }
 
 type GameSettleInfo struct {
-	SessionID    int64  `json:"session_id"`
-	RoomID       int64  `json:"room_id"`
-	TotalRounds  int    `json:"total_rounds"`
-	SettleStatus int    `json:"settle_status"`
-	SettledAt    string `json:"settled_at"`
+	SessionID    int64                   `json:"session_id"`
+	RoomID       int64                   `json:"room_id"`
+	TotalRounds  int                     `json:"total_rounds"`
+	SettleStatus int                     `json:"settle_status"`
+	SettledAt    string                  `json:"settled_at"`
 	Players      []*GamePlayerSettleInfo `json:"players"`
 }
 

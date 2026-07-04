@@ -16,7 +16,7 @@ type RefundProcessScheduler struct {
 	billMgr   *service.BillManager
 }
 
-func NewRefundProcessScheduler(refundSvc *service.RefundService, billMgr *service.BillManager, redis *cRedis.Client) *RefundProcessScheduler {
+func NewRefundProcessScheduler(ctx context.Context, refundSvc *service.RefundService, billMgr *service.BillManager, redis *cRedis.Client) *RefundProcessScheduler {
 	config := SchedulerConfig{
 		Name:         "refund_process",
 		Interval:     time.Minute,
@@ -26,7 +26,7 @@ func NewRefundProcessScheduler(refundSvc *service.RefundService, billMgr *servic
 	}
 
 	return &RefundProcessScheduler{
-		base:      NewBaseScheduler(config, nil, redis),
+		base:      NewBaseScheduler(ctx, config, nil, redis),
 		refundSvc: refundSvc,
 		billMgr:   billMgr,
 	}

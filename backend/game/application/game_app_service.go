@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime/debug"
 	"sort"
 	"time"
 
+	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/currency"
@@ -47,6 +47,7 @@ type GameAppService struct {
 	timeoutCfg        *config.TimeoutConfig
 	gameEndCallback   GameEndCallback
 	roomAppService    *RoomAppService
+	taskRunner        *async.TaskRunner
 }
 
 // SetRoomAppService 注入 RoomAppService（用于踢人后触发自动替补）
@@ -82,6 +83,7 @@ func NewGameAppService(
 	rewardSettler *settlementService.RewardSettler,
 	redis *cRedis.Client,
 	timeoutCfg *config.TimeoutConfig,
+	taskRunner *async.TaskRunner,
 ) *GameAppService {
 	return &GameAppService{
 		repo:              repo,
@@ -101,6 +103,7 @@ func NewGameAppService(
 		redis:             redis,
 		commissionCfg:     domain.DefaultCommissionConfig(),
 		timeoutCfg:        timeoutCfg,
+		taskRunner:        taskRunner,
 	}
 }
 
@@ -264,19 +267,23 @@ func (s *GameAppService) SendPacket(ctx context.Context, req *SendPacketRequest)
 		return nil, message.NewError(message.CodeOperationInProgress)
 	}
 
-	go s.postSendPacketAsync(context.Background(), &postSendPacketParams{
-		RoomID:       req.RoomID,
-		RoundID:      result.RoundID,
-		PacketIDs:    result.PacketIDs,
-		UserID:       req.UserID,
-		Nickname:     result.Nickname,
-		Amount:       result.Amount,
-		Commission:   result.Commission,
-		ActualAmount: result.ActualAmount,
-		NextRound:    result.NextRound,
-		PacketCount:  result.PacketCount,
-		SenderType:   result.SenderType,
-	})
+	if err := s.taskRunner.Submit("post_send_packet", 10*time.Second, func(ctx context.Context) {
+		s.postSendPacketAsync(ctx, &postSendPacketParams{
+			RoomID:       req.RoomID,
+			RoundID:      result.RoundID,
+			PacketIDs:    result.PacketIDs,
+			UserID:       req.UserID,
+			Nickname:     result.Nickname,
+			Amount:       result.Amount,
+			Commission:   result.Commission,
+			ActualAmount: result.ActualAmount,
+			NextRound:    result.NextRound,
+			PacketCount:  result.PacketCount,
+			SenderType:   result.SenderType,
+		})
+	}); err != nil {
+		logger.Warn("submit post_send_packet task failed", "error", err)
+	}
 
 	return &SendPacketResult{
 		PacketCount: result.PacketCount,
@@ -316,7 +323,7 @@ func (s *GameAppService) postSendPacketAsync(ctx context.Context, params *postSe
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(params.RoomID, message.PushRoundStart, &message.RoundStartPush{
+		s.broadcaster.Broadcast(ctx, params.RoomID, message.PushRoundStart, &message.RoundStartPush{
 			RoomID:         params.RoomID,
 			RoundID:        params.RoundID,
 			CurrentRound:   int32(params.NextRound),
@@ -381,7 +388,7 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(req.RoomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
 			RoomID:   req.RoomID,
 			RoundID:  roundID,
 			PacketID: result.PacketID,
@@ -397,7 +404,11 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 		if s.scheduler != nil {
 			s.scheduler.ClearTimeout(ctx, scheduler.TimeoutTypeGrab, req.RoomID, roundID)
 		}
-		go s.settleRound(context.Background(), req.RoomID, roundID)
+		if err := s.taskRunner.Submit("settle_round", 15*time.Second, func(ctx context.Context) {
+			s.settleRound(ctx, req.RoomID, roundID)
+		}); err != nil {
+			logger.Warn("submit settle_round task failed", "error", err)
+		}
 	}
 
 	logger.Info("packet grabbed",
@@ -426,7 +437,7 @@ func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, us
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(roomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
 			RoomID:   roomID,
 			RoundID:  roundID,
 			PacketID: result.PacketID,
@@ -442,7 +453,11 @@ func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, us
 		if s.scheduler != nil {
 			s.scheduler.ClearTimeout(ctx, scheduler.TimeoutTypeGrab, roomID, roundID)
 		}
-		go s.settleRound(context.Background(), roomID, roundID)
+		if err := s.taskRunner.Submit("settle_round_robot", 15*time.Second, func(ctx context.Context) {
+			s.settleRound(ctx, roomID, roundID)
+		}); err != nil {
+			logger.Warn("submit settle_round_robot task failed", "error", err)
+		}
 	}
 }
 
@@ -459,7 +474,7 @@ func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta 
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(roomID, message.PushGameStart, &message.GameStartPush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushGameStart, &message.GameStartPush{
 			RoomID:       roomID,
 			CurrentRound: 1,
 			MaxRounds:    int32(meta.MaxRounds),
@@ -468,7 +483,7 @@ func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta 
 
 	stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
 	if stateData != nil && s.broadcaster != nil {
-		s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
+		s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
 	}
 
 	if s.eventPublisher != nil && stateData != nil {
@@ -496,11 +511,13 @@ func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta 
 				Players:    players,
 			},
 		}
-		go func() {
-			if err := s.eventPublisher.PublishSessionStart(context.Background(), event); err != nil {
+		if err := s.taskRunner.Submit("publish_session_start", 5*time.Second, func(ctx context.Context) {
+			if err := s.eventPublisher.PublishSessionStart(ctx, event); err != nil {
 				logger.Error("publish session start event failed", "error", err)
 			}
-		}()
+		}); err != nil {
+			logger.Warn("submit publish_session_start task failed", "error", err)
+		}
 	}
 
 	logger.Info("game started",
@@ -569,7 +586,7 @@ func (s *GameAppService) OnGrabTimeout(ctx context.Context, roomID string, round
 				Position: r.Position,
 			}
 		}
-		s.broadcaster.Broadcast(roomID, message.PushAutoDistribute, &message.AutoDistributePush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushAutoDistribute, &message.AutoDistributePush{
 			RoomID:           roomID,
 			RoundID:          roundID,
 			DistributedCount: int32(count),
@@ -635,7 +652,7 @@ func (s *GameAppService) OnSendTimeout(ctx context.Context, roomID string, userI
 		}
 
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(roomID, message.PushPenalty, &message.PenaltyPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushPenalty, &message.PenaltyPush{
 				RoomID:        roomID,
 				UserID:        userID,
 				PenaltyType:   message.ReasonPenaltySendTimeout,
@@ -740,7 +757,7 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 		}
 
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
 				RoomID:       roomID,
 				Reason:       message.ReasonReplacementTimeout,
 				PenaltyShare: currency.NewMoneyFromFen(dist.ShareAmount),
@@ -811,24 +828,28 @@ func (s *GameAppService) startFirstRound(ctx context.Context, roomID string, met
 		logger.Error("update round status to sending failed", "round_id", initResult.RoundID, "error", err)
 	}
 
-	go s.postSendPacketAsync(context.Background(), &postSendPacketParams{
-		RoomID:       roomID,
-		RoundID:      result.RoundID,
-		PacketIDs:    result.PacketIDs,
-		UserID:       "0",
-		Nickname:     "system",
-		Amount:       result.Amount,
-		Commission:   result.Commission,
-		ActualAmount: result.ActualAmount,
-		NextRound:    1,
-		PacketCount:  result.PacketCount,
-		SenderType:   domain.SenderTypeSystem,
-	})
+	if err := s.taskRunner.Submit("post_send_packet_first_round", 10*time.Second, func(ctx context.Context) {
+		s.postSendPacketAsync(ctx, &postSendPacketParams{
+			RoomID:       roomID,
+			RoundID:      result.RoundID,
+			PacketIDs:    result.PacketIDs,
+			UserID:       "0",
+			Nickname:     "system",
+			Amount:       result.Amount,
+			Commission:   result.Commission,
+			ActualAmount: result.ActualAmount,
+			NextRound:    1,
+			PacketCount:  result.PacketCount,
+			SenderType:   domain.SenderTypeSystem,
+		})
+	}); err != nil {
+		logger.Warn("submit post_send_packet_first_round task failed", "error", err)
+	}
 }
 
 func (s *GameAppService) handleDeductFailure(ctx context.Context, roomID string, meta *domain.RoomMeta, reason string, err error) {
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
 			RoomID: roomID,
 			Reason: reason,
 		}, "")
@@ -843,15 +864,8 @@ func (s *GameAppService) handleDeductFailure(ctx context.Context, roomID string,
 		actualRounds = int(meta.CurrentRound)
 	}
 
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("endGameWithOptions panic (deduct failure)",
-					"room_id", roomID, "reason", reason,
-					"panic", r, "stack", string(debug.Stack()))
-			}
-		}()
-		if err := s.endGameWithOptions(context.Background(), roomID, &EndGameOptions{
+	if err := s.taskRunner.Submit("end_game_on_deduct_failure", 15*time.Second, func(ctx context.Context) {
+		if err := s.endGameWithOptions(ctx, roomID, &EndGameOptions{
 			AllowedStatus: int(domain.RoomStatusPlaying),
 			EndReason:     reason,
 			SessionID:     sessionID,
@@ -863,7 +877,9 @@ func (s *GameAppService) handleDeductFailure(ctx context.Context, roomID string,
 				"reason", reason,
 				"error", err)
 		}
-	}()
+	}); err != nil {
+		logger.Warn("submit end_game_on_deduct_failure task failed", "error", err)
+	}
 }
 
 func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string) {
@@ -971,7 +987,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 		logger.Info("reward from redis", "rewardType", rewardType, "rewardAmount", rewardAmount)
 
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(roomID, message.PushRoundEnd, &message.RoundEndPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushRoundEnd, &message.RoundEndPush{
 				RoomID:          roomID,
 				RoundID:         roundID,
 				CurrentRound:    int32(roundNo),
@@ -1032,11 +1048,13 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 					TriggerType:      0,
 				},
 			}
-			go func() {
-				if err := s.eventPublisher.PublishRoundSettle(context.Background(), event); err != nil {
+			if err := s.taskRunner.Submit("publish_round_settle", 5*time.Second, func(ctx context.Context) {
+				if err := s.eventPublisher.PublishRoundSettle(ctx, event); err != nil {
 					logger.Error("publish round settle event failed", "error", err)
 				}
-			}()
+			}); err != nil {
+				logger.Warn("submit publish_round_settle task failed", "error", err)
+			}
 		}
 
 		if isGameEnd {
@@ -1058,15 +1076,8 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 				sessionID = meta.CurrentSessionID
 			}
 
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						logger.Error("endGameWithOptions panic (normal end)",
-							"room_id", roomID,
-							"panic", r, "stack", string(debug.Stack()))
-					}
-				}()
-				if err := s.endGameWithOptions(context.Background(), roomID, &EndGameOptions{
+			if err := s.taskRunner.Submit("end_game_on_settle", 15*time.Second, func(ctx context.Context) {
+				if err := s.endGameWithOptions(ctx, roomID, &EndGameOptions{
 					AllowedStatus: int(domain.RoomStatusPlaying),
 					EndReason:     message.ReasonNormalEnd,
 					SessionID:     sessionID,
@@ -1078,7 +1089,9 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 						"session_id", sessionID,
 						"error", err)
 				}
-			}()
+			}); err != nil {
+				logger.Warn("submit end_game_on_settle task failed", "error", err)
+			}
 		} else {
 			if s.scheduler != nil {
 				var sendDuration time.Duration
@@ -1180,7 +1193,7 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 	if s.broadcaster != nil {
 		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
 		if stateData != nil {
-			s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
+			s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), "")
 		}
 	}
 
@@ -1197,11 +1210,13 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 				FinalResults: opts.FinalResults,
 			},
 		}
-		go func() {
-			if err := s.eventPublisher.PublishSessionEnd(context.Background(), sessionEndEvent); err != nil {
+		if err := s.taskRunner.Submit("publish_session_end", 5*time.Second, func(ctx context.Context) {
+			if err := s.eventPublisher.PublishSessionEnd(ctx, sessionEndEvent); err != nil {
 				logger.Error("publish session end event failed", "room_id", roomID, "error", err)
 			}
-		}()
+		}); err != nil {
+			logger.Warn("submit publish_session_end task failed", "error", err)
+		}
 	}
 
 	logger.Info("game ended", "room_id", roomID, "player_count", len(results), "reason", opts.EndReason)
@@ -1209,7 +1224,11 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 	// Notify the robot scheduler so it can schedule delayed robot leaves.
 	// The callback runs in a goroutine to avoid blocking game end processing.
 	if s.gameEndCallback != nil {
-		go s.gameEndCallback(context.Background(), roomID)
+		if err := s.taskRunner.Submit("game_end_callback", 10*time.Second, func(ctx context.Context) {
+			s.gameEndCallback(ctx, roomID)
+		}); err != nil {
+			logger.Warn("submit game_end_callback task failed", "error", err)
+		}
 	}
 
 	return nil
@@ -1237,7 +1256,7 @@ func (s *GameAppService) handleKickAndReplace(ctx context.Context, roomID, userI
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.BroadcastToUser(userID, message.PushKicked, &message.KickedPush{
+		s.broadcaster.BroadcastToUser(ctx, userID, message.PushKicked, &message.KickedPush{
 			RoomID:  roomID,
 			UserID:  userID,
 			Reason:  message.ReasonPenaltyKick,
@@ -1257,10 +1276,10 @@ func (s *GameAppService) handleKickAndReplace(ctx context.Context, roomID, userI
 		if s.broadcaster != nil {
 			stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
 			if stateData != nil {
-				s.broadcaster.Broadcast(roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
+				s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
 			}
 
-			s.broadcaster.Broadcast(roomID, message.PushWaitReplacement, &message.WaitReplacementPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushWaitReplacement, &message.WaitReplacementPush{
 				RoomID:     roomID,
 				VacantSeat: int32(result.SeatNo),
 				LeftUserID: userID,
@@ -1318,19 +1337,23 @@ func (s *GameAppService) executeSystemSendPacket(ctx context.Context, params *sy
 
 	result.Nickname = params.Nickname
 
-	go s.postSendPacketAsync(context.Background(), &postSendPacketParams{
-		RoomID:       params.RoomID,
-		RoundID:      result.RoundID,
-		PacketIDs:    result.PacketIDs,
-		UserID:       "0",
-		Nickname:     params.Nickname,
-		Amount:       result.Amount,
-		Commission:   result.Commission,
-		ActualAmount: result.ActualAmount,
-		NextRound:    params.RoundNo,
-		PacketCount:  result.PacketCount,
-		SenderType:   params.SenderType,
-	})
+	if err := s.taskRunner.Submit("post_send_packet_system", 10*time.Second, func(ctx context.Context) {
+		s.postSendPacketAsync(ctx, &postSendPacketParams{
+			RoomID:       params.RoomID,
+			RoundID:      result.RoundID,
+			PacketIDs:    result.PacketIDs,
+			UserID:       "0",
+			Nickname:     params.Nickname,
+			Amount:       result.Amount,
+			Commission:   result.Commission,
+			ActualAmount: result.ActualAmount,
+			NextRound:    params.RoundNo,
+			PacketCount:  result.PacketCount,
+			SenderType:   params.SenderType,
+		})
+	}); err != nil {
+		logger.Warn("submit post_send_packet_system task failed", "error", err)
+	}
 }
 
 func (s *GameAppService) forceSendPacketForPlayer(ctx context.Context, roomID, userID string, penaltyAmount int64) {
@@ -1376,7 +1399,7 @@ func (s *GameAppService) ResumeGame(ctx context.Context, req *ResumeGameRequest)
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(req.RoomID, message.PushGameResumed, &message.GameResumedPush{
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushGameResumed, &message.GameResumedPush{
 			RoomID:       req.RoomID,
 			CurrentRound: int32(req.CurrentRound),
 			NextSenderID: "0",
@@ -1386,7 +1409,7 @@ func (s *GameAppService) ResumeGame(ctx context.Context, req *ResumeGameRequest)
 
 	stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 	if stateData != nil && s.broadcaster != nil {
-		s.broadcaster.Broadcast(req.RoomID, message.PushRoomState, BuildFullRoomState(stateData), "")
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushRoomState, BuildFullRoomState(stateData), "")
 	}
 
 	meta, _ := s.repo.GetRoomMeta(ctx, req.RoomID)
@@ -1477,11 +1500,13 @@ func (s *GameAppService) publishPacketCreatedEvent(ctx context.Context, roomID, 
 		},
 	}
 
-	go func() {
-		if err := s.eventPublisher.PublishPacketCreated(context.Background(), event); err != nil {
+	if err := s.taskRunner.Submit("publish_packet_created", 5*time.Second, func(ctx context.Context) {
+		if err := s.eventPublisher.PublishPacketCreated(ctx, event); err != nil {
 			logger.Error("publish packet created event failed", "error", err)
 		}
-	}()
+	}); err != nil {
+		logger.Warn("submit publish_packet_created task failed", "error", err)
+	}
 }
 
 type initRoundResult struct {
