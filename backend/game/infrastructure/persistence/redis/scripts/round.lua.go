@@ -1,10 +1,22 @@
 package scripts
 
+// 本文件中的 Lua 脚本通过字符串拼接构造 Redis key，对应的 Go 侧常量定义在
+// common/rediskeys/keys.go。新增/修改 Lua key 时 MUST 同步更新 Go 常量，避免出现孤儿 key。
+//
+// Lua 拼接的 key 与 Go 常量映射：
+//   - keyPrefix .. ':packet:info:' .. packetIDStr → rediskeys.KeyPacketInfoPrefix + packetID
+//                                                  （工厂函数 rediskeys.PacketInfoKey(packetID)）
+//   - keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID → rediskeys.KeyRoundGrabbed
+//                                                  （工厂函数 rediskeys.RoundGrabbedKey(roundID, userID)）
+//
+// 注意：keyPrefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPrefix（"cashparty"）。
+
 // LuaEndGame 游戏结束脚本
 // KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey]
-// ARGV: [now]
-// 返回: {code, results}
+// ARGV: [now, allowedStatus, roomDataTTL]
+// 返回: {code, results, status}
 // results 格式: {userID, nickname}
+// 错误码: LuaErrRoomNotFound(1,状态不匹配), LuaErrIdempotent(2,已结算,历史复用), LuaErrSuccess(0)
 const luaEndGame = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -14,6 +26,7 @@ local seatOwnerKey = KEYS[5]
 
 local now = tonumber(ARGV[1])
 local allowedStatus = tonumber(ARGV[2]) or 2
+local roomDataTTL = tonumber(ARGV[3])
 
 -- 幂等性检查：检查房间状态
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
@@ -28,7 +41,7 @@ else
 end
 
 if not statusAllowed then
-	return {1, {}, status}
+	return {1, {}, status}  -- LuaErrRoomNotFound(状态不匹配)
 end
 
 -- 获取所有玩家ID
@@ -51,12 +64,12 @@ for _, playerID in ipairs(playerIDs) do
 	local playerData = redis.call('HGET', playersKey, playerID)
 	if playerData then
 		local player = cjson.decode(playerData)
-		
+
 		table.insert(results, {
 			playerID,
 			player.nickname or ''
 		})
-		
+
 		-- 转换为观众（保留座位号）
 		local spectator = {
 			user_id = player.user_id,
@@ -64,10 +77,10 @@ for _, playerID in ipairs(playerIDs) do
 			avatar = player.avatar,
 			seat_no = player.seat_no or 0
 		}
-		
+
 		redis.call('HSET', spectatorsKey, playerID, cjson.encode(spectator))
 		redis.call('HDEL', playersKey, playerID)
-		
+
 		-- 重新占用座位（保留座位）
 		if spectator.seat_no > 0 then
 			redis.call('SETBIT', seatsKey, spectator.seat_no, 1)
@@ -77,10 +90,10 @@ for _, playerID in ipairs(playerIDs) do
 end
 
 -- 设置座位过期时间
-redis.call('EXPIRE', seatsKey, 86400)
-redis.call('EXPIRE', seatOwnerKey, 86400)
+redis.call('EXPIRE', seatsKey, roomDataTTL)
+redis.call('EXPIRE', seatOwnerKey, roomDataTTL)
 
-return {0, results, status}
+return {0, results, status}  -- LuaErrSuccess
 `
 
 // LuaSettleRound 结算回合（优化版）
@@ -89,6 +102,7 @@ return {0, results, status}
 // 返回: {code, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount, finalResults}
 // results 格式: {userID, grabAmount, nickname, position, avatar, isAutoAssigned, packetID}
 // finalResults 格式: {userID, nickname, avatar, totalAmount, rank}
+// 错误码: LuaErrRoomNotFound(1,回合不存在), LuaErrIdempotent(2,已结算), LuaErrRoomFullTotal(3,阶段不允许)
 const luaSettleRound = `
 local roundStateKey = KEYS[1]
 local grabbersKey = KEYS[2]
@@ -104,23 +118,23 @@ local keyPrefix = ARGV[3]
 -- 幂等性检查：检查回合状态
 local phase = redis.call('HGET', roundStateKey, 'phase')
 if not phase then
-    return {1, 0, '', 0, '', 0, {}, 0, 0, {}}
+    return {1, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrRoomNotFound(回合不存在)
 end
 
 -- 如果已经结算，返回成功但不重复执行
 if phase == 'SETTLED' or phase == 'WAIT_SEND' or phase == 'GAME_END' then
     -- 返回已结算的标记，让调用方知道这是幂等性返回
-    return {2, 0, '', 0, '', 0, {}, 0, 0, {}}
+    return {2, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrIdempotent
 end
 
 -- 只允许在GRABBING或SETTLING阶段结算
 if phase ~= 'GRABBING' and phase ~= 'SETTLING' then
-    return {3, 0, '', 0, '', 0, {}, 0, 0, {}}
+    return {3, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrRoomFullTotal(阶段不允许)
 end
 
 local roundInfo = redis.call('HGETALL', roundStateKey)
 if not roundInfo or #roundInfo == 0 then
-    return {1, 0, '', 0, '', 0, {}, 0, 0, {}}
+    return {1, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrRoomNotFound(回合不存在)
 end
 
 local roundData = {}
@@ -170,21 +184,21 @@ for _, userID in ipairs(grabberIDs) do
         local player = cjson.decode(playerData)
         local nickname = player.nickname or ''
         local avatar = player.avatar or ''
-        
+
         local packetInfo = userPackets[userID] or {packet_id = 0, amount = 0, position = 0, auto_assigned = false}
         local packetID = packetInfo.packet_id
         local grabAmount = packetInfo.amount
         local position = packetInfo.position
         local isAutoAssigned = packetInfo.auto_assigned and 1 or 0
-        
+
         table.insert(results, {userID, grabAmount, nickname, position, avatar, isAutoAssigned, packetID})
-        
+
         if firstAmount < 0 then
             firstAmount = grabAmount
         elseif grabAmount ~= firstAmount then
             allSameAmount = false
         end
-        
+
         if minAmount < 0 or grabAmount < minAmount then
             minAmount = grabAmount
             minAmountPlayer = userID
@@ -202,7 +216,7 @@ if sessionPlayerTotalsKey and sessionPlayerTotalsKey ~= '' then
             redis.call('HSET', sessionPlayerTotalsKey, userID, currentTotal + grabAmount)
         end
     end
-    
+
     -- 如果有奖励，给所有玩家加奖励金额
     if rewardAmount > 0 then
         for _, userID in ipairs(grabberIDs) do
@@ -243,11 +257,11 @@ local finalResults = {}
 if isGameEnd == 1 and sessionPlayerTotalsKey and sessionPlayerTotalsKey ~= '' then
     local allTotals = redis.call('HGETALL', sessionPlayerTotalsKey)
     local totalsList = {}
-    
+
     for i = 1, #allTotals, 2 do
         local userID = allTotals[i]
         local total = tonumber(allTotals[i + 1]) or 0
-        
+
         -- 从 playersKey 获取昵称和头像
         local nickname = ''
         local avatar = ''
@@ -257,23 +271,23 @@ if isGameEnd == 1 and sessionPlayerTotalsKey and sessionPlayerTotalsKey ~= '' th
             nickname = player.nickname or ''
             avatar = player.avatar or ''
         end
-        
+
         table.insert(totalsList, {userID, nickname, avatar, total})
     end
-    
+
     -- 按金额降序排序
     table.sort(totalsList, function(a, b)
         return a[4] > b[4]
     end)
-    
+
     -- 添加排名
     for i, t in ipairs(totalsList) do
         table.insert(finalResults, {t[1], t[2], t[3], t[4], i})
     end
-    
+
     -- 清理累计金额数据
     redis.call('DEL', sessionPlayerTotalsKey)
 end
 
-return {0, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount, finalResults}
+return {0, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount, finalResults}  -- LuaErrSuccess
 `

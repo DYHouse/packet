@@ -87,8 +87,13 @@ const (
 	KeyRoundReward = KeyPrefix + ":round:reward:%s"
 	// KeyUserGrabbed 用户抢过红包标记。
 	KeyUserGrabbed = KeyPrefix + ":round:grabbed:%s:%s"
+	// KeyRoundGrabbed 玩家本轮已抢标记(Lua 脚本使用)
+	// 对应 Lua 中的 keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID
+	KeyRoundGrabbed = KeyPrefix + ":round:grabbed:%s:%s"
 	// KeyPacketInfo 红包详情。
 	KeyPacketInfo = KeyPrefix + ":packet:info:%s"
+	// KeyPacketInfoPrefix 红包信息 key 前缀(Lua 脚本循环内动态拼接使用)
+	KeyPacketInfoPrefix = KeyPrefix + ":packet:info:"
 	// KeyGrabRecord 抢红包记录。
 	KeyGrabRecord = KeyPrefix + ":grab:record:%s"
 	// KeyRoundGrabRecord 轮次抢红包记录。
@@ -392,6 +397,11 @@ func RoundRewardKey(roundID string) string {
 // UserGrabbedKey 用户抢过红包标记 key
 func UserGrabbedKey(roundID, userID string) string {
 	return fmt.Sprintf(KeyUserGrabbed, roundID, userID)
+}
+
+// RoundGrabbedKey 生成玩家本轮已抢标记 key
+func RoundGrabbedKey(roundID, userID string) string {
+	return fmt.Sprintf(KeyRoundGrabbed, roundID, userID)
 }
 
 // PacketInfoKey 红包详情 key

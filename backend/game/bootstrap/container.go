@@ -31,6 +31,7 @@ type Container struct {
 	AvatarCfg              *config.AvatarConfig
 	SettlementSchedulerCfg *config.SettlementSchedulerConfig
 	LockCfg                *config.LockConfig
+	RedisTTL               *config.RedisTTLConfig
 	DB                     *gorm.DB
 	Redis                  *cRedis.Client
 	KafkaProducer          *kafka.Producer
@@ -117,6 +118,7 @@ func NewContainer(
 	settlementVirtualBalance *settlementService.VirtualBalanceService,
 	taskRunner *async.TaskRunner,
 	settlementSchedulerCfg *config.SettlementSchedulerConfig,
+	redisTTL *config.RedisTTLConfig,
 ) *Container {
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	broadcaster := broadcast.NewGameBroadcaster(broadcastCfg, kafkaProducer, redis)
@@ -135,8 +137,8 @@ func NewContainer(
 	registry := csched.NewRegistry()
 	registry.Register(timeoutScheduler)
 
-	grabService := application.NewGrabService(redis, timeoutCfg.Grab, timeoutCfg.Send)
-	penaltyService := application.NewPenaltyService(redis, nil, settlementSvc)
+	grabService := application.NewGrabService(redis, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
+	penaltyService := application.NewPenaltyService(redis, nil, settlementSvc, *redisTTL)
 
 	return &Container{
 		PlatformCfg:            platformCfg,
@@ -144,6 +146,7 @@ func NewContainer(
 		AvatarCfg:              avatarCfg,
 		SettlementSchedulerCfg: settlementSchedulerCfg,
 		RobotCfg:               robotCfg,
+		RedisTTL:               redisTTL,
 		DB:                     db,
 		Redis:                  redis,
 		KafkaProducer:          kafkaProducer,
@@ -215,6 +218,7 @@ func (c *Container) InitAppServices() {
 		c.Redis,
 		c.TimeoutCfg,
 		c.LockCfg,
+		*c.RedisTTL,
 		c.TaskRunner,
 	)
 

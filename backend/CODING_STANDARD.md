@@ -26,6 +26,7 @@
 16. [字符串拼接](#16-字符串拼接)
 17. [调度器（Scheduler）](#17-调度器scheduler)
 18. [分布式锁与事务规约](#18-分布式锁与事务规约)
+19. [Lua 脚本规约（分层）](#19-lua-脚本规约分层)
 
 ---
 
@@ -335,6 +336,8 @@
 - 脚本源码放在 `scripts/<name>.lua.go` 中作为 Go 字符串常量，命名 `lua<Action>`。
 - **禁止**在 service / repository 里内联 Lua 字符串再调 `redis.Eval`（[common/limiter/limiter.go:34-52](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/limiter/limiter.go) 当前的写法，必须收敛到 `redis.Script`）。
 - Lua 返回值第一项必须是整数 code，由 `parseLuaCode` 解析，经 `domain.MapLuaError` 映射为 `*message.GameError`。
+
+> 详见 [§19 Lua 脚本规约（分层）](#19-lua-脚本规约分层)。
 
 ### 7.3 分布式锁（MUST）
 
@@ -1158,6 +1161,123 @@ if exists, _ := s.billMgr.ExistsByRoundAndType(...) {
 
 ---
 
+## 19. Lua 脚本规约（分层）
+
+本章基于 lua-refactor 重构成果，汇总 Redis Lua 脚本的一致性规约。规约按适用范围分三层：
+
+- **通用层**编号 **L-1 ~ L-8**：适用所有 Lua 脚本（`common/`、`game/.../scripts/`、`settlement/`、`gateway/` 等）。
+- **业务层**编号 **L-B1 ~ L-B2**：仅适用 `game/.../scripts/` 下的业务脚本，返回值需映射为 `*message.GameError`。
+- **通用脚本层**编号 **L-G1 ~ L-G2**：仅适用 `common/`、`settlement/`、`gateway/` 下的通用脚本，返回值由调用方直接解析。
+
+每条规约给出 **必须（MUST）/ 应当（SHOULD）/ 不可（MUST NOT）** 约束，并附参考实现。与 §7.2 既有 Lua 规则互补，冲突时以本章为准。
+
+### 19.1 L-1：脚本必须经 cRedis.NewScript 注册（MUST）
+
+所有 Lua 脚本必须经 `cRedis.NewScript(name, src)` 注册，**禁止**内联 `redis.Eval`。
+
+- 脚本通过 `cRedis.NewScript` 注册后自动享受 EVALSHA 优化（首次 EVALSHA 失败回退 EVAL 并缓存 SHA）。
+- 注册位置统一在 `scripts/registry.go`，脚本源码放在 `scripts/<name>.lua.go` 中作为 Go 字符串常量，命名 `lua<Action>`。
+- **禁止**在 service / repository 里内联 Lua 字符串再调 `redis.Eval`。
+- 与 §7.2、§15.5 Redis Anti-Pattern 一致。
+
+参考：[game/infrastructure/persistence/redis/scripts/registry.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/registry.go)。
+
+### 19.2 L-2：脚本禁止字节级重复（MUST）
+
+禁止脚本字节级重复，通用脚本放 `common/`，业务脚本放各服务 `scripts/`。
+
+- 跨服务复用的脚本（如限流、token 锁释放）必须放在 `common/` 下，**禁止**在多个服务各自复制一份。
+- 业务专属脚本放在各服务 `scripts/` 下（如 `game/infrastructure/persistence/redis/scripts/`）。
+- 与 §15.8 重复代码规约一致。
+
+参考：[common/lock/scripts/release_lock.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/scripts/release_lock.lua.go)（通用脚本）、[game/infrastructure/persistence/redis/scripts/robot_lock.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/robot_lock.lua.go)（业务脚本）。
+
+### 19.3 L-3：Lua 内禁止拼接 key（MUST）
+
+Lua 内禁止拼接 key，所有 key 必须由 Go 侧通过 KEYS 传入。
+
+- 单 packetID 等已知 key 场景，必须由 Go 侧通过 `KEYS[1]`、`KEYS[2]` 传入，**禁止**在 Lua 内 `KEYS[1] .. ":" .. ARGV[1]` 拼接。
+- 循环内动态 packetID 场景（无法预先枚举 KEYS）保留 `keyPrefix` 传入方式，但必须在脚本头部注释标注 `keyPrefix` 与 `common/rediskeys` 常量的映射关系。
+- 与 §7.1 Key 命名、§16.5 SC-5 Redis key 构建一致。
+
+参考：[game/infrastructure/persistence/redis/scripts/packet.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/packet.lua.go)（头部注释标注 keyPrefix 映射）。
+
+### 19.4 L-4：禁止 Lua 孤儿 key（MUST）
+
+Lua 内禁止孤儿 key，所有 key 必须在 `common/rediskeys` 有对应常量，脚本头部注释标注映射。
+
+- Lua 脚本中使用的所有 key（含 `keyPrefix`）必须在 [common/rediskeys/keys.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/rediskeys/keys.go) 有对应常量，**禁止**裸字符串。
+- 脚本头部 MUST 注释 KEYS 与 `common/rediskeys` 常量的映射关系（如 `-- KEYS[1] = rediskeys.KeyRoomHash(roomID)`）。
+- 与 §7.1 Key 命名、§7.1 Lua 孤儿 key 禁止规则一致。
+
+### 19.5 L-5：禁止硬编码 TTL（MUST）
+
+Lua 内禁止硬编码 TTL，必须通过 ARGV 传入。
+
+- TTL 必须由 Go 侧从 `cfg.RedisTTL.XxxTTL` 读取后通过 `ARGV` 传入 Lua，**禁止**在 Lua 内 `redis.call('EXPIRE', key, 60)`。
+- 与 §11 配置管理、§17.7 SCH-7 配置外部化、§18.11 DL-11 锁 TTL 必须从配置读取一致。
+
+### 19.6 L-6：禁止 math.random / math.randomseed（MUST）
+
+Lua 内禁止使用 `math.random` / `math.randomseed`。
+
+- Redis Lua 沙箱中 `math.random` / `math.randomseed` 行为受限且会污染 Redis 状态，**禁止**使用。
+- 涉及随机数场景（红包拆分、奖励生成）必须在 Go 侧用 `crypto/rand` 生成后通过 ARGV 传入 Lua。
+- 与 §6.4 随机数规约一致。
+
+### 19.7 L-7：禁止 KEYS 命令（MUST）
+
+Lua 内禁止使用 `KEYS` 命令。
+
+- `redis.call('KEYS', pattern)` 会阻塞 Redis（O(N) 扫描全库），**禁止**使用。
+- 需要枚举 key 时必须用 `SCAN`（Go 侧循环）或维护显式索引（ZSET / SET）。
+
+### 19.8 L-8：每个脚本必须有单元测试（MUST）
+
+每个 Lua 脚本必须有单元测试（miniredis），覆盖成功路径和错误路径。
+
+- 测试使用 [alicebob/miniredis](https://github.com/alicebob/miniredis) 在内存中模拟 Redis，**禁止**依赖外部 Redis 实例。
+- 必须**至少**覆盖：成功路径（happy path）+ 错误路径（如 key 不存在、状态不符、并发竞争）。
+- 测试文件命名 `<name>_test.go`，与脚本同包。
+
+### 19.9 L-B1：业务脚本返回值首项必须为整数 code（MUST）
+
+业务脚本（仅适用 `game/.../scripts/`）返回值第一项必须是整数 code，引用 `game/domain/lua_codes.go` 常量名（注释标注）。
+
+- 返回值格式：`return {code, ...}`，code 为整数。
+- code 必须引用 [game/domain/lua_codes.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/domain/lua_codes.go) 中的常量值，脚本内 MUST 注释标注对应常量名，如 `return {1, ...}  -- LuaErrRoomNotFound`。
+- **禁止**业务脚本内使用裸数字 code 而不注释常量名。
+
+### 19.10 L-B2：业务脚本返回值经 MapLuaError 映射（MUST）
+
+业务脚本返回值经 `parseLuaCode` + `domain.MapLuaError` 映射为 `*message.GameError`。
+
+- code=0 表示成功，返回 `nil`（无错误）。
+- 非 0 表示错误，`MapLuaError` 将 Lua code 映射为对应的 `*message.GameError`（带 `Code` 和 `Msg`）。
+- 与 §7.2 Lua 返回值解析、§4.1 错误模型一致。
+
+参考：[game/domain/lua_codes.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/domain/lua_codes.go)（错误码常量表）、`parseLuaCode` / `MapLuaError` 实现。
+
+### 19.11 L-G1：通用脚本返回值直接由调用方解析（MUST）
+
+通用脚本（仅适用 `common/`、`settlement/`、`gateway/` 下）返回值 0/1 直接由调用方 `.Int()` / `.Result()` 解析，**禁止**走 `MapLuaError`。
+
+- 通用脚本（如限流、token 锁释放、原子 INCR）返回值语义简单（0/1 或字符串），由调用方直接解析。
+- **禁止**通用脚本返回值走 `parseLuaCode` + `domain.MapLuaError`（业务错误码映射仅适用 game 模块）。
+- 与 L-B2 业务脚本返回值映射规则形成分层。
+
+### 19.12 L-G2：通用脚本头部必须注释返回值语义（MUST）
+
+通用脚本头部 MUST 注释返回值语义。
+
+- 返回值语义注释格式：`-- 返回值: 1=允许, 0=拒绝` 或 `-- 返回值: {0,'',''}=首次注册, {1,oldConnID,oldNodeID}=踢旧`。
+- 注释必须覆盖所有可能的返回值组合，便于调用方理解。
+- 与 §13.2 注释内容规约一致。
+
+参考：[common/lock/scripts/release_lock.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/scripts/release_lock.lua.go)（头部注释返回值语义）。
+
+---
+
 ## 附录 A：参考实现索引
 
 | 主题 | 参考文件 |
@@ -1178,6 +1298,9 @@ if exists, _ := s.billMgr.ExistsByRoundAndType(...) {
 | TraceID 生成 | [settlement/service/trace_id_generator.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/trace_id_generator.go) |
 | gRPC 拦截器 | [game/server/generic_service.go:778-790](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/server/generic_service.go) |
 | 健康检查三端点 | [gateway/health/health.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/gateway/health/health.go) |
+| Lua 脚本框架（cRedis.NewScript） | [game/infrastructure/persistence/redis/scripts/registry.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/registry.go) |
+| Lua 错误码常量表 | [game/domain/lua_codes.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/domain/lua_codes.go) |
+| 分层规约（§19） | [CODING_STANDARD.md §19](#19-lua-脚本规约分层) |
 
 ---
 
@@ -1189,3 +1312,4 @@ if exists, _ := s.billMgr.ExistsByRoundAndType(...) {
 | 2026-07-04 | 新增 §16 字符串拼接规约（SC-1~SC-10）；§4.3 补充 `%w` vs `%v` 说明；§7.1 补充 `common/rediskeys` 统一包说明、Prefix 尾随冒号约定、Lua 孤儿 key 禁止规则 |
 | 2026-07-04 | 新增 §17 调度器规约（SCH-1~SCH-12）；§6.2 更新为引用 §17；附录 A 调度器参考实现指向 `common/scheduler/base.go` |
 | 2026-07-04 | 新增 §18 分布式锁与事务规约（DL-1~DL-12、TX-1~TX-12）；§7.3 / §8.2 / §8.3 添加 §18 交叉引用；附录 A 补充分布式锁框架与锁释放 Lua 脚本参考实现 |
+| 2026-07-04 | 新增 §19 Lua 脚本规约（分层）（L-1~L-8 通用层、L-B1~L-B2 业务层、L-G1~L-G2 通用脚本层）；§7.2 末尾添加 §19 交叉引用；附录 A 补充 Lua 脚本框架（cRedis.NewScript）、Lua 错误码常量表（game/domain/lua_codes.go）、分层规约（§19）参考实现 |

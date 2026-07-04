@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
@@ -20,9 +21,10 @@ type PenaltyService struct {
 	redis             *cRedis.Client
 	policy            *domain.PenaltyPolicy
 	settlementService *settlementService.SettlementService
+	redisTTL          config.RedisTTLConfig
 }
 
-func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settlementService *settlementService.SettlementService) *PenaltyService {
+func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settlementService *settlementService.SettlementService, redisTTL config.RedisTTLConfig) *PenaltyService {
 	if policy == nil {
 		policy = domain.DefaultPenaltyPolicy()
 	}
@@ -30,6 +32,7 @@ func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settl
 		redis:             redis,
 		policy:            policy,
 		settlementService: settlementService,
+		redisTTL:          redisTTL,
 	}
 }
 
@@ -47,6 +50,8 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 		roomFee,
 		time.Now().Unix(),
 		penaltyType.String(),
+		int64(s.redisTTL.PenaltyCountTTL.Seconds()),
+		int64(s.redisTTL.PenaltyRecordTTL.Seconds()),
 	}
 
 	res, err := scripts.HandlePenalty.Run(ctx, s.redis, keys, args...).Slice()

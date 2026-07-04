@@ -50,6 +50,15 @@ lock:
   replace_timeout_lock_ttl: 30s
   game_app_settle_lock_ttl: 30s
 
+redis_ttl:
+  room_data_ttl: 86400s
+  user_room_ttl: 86400s
+  queue_ttl: 86400s
+  penalty_record_ttl: 86400s
+  packet_data_ttl: 86400s
+  round_state_ttl: 86400s
+  penalty_count_ttl: 86400s
+
 redis:
   mode: "standalone"
   addr: "127.0.0.1:6379"

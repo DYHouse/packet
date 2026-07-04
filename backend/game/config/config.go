@@ -23,6 +23,7 @@ type Config struct {
 	SettlementScheduler commonconfig.SettlementSchedulerConfig `mapstructure:"settlement_scheduler" yaml:"settlement_scheduler"`
 	Lock                commonconfig.LockConfig                `mapstructure:"lock" yaml:"lock"`
 	Lua                 commonconfig.LuaConfig                 `mapstructure:"lua" yaml:"lua"`
+	RedisTTL            commonconfig.RedisTTLConfig            `mapstructure:"redis_ttl" yaml:"redis_ttl"`
 }
 
 func Load(path string) (*Config, error) {

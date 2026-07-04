@@ -100,6 +100,12 @@ func (c *Client) Raw() *redis.Client {
 	return c.rdb
 }
 
+// NewClientFromRaw 包装原生 redis.Client 为 Client。
+// 用于脚本/工具场景复用既有连接，不触发 Ping 校验。
+func NewClientFromRaw(rdb *redis.Client) *Client {
+	return &Client{rdb: rdb}
+}
+
 // Close 关闭连接
 func (c *Client) Close() error {
 	return c.rdb.Close()

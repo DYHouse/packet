@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/common/redis"
@@ -16,11 +17,12 @@ import (
 )
 
 type RoomRepository struct {
-	client *redis.Client
+	client   *redis.Client
+	redisTTL config.RedisTTLConfig
 }
 
-func NewRoomRepository(client *redis.Client) *RoomRepository {
-	return &RoomRepository{client: client}
+func NewRoomRepository(client *redis.Client, redisTTL config.RedisTTLConfig) *RoomRepository {
+	return &RoomRepository{client: client, redisTTL: redisTTL}
 }
 
 func parseLuaCode(val interface{}) int {
@@ -182,6 +184,7 @@ func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, 
 		seatNo,
 		fmt.Sprintf("%d", time.Now().Unix()),
 		isRobot,
+		int64(r.redisTTL.RoomDataTTL.Seconds()),
 	}
 
 	result, err := scripts.SelectSeat.Run(ctx, r.client, keys, args...).Slice()
@@ -190,7 +193,7 @@ func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, 
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return domain.MapLuaError(code)
 	}
 	return nil
@@ -214,7 +217,7 @@ func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) 
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return domain.MapLuaError(code)
 	}
 	return nil
@@ -237,6 +240,8 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 		string(spectatorData),
 		fmt.Sprintf("%d", time.Now().Unix()),
 		roomID,
+		int64(r.redisTTL.RoomDataTTL.Seconds()),
+		int64(r.redisTTL.UserRoomTTL.Seconds()),
 	}
 
 	result, err := scripts.JoinAsSpectator.Run(ctx, r.client, keys, args...).Slice()
@@ -245,7 +250,7 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return nil, domain.MapLuaError(code)
 	}
 
@@ -281,7 +286,7 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		logger.Error("LuaLeaveRoom returned error code", "room_id", roomID, "user_id", userID, "code", code)
 		return domain.MapLuaError(code)
 	}
@@ -319,7 +324,7 @@ func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, use
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return nil, domain.MapLuaError(code)
 	}
 
@@ -341,6 +346,7 @@ func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID st
 		userID,
 		fmt.Sprintf("%d", time.Now().Unix()),
 		isRobot,
+		int64(r.redisTTL.RoomDataTTL.Seconds()),
 	}
 
 	result, err := scripts.AutoSeatAndReady.Run(ctx, r.client, keys, args...).Slice()
@@ -349,7 +355,7 @@ func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID st
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return nil, domain.MapLuaError(code)
 	}
 
@@ -385,6 +391,7 @@ func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID string) (in
 	args := []interface{}{
 		userID,
 		fmt.Sprintf("%d", time.Now().UnixMilli()),
+		int64(r.redisTTL.QueueTTL.Seconds()),
 	}
 
 	result, err := scripts.Enqueue.Run(ctx, r.client, keys, args...).Slice()
@@ -393,7 +400,7 @@ func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID string) (in
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return 0, domain.MapLuaError(code)
 	}
 
@@ -415,7 +422,7 @@ func (r *RoomRepository) Dequeue(ctx context.Context, roomID, userID string) err
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		return domain.MapLuaError(code)
 	}
 
@@ -434,6 +441,7 @@ func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seat
 	args := []interface{}{
 		seatNo,
 		fmt.Sprintf("%d", time.Now().Unix()),
+		int64(r.redisTTL.RoomDataTTL.Seconds()),
 	}
 
 	result, err := scripts.AutoSubstitute.Run(ctx, r.client, keys, args...).Slice()
@@ -442,7 +450,7 @@ func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seat
 	}
 
 	code := parseLuaCode(result[0])
-	if code != domain.LuaSuccess {
+	if code != domain.LuaErrSuccess {
 		if code == domain.LuaErrQueueEmpty || code == domain.LuaErrSubstituteFail || code == domain.LuaErrNoEmptySeat {
 			return nil, nil
 		}

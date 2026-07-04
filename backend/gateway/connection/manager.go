@@ -14,6 +14,7 @@ import (
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/gateway"
+	connScripts "github.com/cashparty/backend/gateway/connection/scripts"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -122,9 +123,10 @@ func (m *Manager) registerInRedis(conn *Connection) (needKick bool, oldConnID, o
 	}
 
 	key := gateway.GatewayConnKey(conn.UserID)
-	result, err := m.redis.Eval(m.ctx, LuaRegisterConnection,
+	result, err := connScripts.RegisterConnectionScript.Run(m.ctx, m.redis,
 		[]string{key},
-		conn.ConnID, m.nodeID, conn.Platform, conn.DeviceID, time.Now().Unix()).Slice()
+		conn.ConnID, m.nodeID, conn.Platform, conn.DeviceID, time.Now().Unix(),
+		int64(m.config.ConnRedisTTL.Seconds())).Slice()
 	if err != nil {
 		logger.Error("failed to register connection in redis", "error", err, "user_id", conn.UserID)
 		return false, "", ""
@@ -445,37 +447,3 @@ func (m *Manager) WaitForAllConnectionsClose(timeout time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
-
-const LuaRegisterConnection = `
-local userConnKey = KEYS[1]
-local newConnID = ARGV[1]
-local newNodeID = ARGV[2]
-local platform = ARGV[3]
-local deviceID = ARGV[4]
-local connectedAt = tonumber(ARGV[5])
-
-local oldConnID = ''
-local oldNodeID = ''
-
-local oldData = redis.call('HGETALL', userConnKey)
-if #oldData > 0 then
-    for i = 1, #oldData, 2 do
-        if oldData[i] == 'conn_id' then oldConnID = oldData[i+1] end
-        if oldData[i] == 'node_id' then oldNodeID = oldData[i+1] end
-    end
-end
-
-redis.call('HMSET', userConnKey,
-    'conn_id', newConnID,
-    'node_id', newNodeID,
-    'platform', platform,
-    'device_id', deviceID,
-    'connected_at', connectedAt
-)
-redis.call('EXPIRE', userConnKey, 86400)
-
-if oldConnID ~= '' and oldConnID ~= newConnID then
-    return {1, oldConnID, oldNodeID}
-end
-return {0, '', ''}
-`

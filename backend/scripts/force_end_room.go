@@ -8,77 +8,11 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
+	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	gameScripts "github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/redis/go-redis/v9"
 )
-
-const LuaEndGame = `
-local roomHashKey = KEYS[1]
-local playersKey = KEYS[2]
-local spectatorsKey = KEYS[3]
-local seatsKey = KEYS[4]
-local seatOwnerKey = KEYS[5]
-
-local now = tonumber(ARGV[1])
-local allowedStatus = tonumber(ARGV[2]) or 2
-
-local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
-
-local statusAllowed = false
-if allowedStatus == 0 then
-	statusAllowed = (status ~= 1)
-else
-	statusAllowed = (status == allowedStatus)
-end
-
-if not statusAllowed then
-	return {1, {}, status}
-end
-
-local playerIDs = redis.call('HKEYS', playersKey)
-local results = {}
-
-redis.call('HSET', roomHashKey, 'status', 1)
-redis.call('HSET', roomHashKey, 'current_round', 0)
-redis.call('HDEL', roomHashKey, 'next_sender_id')
-redis.call('HDEL', roomHashKey, 'countdown_end_time')
-redis.call('HDEL', roomHashKey, 'started_at')
-
-redis.call('DEL', seatsKey)
-redis.call('DEL', seatOwnerKey)
-
-for _, playerID in ipairs(playerIDs) do
-	local playerData = redis.call('HGET', playersKey, playerID)
-	if playerData then
-		local player = cjson.decode(playerData)
-		
-		table.insert(results, {
-			playerID,
-			player.nickname or ''
-		})
-		
-		local spectator = {
-			user_id = player.user_id,
-			nickname = player.nickname,
-			avatar = player.avatar,
-			seat_no = player.seat_no or 0
-		}
-		
-		redis.call('HSET', spectatorsKey, playerID, cjson.encode(spectator))
-		redis.call('HDEL', playersKey, playerID)
-		
-		if spectator.seat_no > 0 then
-			redis.call('SETBIT', seatsKey, spectator.seat_no, 1)
-			redis.call('HSET', seatOwnerKey, tostring(spectator.seat_no), playerID)
-		end
-	end
-end
-
-redis.call('EXPIRE', seatsKey, 86400)
-redis.call('EXPIRE', seatOwnerKey, 86400)
-
-return {0, results, status}
-`
 
 func main() {
 	roomID := flag.String("room", "", "Room ID to end")
@@ -105,13 +39,15 @@ func main() {
 
 	ctx := context.Background()
 
-	client := redis.NewClient(&redis.Options{
+	rdb := redis.NewClient(&redis.Options{
 		Addr:     *redisAddr,
 		Password: *redisPassword,
 		DB:       *redisDB,
 	})
 
-	defer client.Close()
+	defer rdb.Close()
+
+	client := cRedis.NewClientFromRaw(rdb)
 
 	roomHashKey := rediskeys.RoomHashKey(*roomID)
 	playersKey := rediskeys.RoomPlayersKey(*roomID)
@@ -138,7 +74,7 @@ func main() {
 	keys := []string{roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey}
 	args := []interface{}{time.Now().Unix(), allowedStatus}
 
-	res, err := client.Eval(ctx, LuaEndGame, keys, args...).Slice()
+	res, err := gameScripts.EndGame.Run(ctx, client, keys, args...).Slice()
 	if err != nil {
 		fmt.Printf("Error executing Lua script: %v\n", err)
 		os.Exit(1)

@@ -155,6 +155,10 @@ func PacketInfoKey(packetID string) string {
 	return rediskeys.PacketInfoKey(packetID)
 }
 
+func PacketAvailableKey(packetID string) string {
+	return rediskeys.PacketAvailableKey(packetID)
+}
+
 func GrabRecordKey(packetID string) string {
 	return rediskeys.GrabRecordKey(packetID)
 }

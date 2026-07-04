@@ -34,7 +34,4 @@ var (
 	// 惩罚（2）
 	HandlePenalty     = cRedis.NewScript("handle_penalty", luaHandlePenalty)
 	DistributePenalty = cRedis.NewScript("distribute_penalty", luaDistributePenalty)
-
-	// 机器人调度锁（1）
-	ReleaseAssignLock = cRedis.NewScript("release_assign_lock", luaReleaseAssignLock)
 )

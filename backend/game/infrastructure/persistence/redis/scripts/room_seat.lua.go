@@ -1,5 +1,10 @@
 package scripts
 
+// LuaJoinAsSpectator 加入观众
+// KEYS: [roomHashKey, spectatorsKey, playersKey, userRoomKey]
+// ARGV: [userID, spectatorData, now, roomIDStr, roomDataTTL, userRoomTTL]
+// 返回: {code, roomID, roomNo, configID}
+// 错误码: LuaErrRoomNotFound(1), LuaErrAlreadyInRoom(4), LuaErrRoomFull(15), LuaErrRoomFullTotal(3)
 const luaJoinAsSpectator = `
 local roomHashKey = KEYS[1]
 local spectatorsKey = KEYS[2]
@@ -10,25 +15,27 @@ local userID = ARGV[1]
 local spectatorData = ARGV[2]
 local now = tonumber(ARGV[3])
 local roomIDStr = ARGV[4]
+local roomDataTTL = tonumber(ARGV[5])
+local userRoomTTL = tonumber(ARGV[6])
 
 local roomExists = redis.call('EXISTS', roomHashKey)
 if roomExists == 0 then
-	return {1, '', '', 0}
+	return {1, '', '', 0}  -- LuaErrRoomNotFound
 end
 
 local existingRoom = redis.call('GET', userRoomKey)
 if existingRoom and existingRoom ~= '' and existingRoom ~= '0' then
-	return {4, '', '', 0}
+	return {4, '', '', 0}  -- LuaErrAlreadyInRoom
 end
 
 local alreadySpectator = redis.call('HEXISTS', spectatorsKey, userID)
 if alreadySpectator == 1 then
-	return {4, '', '', 0}
+	return {4, '', '', 0}  -- LuaErrAlreadyInRoom
 end
 
 local alreadyPlayer = redis.call('HEXISTS', playersKey, userID)
 if alreadyPlayer == 1 then
-	return {4, '', '', 0}
+	return {4, '', '', 0}  -- LuaErrAlreadyInRoom
 end
 
 local playerCount = redis.call('HLEN', playersKey)
@@ -40,11 +47,11 @@ local totalInRoom = playerCount + spectatorCount
 local maxTotal = maxPlayers + maxSpectators
 
 if totalInRoom >= maxTotal then
-	return {15, '', '', 0}
+	return {15, '', '', 0}  -- LuaErrRoomFull
 end
 
 if spectatorCount >= maxSpectators then
-	return {3, '', '', 0}
+	return {3, '', '', 0}  -- LuaErrRoomFullTotal
 end
 
 local roomNo = redis.call('HGET', roomHashKey, 'room_no') or ''
@@ -52,20 +59,25 @@ local configID = tonumber(redis.call('HGET', roomHashKey, 'config_id') or 0)
 
 redis.call('HSET', spectatorsKey, userID, spectatorData)
 
-redis.call('SET', userRoomKey, roomIDStr, 'EX', 86400)
+redis.call('SET', userRoomKey, roomIDStr, 'EX', userRoomTTL)
 
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status == 0 then
 	redis.call('HSET', roomHashKey, 'status', 1)
 end
 
-redis.call('EXPIRE', roomHashKey, 86400)
-redis.call('EXPIRE', spectatorsKey, 86400)
-redis.call('EXPIRE', playersKey, 86400)
+redis.call('EXPIRE', roomHashKey, roomDataTTL)
+redis.call('EXPIRE', spectatorsKey, roomDataTTL)
+redis.call('EXPIRE', playersKey, roomDataTTL)
 
-return {0, roomIDStr, roomNo, configID}
+return {0, roomIDStr, roomNo, configID}  -- LuaErrSuccess
 `
 
+// LuaSelectSeat 选座
+// KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey]
+// ARGV: [userID, seatNo, now, isRobot, roomDataTTL]
+// 返回: {code, playerCount, spectatorCount, oldSeatNo}
+// 错误码: LuaErrRoomNotFound(1), LuaErrGameNotInPlaying(6), LuaErrInvalidSeatNo(8), LuaErrSeatOccupied(7), LuaErrAlreadyPlayer(9), LuaErrNotInRoom(14)
 const luaSelectSeat = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -77,34 +89,35 @@ local userID = ARGV[1]
 local seatNo = tonumber(ARGV[2])
 local now = tonumber(ARGV[3])
 local isRobot = ARGV[4]
+local roomDataTTL = tonumber(ARGV[5])
 
 if redis.call('EXISTS', roomHashKey) == 0 then
-	return {1, 0, 0, 0}
+	return {1, 0, 0, 0}  -- LuaErrRoomNotFound
 end
 
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status == 2 then
-	return {6, 0, 0, 0}
+	return {6, 0, 0, 0}  -- LuaErrGameNotInPlaying
 end
 
 local maxPlayers = tonumber(redis.call('HGET', roomHashKey, 'max_players') or 5)
 if not seatNo or seatNo < 1 or seatNo > maxPlayers then
-	return {8, 0, 0, 0}
+	return {8, 0, 0, 0}  -- LuaErrInvalidSeatNo
 end
 
 local occupied = redis.call('GETBIT', seatsKey, seatNo)
 if occupied == 1 then
-	return {7, 0, 0, 0}
+	return {7, 0, 0, 0}  -- LuaErrSeatOccupied
 end
 
 local existingPlayer = redis.call('HGET', playersKey, userID)
 if existingPlayer then
-	return {9, 0, 0, 0}
+	return {9, 0, 0, 0}  -- LuaErrAlreadyPlayer
 end
 
 local existingSpectator = redis.call('HGET', spectatorsKey, userID)
 if not existingSpectator then
-	return {14, 0, 0, 0}
+	return {14, 0, 0, 0}  -- LuaErrNotInRoom
 end
 
 local spectator = cjson.decode(existingSpectator)
@@ -126,14 +139,19 @@ redis.call('HSET', spectatorsKey, userID, cjson.encode(spectator))
 redis.call('SETBIT', seatsKey, seatNo, 1)
 redis.call('HSET', seatOwnerKey, tostring(seatNo), userID)
 
-redis.call('EXPIRE', seatsKey, 86400)
-redis.call('EXPIRE', seatOwnerKey, 86400)
+redis.call('EXPIRE', seatsKey, roomDataTTL)
+redis.call('EXPIRE', seatOwnerKey, roomDataTTL)
 
 local playerCount = redis.call('HLEN', playersKey)
 local spectatorCount = redis.call('HLEN', spectatorsKey)
-return {0, playerCount, spectatorCount, oldSeatNo}
+return {0, playerCount, spectatorCount, oldSeatNo}  -- LuaErrSuccess
 `
 
+// LuaCancelSeat 取消选座
+// KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey]
+// ARGV: [userID]
+// 返回: {code, playerCount, spectatorCount, seatNo}
+// 错误码: LuaErrRoomNotFound(1), LuaErrGameNotInPlaying(6), LuaErrNotInRoom(14)
 const luaCancelSeat = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -144,12 +162,12 @@ local seatOwnerKey = KEYS[5]
 local userID = ARGV[1]
 
 if redis.call('EXISTS', roomHashKey) == 0 then
-	return {1, 0, 0, 0}
+	return {1, 0, 0, 0}  -- LuaErrRoomNotFound
 end
 
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status ~= 1 and status ~= 4 then
-	return {6, 0, 0, 0}
+	return {6, 0, 0, 0}  -- LuaErrGameNotInPlaying
 end
 
 local playerData = redis.call('HGET', playersKey, userID)
@@ -177,13 +195,13 @@ if playerData then
 	local playerCount = redis.call('HLEN', playersKey)
 	local spectatorCount = redis.call('HLEN', spectatorsKey)
 
-	return {0, playerCount, spectatorCount, seatNo}
+	return {0, playerCount, spectatorCount, seatNo}  -- LuaErrSuccess
 elseif spectatorData then
 	local spectator = cjson.decode(spectatorData)
 	local seatNo = spectator.seat_no or 0
 
 	if seatNo == 0 then
-		return {14, 0, 0, 0}
+		return {14, 0, 0, 0}  -- LuaErrNotInRoom
 	end
 
 	redis.call('SETBIT', seatsKey, seatNo, 0)
@@ -196,12 +214,17 @@ elseif spectatorData then
 	local playerCount = redis.call('HLEN', playersKey)
 	local spectatorCount = redis.call('HLEN', spectatorsKey)
 
-	return {0, playerCount, spectatorCount, seatNo}
+	return {0, playerCount, spectatorCount, seatNo}  -- LuaErrSuccess
 else
-	return {14, 0, 0, 0}
+	return {14, 0, 0, 0}  -- LuaErrNotInRoom
 end
 `
 
+// LuaLeaveRoom 离开房间
+// KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey, userRoomKey]
+// ARGV: [userID, now]
+// 返回: {code, type, seatNo}
+// 错误码: LuaErrRoomNotFound(1), LuaErrPlayerCannotLeave(16), LuaErrNotInRoom(14)
 const luaLeaveRoom = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -214,12 +237,12 @@ local userID = ARGV[1]
 local now = tonumber(ARGV[2])
 
 if redis.call('EXISTS', roomHashKey) == 0 then
-	return {1, 'room_not_found', 0}
+	return {1, 'room_not_found', 0}  -- LuaErrRoomNotFound
 end
 
 local playerData = redis.call('HGET', playersKey, userID)
 if playerData then
-	return {16, 'player_cannot_leave', 0}
+	return {16, 'player_cannot_leave', 0}  -- LuaErrPlayerCannotLeave
 end
 
 local spectatorData = redis.call('HGET', spectatorsKey, userID)
@@ -235,12 +258,17 @@ if spectatorData then
 	redis.call('HDEL', spectatorsKey, userID)
 	redis.call('DEL', userRoomKey)
 
-	return {0, 'spectator', seatNo}
+	return {0, 'spectator', seatNo}  -- LuaErrSuccess
 end
 
-return {14, 'not_found', 0}
+return {14, 'not_found', 0}  -- LuaErrNotInRoom
 `
 
+// LuaKickPlayerAndInterrupt 踢出玩家并中断游戏
+// KEYS: [roomHashKey, playersKey, seatsKey, seatOwnerKey, userRoomKey]
+// ARGV: [userID, reason, now, roundStateKeyPrefix]
+// 返回: {code, message, seatNo, newStatus}
+// 错误码: LuaErrRoomNotFound(1), LuaErrNotInRoom(14), LuaErrPlayerAlreadySent(32)
 const luaKickPlayerAndInterrupt = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -254,12 +282,12 @@ local now = tonumber(ARGV[3])
 local roundStateKeyPrefix = ARGV[4]
 
 if redis.call('EXISTS', roomHashKey) == 0 then
-    return {1, 'room_not_found', 0, 0}
+    return {1, 'room_not_found', 0, 0}  -- LuaErrRoomNotFound
 end
 
 local playerData = redis.call('HGET', playersKey, userID)
 if not playerData then
-    return {14, 'player_not_found', 0, 0}
+    return {14, 'player_not_found', 0, 0}  -- LuaErrNotInRoom
 end
 
 local player = cjson.decode(playerData)
@@ -270,7 +298,7 @@ if currentRoundID ~= '' then
     local currentRoundStateKey = roundStateKeyPrefix .. currentRoundID
     local senderID = redis.call('HGET', currentRoundStateKey, 'sender_id') or ''
     if senderID == userID then
-        return {32, 'player_already_sent_packet', seatNo, 0}
+        return {32, 'player_already_sent_packet', seatNo, 0}  -- LuaErrPlayerAlreadySent
     end
 end
 
@@ -291,9 +319,14 @@ if currentStatus == 2 then
     newStatus = 4
 end
 
-return {0, 'success', seatNo, newStatus}
+return {0, 'success', seatNo, newStatus}  -- LuaErrSuccess
 `
 
+// LuaTryStartGame 尝试开始游戏(倒计时结束时由调度器调用)
+// KEYS: [roomHashKey]
+// ARGV: [now]
+// 返回: {code, message}  code: 0=未启动(状态/倒计时未到/已启动), 1=启动成功
+// 注: 本脚本 code 为状态标志,非 lua_codes.go 错误码
 const luaTryStartGame = `
 local roomHashKey = KEYS[1]
 
@@ -329,6 +362,8 @@ return {1, 'success'}
 // KEYS: [roomHashKey, playersKey, spectatorsKey]
 // ARGV: [userID, now]
 // 返回: {code, playerCount, maxPlayers, shouldStartCountdown, countdownEndTime, currentRound, playerData, message}
+// 错误码: LuaErrRoomNotFound(1,房间不存在/status==0), LuaErrNoSeatSelected(12), LuaErrNotInRoom(14)
+// 注: 本脚本最终成功返回 code=1(历史语义,非 LuaErrRoomNotFound)
 const luaPlayerReady = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -340,7 +375,7 @@ local now = tonumber(ARGV[2])
 -- 1. 检查房间是否存在
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status == 0 then
-	return {1, 0, 0, 0, 0, 0, '', ''}
+	return {1, 0, 0, 0, 0, 0, '', ''}  -- LuaErrRoomNotFound(房间 status==0)
 end
 
 -- 2. 检查用户身份（玩家或观众）
@@ -356,11 +391,11 @@ elseif spectatorData then
 	-- 是观众，检查是否已选座
 	local spectator = cjson.decode(spectatorData)
 	local seatNo = tonumber(spectator.seat_no or 0)
-	
+
 	if seatNo == 0 then
-		return {12, 0, 0, 0, 0, 0, '', ''}
+		return {12, 0, 0, 0, 0, 0, '', ''}  -- LuaErrNoSeatSelected
 	end
-	
+
 	-- 将观众转换为玩家
 	player = {
 		user_id = spectator.user_id,
@@ -370,16 +405,16 @@ elseif spectatorData then
 		disconnected_at = nil,
 		is_robot = spectator.is_robot or false
 	}
-	
+
 	-- 从观众列表删除
 	redis.call('HDEL', spectatorsKey, userID)
-	
+
 	-- 添加到玩家列表
 	redis.call('HSET', playersKey, userID, cjson.encode(player))
-	
+
 	isConvertedFromSpectator = true
 else
-	return {14, 0, 0, 0, 0, 0, '', ''}
+	return {14, 0, 0, 0, 0, 0, '', ''}  -- LuaErrNotInRoom
 end
 
 -- 3. 设置玩家准备状态
@@ -421,14 +456,15 @@ return {
 	currentRound,
 	cjson.encode(player),
 	'success'
-}
+}  -- code=1 表示成功(本脚本历史语义)
 `
 
 // LuaHandleSeatTimeout 处理座位超时
 // KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey, userRoomKey]
 // ARGV: [userID]
 // 返回: {code, seatNo, message}
-// code: 0=失败, 1=成功踢出, 2=用户已不是观众
+// code: 0=失败(房间不存在), 1=成功踢出, 2=用户已不是观众
+// 注: 本脚本 code 为状态标志,非 lua_codes.go 错误码
 const luaHandleSeatTimeout = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -477,9 +513,9 @@ return {1, seatNo, 'success'}
 
 // LuaAutoSeatAndReady 自动选座并准备（合并 LuaSelectSeat + LuaPlayerReady 为单原子脚本）
 // KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey]
-// ARGV: [userID, now, isRobot]
+// ARGV: [userID, now, isRobot, roomDataTTL]
 // 返回: {code, seatNo, playerCount, maxPlayers, shouldStartCountdown, countdownEndTime, currentRound, playerData}
-// code: 0=成功上座并准备, 73=无空座(LuaErrNoEmptySeat), 其它非 0=错误
+// 错误码: LuaErrRoomNotFound(1), LuaErrGameNotInPlaying(6), LuaErrAlreadyPlayer(9), LuaErrNotInRoom(14), LuaErrNoEmptySeat(73)
 const luaAutoSeatAndReady = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -490,26 +526,27 @@ local seatOwnerKey = KEYS[5]
 local userID = ARGV[1]
 local now = tonumber(ARGV[2])
 local isRobot = ARGV[3]
+local roomDataTTL = tonumber(ARGV[4])
 
 if redis.call('EXISTS', roomHashKey) == 0 then
-	return {1, 0, 0, 0, 0, 0, 0, ''}
+	return {1, 0, 0, 0, 0, 0, 0, ''}  -- LuaErrRoomNotFound
 end
 
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status == 2 then
-	return {6, 0, 0, 0, 0, 0, 0, ''}
+	return {6, 0, 0, 0, 0, 0, 0, ''}  -- LuaErrGameNotInPlaying
 end
 
 local maxPlayers = tonumber(redis.call('HGET', roomHashKey, 'max_players') or 5)
 
 local existingPlayer = redis.call('HGET', playersKey, userID)
 if existingPlayer then
-	return {9, 0, 0, 0, 0, 0, 0, ''}
+	return {9, 0, 0, 0, 0, 0, 0, ''}  -- LuaErrAlreadyPlayer
 end
 
 local existingSpectator = redis.call('HGET', spectatorsKey, userID)
 if not existingSpectator then
-	return {14, 0, 0, 0, 0, 0, 0, ''}
+	return {14, 0, 0, 0, 0, 0, 0, ''}  -- LuaErrNotInRoom
 end
 
 local spectator = cjson.decode(existingSpectator)
@@ -524,7 +561,7 @@ for i = 1, maxPlayers do
 end
 
 if targetSeatNo == 0 then
-	return {73, 0, 0, 0, 0, 0, 0, ''}
+	return {73, 0, 0, 0, 0, 0, 0, ''}  -- LuaErrNoEmptySeat
 end
 
 if oldSeatNo > 0 and oldSeatNo ~= targetSeatNo then
@@ -555,8 +592,8 @@ redis.call('HSET', seatOwnerKey, tostring(targetSeatNo), userID)
 redis.call('HDEL', spectatorsKey, userID)
 redis.call('HSET', playersKey, userID, cjson.encode(player))
 
-redis.call('EXPIRE', seatsKey, 86400)
-redis.call('EXPIRE', seatOwnerKey, 86400)
+redis.call('EXPIRE', seatsKey, roomDataTTL)
+redis.call('EXPIRE', seatOwnerKey, roomDataTTL)
 
 local playerCount = redis.call('HLEN', playersKey)
 
@@ -588,5 +625,5 @@ return {
 	countdownEndTime,
 	currentRound,
 	cjson.encode(player)
-}
+}  -- LuaErrSuccess
 `

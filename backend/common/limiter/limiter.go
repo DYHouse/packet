@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	limiterScripts "github.com/cashparty/backend/common/limiter/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
@@ -33,27 +34,7 @@ func (l *RateLimiter) Allow(ctx context.Context, cfg *LimitConfig) (bool, error)
 	key := fmt.Sprintf("%s:%s", l.prefix, cfg.Key)
 	now := time.Now().UnixNano()
 
-	script := `
-		local key = KEYS[1]
-		local limit = tonumber(ARGV[1])
-		local window = tonumber(ARGV[2])
-		local now = tonumber(ARGV[3])
-		local windowStart = now - window
-
-		redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
-		
-		local count = redis.call('ZCARD', key)
-		
-		if count < limit then
-			redis.call('ZADD', key, now, now)
-			redis.call('PEXPIRE', key, window / 1000000)
-			return 1
-		end
-		
-		return 0
-	`
-
-	result, err := l.redis.Eval(ctx, script, []string{key}, cfg.Limit, int64(cfg.Window), now).Int64()
+	result, err := limiterScripts.SlidingWindowScript.Run(ctx, l.redis, []string{key}, cfg.Limit, int64(cfg.Window), now).Int64()
 	if err != nil {
 		logger.Error("rate limiter error", "key", key, "error", err)
 		return true, nil

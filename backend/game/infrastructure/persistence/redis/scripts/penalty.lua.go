@@ -2,8 +2,9 @@ package scripts
 
 // LuaHandlePenalty 处理惩罚
 // KEYS: [penaltyCountKey, roomHashKey, playersKey, roundStateKey, penaltyRecordKey]
-// ARGV: [userID, roomFee, now, penaltyType]
+// ARGV: [userID, roomFee, now, penaltyType, penaltyCountTTL, penaltyRecordTTL]
 // 返回: {code, newCount, penaltyAmount, kickRequired}
+// 错误码: LuaErrSuccess(0,本脚本始终返回 0)
 const luaHandlePenalty = `
 local penaltyCountKey = KEYS[1]
 local roomHashKey = KEYS[2]
@@ -15,11 +16,11 @@ local userID = ARGV[1]
 local roomFee = tonumber(ARGV[2])
 local now = tonumber(ARGV[3])
 local penaltyType = ARGV[4]
-
-local penaltyCount = tonumber(redis.call('GET', penaltyCountKey) or 0)
+local penaltyCountTTL = tonumber(ARGV[5])
+local penaltyRecordTTL = tonumber(ARGV[6])
 
 local newCount = redis.call('INCR', penaltyCountKey)
-redis.call('EXPIRE', penaltyCountKey, 86400)
+redis.call('EXPIRE', penaltyCountKey, penaltyCountTTL)
 
 redis.call('RPUSH', penaltyRecordKey, cjson.encode({
     user_id = userID,
@@ -28,7 +29,7 @@ redis.call('RPUSH', penaltyRecordKey, cjson.encode({
     amount = roomFee,
     created_at = now
 }))
-redis.call('EXPIRE', penaltyRecordKey, 86400)
+redis.call('EXPIRE', penaltyRecordKey, penaltyRecordTTL)
 
 local kickRequired = 0
 if newCount >= 2 then
@@ -43,13 +44,14 @@ if playerData then
     redis.call('HSET', playersKey, userID, cjson.encode(player))
 end
 
-return {0, newCount, roomFee, kickRequired}
+return {0, newCount, roomFee, kickRequired}  -- LuaErrSuccess
 `
 
 // LuaDistributePenalty 分配惩罚金额
 // KEYS: [roomHashKey, playersKey]
 // ARGV: [penaltyAmount, excludeUserIDsJson]
 // 返回: {code, shareAmount, recipientCount, recipients}
+// 错误码: LuaErrSuccess(0,本脚本始终返回 0)
 const luaDistributePenalty = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -74,7 +76,7 @@ for _, uid in ipairs(allPlayers) do
 end
 
 if #remainingPlayers == 0 then
-    return {0, 0, 0, {}}
+    return {0, 0, 0, {}}  -- LuaErrSuccess
 end
 
 local shareAmount = math.floor(penaltyAmount / #remainingPlayers)
@@ -84,5 +86,5 @@ for _, uid in ipairs(remainingPlayers) do
     table.insert(recipients, uid)
 end
 
-return {0, shareAmount, #remainingPlayers, recipients}
+return {0, shareAmount, #remainingPlayers, recipients}  -- LuaErrSuccess
 `

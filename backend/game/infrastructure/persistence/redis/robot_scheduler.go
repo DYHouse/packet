@@ -8,7 +8,6 @@ import (
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/google/uuid"
 )
 
@@ -70,7 +69,7 @@ func (s *RobotSchedulerRedis) AcquireAssignLock(ctx context.Context, userID int6
 // ReleaseAssignLock 释放分配锁（需校验 token）
 // 若 TTL 已过期被他人抢占，GET != token，不会 del，保护新持有者
 func (s *RobotSchedulerRedis) ReleaseAssignLock(ctx context.Context, userID int64, token string) error {
-	return scripts.ReleaseAssignLock.Run(ctx, s.redis, []string{RobotAssignLockKey(userID)}, token).Err()
+	return lockScripts.ReleaseLockScript.Run(ctx, s.redis, []string{RobotAssignLockKey(userID)}, token).Err()
 }
 
 // AcquireRoomAssignLock 获取房间分配限流锁

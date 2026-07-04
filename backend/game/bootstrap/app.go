@@ -130,7 +130,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 
 	algorithmConfig := convertAlgorithmConfig(&cfg.Algorithm)
 	logger.Info("algorithm config loaded", "room_configs_count", len(algorithmConfig.RewardControl.RoomConfigs))
-	roomRepo := redisRepo.NewRoomRepository(redisClient)
+	roomRepo := redisRepo.NewRoomRepository(redisClient, cfg.RedisTTL)
 	packetGenerator := algorithm.NewPacketGenerator(algorithmConfig, redisClient, db, roomRepo)
 
 	// Validate robot configuration before assembling robot services.
@@ -144,7 +144,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	}
 
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
-		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler)
+		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL)
 	container.LockCfg = &cfg.Lock
 	container.InitAppServices()
 

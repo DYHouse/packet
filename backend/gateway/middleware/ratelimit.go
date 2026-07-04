@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	limiterScripts "github.com/cashparty/backend/common/limiter/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/gateway"
@@ -97,27 +98,7 @@ func (rl *RateLimiter) slidingWindowAllow(ctx context.Context, key string, limit
 	now := time.Now().UnixNano()
 	windowNano := int64(window)
 
-	script := `
-		local key = KEYS[1]
-		local limit = tonumber(ARGV[1])
-		local window = tonumber(ARGV[2])
-		local now = tonumber(ARGV[3])
-		local windowStart = now - window
-
-		redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
-		
-		local count = redis.call('ZCARD', key)
-		
-		if count < limit then
-			redis.call('ZADD', key, now, now)
-			redis.call('PEXPIRE', key, window / 1000000)
-			return 1
-		end
-		
-		return 0
-	`
-
-	result, err := rl.redis.Eval(ctx, script, []string{key}, limit, windowNano, now).Int()
+	result, err := limiterScripts.SlidingWindowScript.Run(ctx, rl.redis, []string{key}, limit, windowNano, now).Int()
 	if err != nil {
 		logger.Error("rate limiter error", "key", key, "error", err)
 		return true, nil

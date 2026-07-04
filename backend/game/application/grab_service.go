@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
@@ -19,13 +20,15 @@ type GrabService struct {
 	redis       *cRedis.Client
 	grabTimeout int64
 	sendTimeout int64
+	redisTTL    config.RedisTTLConfig
 }
 
-func NewGrabService(redis *cRedis.Client, grabTimeout, sendTimeout time.Duration) *GrabService {
+func NewGrabService(redis *cRedis.Client, grabTimeout, sendTimeout time.Duration, redisTTL config.RedisTTLConfig) *GrabService {
 	return &GrabService{
 		redis:       redis,
 		grabTimeout: int64(grabTimeout.Seconds()),
 		sendTimeout: int64(sendTimeout.Seconds()),
+		redisTTL:    redisTTL,
 	}
 }
 
@@ -36,6 +39,8 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 		redis.RoundGrabbersKey(roundID),
 		redis.RoundStateKey(roundID),
 		redis.RoomPlayersKey(roomID),
+		redis.PacketInfoKey(packetID),
+		redis.PacketAvailableKey(packetID),
 	}
 
 	args := []interface{}{
@@ -45,6 +50,7 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 		roomID,
 		"cashparty",
 		packetID,
+		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
 
 	res, err := scripts.GrabPacket.Run(ctx, s.redis, keys, args...).Slice()
@@ -114,6 +120,7 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		// （Redis Lua 禁用 math.random，会导致主从复制不一致）
 		// 1000 取 packetCount 上限 100 的 10 倍冗余，模偏差 < 1% 对机器人选包场景可接受
 		rand.Intn(1000),
+		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
 
 	res, err := scripts.RobotGrabPacket.Run(ctx, s.redis, keys, args...).Slice()
@@ -161,6 +168,7 @@ func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string
 		time.Now().Unix(),
 		"cashparty",
 		roundID,
+		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
 
 	res, err := scripts.AutoDistributePackets.Run(ctx, s.redis, keys, args...).Slice()
@@ -231,6 +239,8 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 		int(scenario),
 		rewardType,
 		rewardAmount,
+		int64(s.redisTTL.PacketDataTTL.Seconds()),
+		int64(s.redisTTL.RoundStateTTL.Seconds()),
 	}
 
 	res, err := scripts.SendPacket.Run(ctx, s.redis, keys, args...).Slice()

@@ -45,6 +45,7 @@ type GameAppService struct {
 	commissionCfg     *domain.CommissionConfig
 	timeoutCfg        *config.TimeoutConfig
 	lockCfg           *config.LockConfig
+	redisTTL          config.RedisTTLConfig
 	gameEndCallback   GameEndCallback
 	roomAppService    *RoomAppService
 	taskRunner        *async.TaskRunner
@@ -84,6 +85,7 @@ func NewGameAppService(
 	redis *cRedis.Client,
 	timeoutCfg *config.TimeoutConfig,
 	lockCfg *config.LockConfig,
+	redisTTL config.RedisTTLConfig,
 	taskRunner *async.TaskRunner,
 ) *GameAppService {
 	if lockCfg == nil {
@@ -109,6 +111,7 @@ func NewGameAppService(
 		commissionCfg:     domain.DefaultCommissionConfig(),
 		timeoutCfg:        timeoutCfg,
 		lockCfg:           lockCfg,
+		redisTTL:          redisTTL,
 		taskRunner:        taskRunner,
 	}
 }
@@ -1162,6 +1165,7 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 	args := []interface{}{
 		time.Now().Unix(),
 		opts.AllowedStatus,
+		int64(s.redisTTL.RoomDataTTL.Seconds()),
 	}
 
 	res, err := scripts.EndGame.Run(ctx, s.redis, keys, args...).Slice()

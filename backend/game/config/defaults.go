@@ -15,6 +15,7 @@ func setDefaults(cfg *Config) {
 	commonconfig.SetRobotDefaults(&cfg.Robot)
 	commonconfig.SetSettlementSchedulerDefaults(&cfg.SettlementScheduler)
 	commonconfig.SetLockDefaults(&cfg.Lock)
+	commonconfig.SetRedisTTLDefaults(&cfg.RedisTTL)
 	commonconfig.SetNacosDefaults(&cfg.Nacos.NacosConfig)
 
 	// game 独有
