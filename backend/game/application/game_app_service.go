@@ -44,6 +44,7 @@ type GameAppService struct {
 	redis             *cRedis.Client
 	commissionCfg     *domain.CommissionConfig
 	timeoutCfg        *config.TimeoutConfig
+	lockCfg           *config.LockConfig
 	gameEndCallback   GameEndCallback
 	roomAppService    *RoomAppService
 	taskRunner        *async.TaskRunner
@@ -82,8 +83,13 @@ func NewGameAppService(
 	rewardSettler *settlementService.RewardSettler,
 	redis *cRedis.Client,
 	timeoutCfg *config.TimeoutConfig,
+	lockCfg *config.LockConfig,
 	taskRunner *async.TaskRunner,
 ) *GameAppService {
+	if lockCfg == nil {
+		lockCfg = &config.LockConfig{}
+		config.SetLockDefaults(lockCfg)
+	}
 	return &GameAppService{
 		repo:              repo,
 		dbRepo:            dbRepo,
@@ -102,6 +108,7 @@ func NewGameAppService(
 		redis:             redis,
 		commissionCfg:     domain.DefaultCommissionConfig(),
 		timeoutCfg:        timeoutCfg,
+		lockCfg:           lockCfg,
 		taskRunner:        taskRunner,
 	}
 }
@@ -178,7 +185,7 @@ func (s *GameAppService) SendPacket(ctx context.Context, req *SendPacketRequest)
 
 	var result *sendPacketResult
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, 10, func() error {
+	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SendPacketLockTTL.Seconds()), func() error {
 		meta, err := s.repo.GetRoomMeta(ctx, req.RoomID)
 		if err != nil {
 			return message.NewError(message.CodeRoomNotFound)
@@ -607,7 +614,7 @@ func (s *GameAppService) OnSendTimeout(ctx context.Context, roomID string, userI
 
 	lockKey := redis.SendPacketLockKey(roomID, userID)
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, 10, func() error {
+	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SendTimeoutLockTTL.Seconds()), func() error {
 		meta, err := s.repo.GetRoomMeta(ctx, roomID)
 		if err != nil {
 			logger.Error("failed to get room meta for timeout", "room_id", roomID, "error", err)
@@ -709,7 +716,7 @@ func (s *GameAppService) OnReplaceTimeout(ctx context.Context, roomID string, le
 
 	lockKey := redis.ReplaceTimeoutLockKey(roomID, leftUserID)
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.ReplaceTimeoutLockTTL.Seconds()), func() error {
 		meta, err := s.repo.GetRoomMeta(ctx, roomID)
 		if err != nil || meta == nil {
 			logger.Error("failed to get room meta for replacement timeout", "room_id", roomID, "error", err)
@@ -885,7 +892,7 @@ func (s *GameAppService) handleDeductFailure(ctx context.Context, roomID string,
 func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string) {
 	lockKey := redis.SettleLockKey(roomID, roundID)
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.GameAppSettleLockTTL.Seconds()), func() error {
 		meta, _ := s.repo.GetRoomMeta(ctx, roomID)
 
 		var sessionPlayerTotalsKey string

@@ -43,8 +43,6 @@ const (
 	KeyRoomSeq = KeyPrefix + ":room:seq:%s"
 	// KeyDeadLetterQueue DB 死信队列。
 	KeyDeadLetterQueue = KeyPrefix + ":db:dead_letter"
-	// KeyReconcileLock 房间一致性校对锁。
-	KeyReconcileLock = KeyPrefix + ":lock:reconcile:rooms"
 	// KeyRoomSeats 房间座位集合。
 	KeyRoomSeats = KeyPrefix + ":room:seats:%s"
 	// KeyRoomSeatOwner 房间座位归属（注意：使用 ":" 分隔，禁止下划线 "_owner"）。
@@ -310,11 +308,6 @@ func RoomSeqKey(date string) string {
 // DeadLetterQueueKey 死信队列 key
 func DeadLetterQueueKey() string {
 	return KeyDeadLetterQueue
-}
-
-// ReconcileLockKey 一致性校对锁 key
-func ReconcileLockKey() string {
-	return KeyReconcileLock
 }
 
 // RoomSeatsKey 房间座位集合 key

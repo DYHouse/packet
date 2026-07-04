@@ -41,10 +41,12 @@ func (g *TraceIDGenerator) GenerateReconcileNo() string {
 	return fmt.Sprintf("REC_%s_%04d", timestamp, random)
 }
 
-func (g *TraceIDGenerator) GenerateExceptionNo() string {
-	timestamp := time.Now().Format("20060102150405")
-	random := g.idGen.GenerateInt64() % 10000
-	return fmt.Sprintf("EXC_%s_%04d", timestamp, random)
+// GenerateExceptionNo 基于 billID + exceptionType 确定性生成异常单号。
+// 相同输入始终产生相同输出，支持幂等重试（重试时同一 bill + type 生成相同 ExceptionNo，
+// 通过唯一索引/Exists 检查可识别为重复创建，跳过）。
+// 禁止使用时间戳 + 随机数（非确定性，破坏幂等）。
+func (g *TraceIDGenerator) GenerateExceptionNo(billID int64, exceptionType string) string {
+	return fmt.Sprintf("EXC_%d_%s", billID, exceptionType)
 }
 
 func (g *TraceIDGenerator) GeneratePenaltyDeductTraceID(roomID, sessionID int64) string {

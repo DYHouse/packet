@@ -66,7 +66,7 @@ func (s *GameSettleRetryScheduler) execute(ctx context.Context) error {
 		}
 
 		if allSuccess && len(userIDs) > 0 {
-			if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusSuccess); err != nil {
+			if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusFailed, dto.GameSettleStatusSuccess); err != nil {
 				logger.Error("update game settle status by session failed", "session_id", sessionID, "error", err)
 			}
 		}

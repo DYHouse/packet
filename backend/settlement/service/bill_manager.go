@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/settlement/dto"
@@ -18,29 +19,52 @@ func NewBillManager(db *gorm.DB) *BillManager {
 }
 
 func (m *BillManager) CreateBill(ctx context.Context, bill *model.BillRecord) error {
-	return m.db.WithContext(ctx).Create(bill).Error
+	if err := m.db.WithContext(ctx).Create(bill).Error; err != nil {
+		return fmt.Errorf("create bill failed: %w", err)
+	}
+	return nil
 }
 
-func (m *BillManager) UpdateBillStatus(ctx context.Context, billID int64, status int, errMsg string) error {
+func (m *BillManager) UpdateBillStatus(ctx context.Context, billID int64, fromStatus, toStatus int, errMsg string) error {
 	updates := map[string]interface{}{
-		"status": status,
+		"status": toStatus,
 	}
 	if errMsg != "" {
 		updates["error_message"] = errMsg
 	}
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("id = ?", billID).
-		Updates(updates).Error
+	// 乐观锁：只允许从 fromStatus 转换，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.BillRecord{}).
+		Where("id = ? AND status = ?", billID, fromStatus).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("update bill status failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
-func (m *BillManager) UpdateBillSuccess(ctx context.Context, billID int64, balanceBefore, balanceAfter int64) error {
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("id = ?", billID).
+func (m *BillManager) UpdateBillSuccess(ctx context.Context, billID int64, fromStatus int, balanceBefore, balanceAfter int64) error {
+	// 乐观锁：只允许从 fromStatus 转换到 Success，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.BillRecord{}).
+		Where("id = ? AND status = ?", billID, fromStatus).
 		Updates(map[string]interface{}{
 			"status":         dto.BillStatusSuccess,
 			"balance_before": balanceBefore,
 			"balance_after":  balanceAfter,
-		}).Error
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update bill success failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) GetBillByTraceID(ctx context.Context, traceID string) (*model.BillRecord, error) {
@@ -109,7 +133,7 @@ func (m *BillManager) UpdateRoundSettlementCredited(ctx context.Context, traceID
 			"settled_at":           settledAt,
 		})
 	if result.Error != nil {
-		return result.Error
+		return fmt.Errorf("update round settlement credited failed: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		// 已被其他事务标记为 Credited，视为幂等成功
@@ -131,7 +155,7 @@ func (m *BillManager) UpdateRoundSettlementStatus(ctx context.Context, traceID s
 		Where("round_trace_id = ? AND status != ?", traceID, dto.RoundStatusCredited).
 		Updates(updates)
 	if result.Error != nil {
-		return result.Error
+		return fmt.Errorf("update round settlement status failed: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		// 已是 Credited 终态，视为幂等成功
@@ -177,7 +201,7 @@ func (m *BillManager) CreateBillsInTransaction(ctx context.Context, bills []*mod
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, bill := range bills {
 			if err := tx.Create(bill).Error; err != nil {
-				return err
+				return fmt.Errorf("create bill failed: %w", err)
 			}
 		}
 		return nil
@@ -187,11 +211,11 @@ func (m *BillManager) CreateBillsInTransaction(ctx context.Context, bills []*mod
 func (m *BillManager) CreateRoundSettlementAndBills(ctx context.Context, settlement *model.RoundSettlement, bills []*model.BillRecord) error {
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(settlement).Error; err != nil {
-			return err
+			return fmt.Errorf("create round settlement failed: %w", err)
 		}
 		for _, bill := range bills {
 			if err := tx.Create(bill).Error; err != nil {
-				return err
+				return fmt.Errorf("create bill failed: %w", err)
 			}
 		}
 		return nil
@@ -201,10 +225,10 @@ func (m *BillManager) CreateRoundSettlementAndBills(ctx context.Context, settlem
 func (m *BillManager) CreateBillsPairInTransaction(ctx context.Context, bill1 *model.BillRecord, bill2 *model.BillRecord) error {
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(bill1).Error; err != nil {
-			return err
+			return fmt.Errorf("create bill failed: %w", err)
 		}
 		if err := tx.Create(bill2).Error; err != nil {
-			return err
+			return fmt.Errorf("create bill failed: %w", err)
 		}
 		return nil
 	})
@@ -218,18 +242,31 @@ func (m *BillManager) GetBillsByBatchID(ctx context.Context, batchID string) ([]
 	return bills, err
 }
 
-func (m *BillManager) UpdateBillRefundStatus(ctx context.Context, billID int64, refundStatus int, refundOrderNo string) error {
+func (m *BillManager) UpdateBillRefundStatus(ctx context.Context, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
 	updates := map[string]interface{}{
-		"refund_status":   refundStatus,
+		"refund_status":   toRefundStatus,
 		"refund_order_no": refundOrderNo,
 	}
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("id = ?", billID).
-		Updates(updates).Error
+	// 乐观锁：只允许从 fromRefundStatus 转换，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.BillRecord{}).
+		Where("id = ? AND refund_status = ?", billID, fromRefundStatus).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("update bill refund status failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromRefundStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) CreateRefundAudit(ctx context.Context, refund *model.RefundAudit) error {
-	return m.db.WithContext(ctx).Create(refund).Error
+	if err := m.db.WithContext(ctx).Create(refund).Error; err != nil {
+		return fmt.Errorf("create refund audit failed: %w", err)
+	}
+	return nil
 }
 
 func (m *BillManager) GetRefundAuditByOrderNo(ctx context.Context, refundOrderNo string) (*model.RefundAudit, error) {
@@ -265,7 +302,7 @@ func (m *BillManager) UpdateRefundAuditStatus(ctx context.Context, refundID int6
 		Where("id = ? AND status = ?", refundID, dto.RefundStatusPending).
 		Updates(updates)
 	if result.Error != nil {
-		return result.Error
+		return fmt.Errorf("update refund audit status failed: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		// 已不是 Pending（已被审批/拒绝/退款完成），视为幂等成功
@@ -274,56 +311,170 @@ func (m *BillManager) UpdateRefundAuditStatus(ctx context.Context, refundID int6
 	return nil
 }
 
-func (m *BillManager) UpdateRefundAuditError(ctx context.Context, refundID int64, errMsg string) error {
-	return m.db.WithContext(ctx).Model(&model.RefundAudit{}).
-		Where("id = ?", refundID).
-		Update("error_message", errMsg).Error
+func (m *BillManager) UpdateRefundAuditToProcessing(ctx context.Context, refundID int64, fromStatus int) error {
+	// 乐观锁：只允许从 fromStatus 状态转换到 Processing，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
+		Where("id = ? AND status = ?", refundID, fromStatus).
+		Update("status", dto.RefundStatusProcessing)
+	if result.Error != nil {
+		return fmt.Errorf("update refund audit to processing failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
-func (m *BillManager) UpdateRefundSuccessInTransaction(ctx context.Context, refundID int64, platformTransID string, refundedAt time.Time) error {
+func (m *BillManager) UpdateRefundAuditError(ctx context.Context, refundID int64, fromStatus int, errMsg string) error {
+	// 乐观锁：只允许从 fromStatus 状态记录错误，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
+		Where("id = ? AND status = ?", refundID, fromStatus).
+		Update("error_message", errMsg)
+	if result.Error != nil {
+		return fmt.Errorf("update refund audit error failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
+}
+
+func (m *BillManager) UpdateRefundSuccessInTransaction(ctx context.Context, refundID int64, refundFromStatus, billFromStatus int, platformTransID string, refundedAt time.Time) error {
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.RefundAudit{}).
-			Where("id = ?", refundID).
+		// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Refunded。
+		// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+		result := tx.Model(&model.RefundAudit{}).
+			Where("id = ? AND status = ?", refundID, refundFromStatus).
 			Updates(map[string]interface{}{
 				"status":            dto.RefundStatusRefunded,
 				"refunded_at":       refundedAt,
 				"platform_trans_id": platformTransID,
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return fmt.Errorf("update refund audit to refunded failed: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			// 退款单已不是 refundFromStatus（已被其他事务处理），视为幂等成功
+			return nil
 		}
 
 		var refund model.RefundAudit
 		if err := tx.Where("id = ?", refundID).First(&refund).Error; err != nil {
-			return err
+			return fmt.Errorf("get refund audit failed: %w", err)
 		}
 
-		if err := tx.Model(&model.BillRecord{}).
-			Where("id = ?", refund.BillID).
+		// 乐观锁：bill 只允许从 billFromStatus 转换到 Refunded。
+		// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+		billResult := tx.Model(&model.BillRecord{}).
+			Where("id = ? AND status = ?", refund.BillID, billFromStatus).
 			Updates(map[string]interface{}{
 				"refund_status":   dto.RefundStatusRefunded,
 				"refund_amount":   refund.RefundAmount,
 				"refund_order_no": refund.RefundOrderNo,
 				"status":          dto.BillStatusRefunded,
-			}).Error; err != nil {
-			return err
+			})
+		if billResult.Error != nil {
+			return fmt.Errorf("update bill to refunded failed: %w", billResult.Error)
+		}
+		if billResult.RowsAffected == 0 {
+			// 账单已不是 billFromStatus（已被其他事务处理），视为幂等成功
+			return nil
 		}
 
 		return nil
 	})
 }
 
+// CreateRefundAuditAndUpdateBillRefundStatusInTransaction 在传入的 tx 内原子地创建 refund_audit 并更新 bill 的 refund_status，
+// 防止只创建 refund_audit 但未更新 bill refund_status 造成数据不一致。
+func (m *BillManager) CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ctx context.Context, tx *gorm.DB, refundAudit *model.RefundAudit, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
+	if err := tx.Create(refundAudit).Error; err != nil {
+		return fmt.Errorf("create refund audit and update bill refund status failed: %w", err)
+	}
+
+	// 乐观锁：只允许从 fromRefundStatus 转换，防止并发覆盖。
+	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
+	result := tx.Model(&model.BillRecord{}).
+		Where("id = ? AND refund_status = ?", billID, fromRefundStatus).
+		Updates(map[string]interface{}{
+			"refund_status":   toRefundStatus,
+			"refund_order_no": refundOrderNo,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("create refund audit and update bill refund status failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromRefundStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
+}
+
+// RejectRefundInTransaction 在传入的 tx 内原子地拒绝 refund_audit 并更新 bill 的 refund_status，
+// 防止只更新 refund_audit 但未更新 bill refund_status 造成数据不一致。
+func (m *BillManager) RejectRefundInTransaction(ctx context.Context, tx *gorm.DB, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
+	// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Rejected，防止并发覆盖。
+	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
+	result := tx.Model(&model.RefundAudit{}).
+		Where("id = ? AND status = ?", refundID, refundFromStatus).
+		Updates(map[string]interface{}{
+			"status":         dto.RefundStatusRejected,
+			"approved_at":    time.Now(),
+			"approve_remark": errMsg,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("reject refund in transaction failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 退款单已不是 refundFromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+
+	// 乐观锁：bill 只允许从 billFromRefundStatus 转换，防止并发覆盖。
+	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
+	billResult := tx.Model(&model.BillRecord{}).
+		Where("id = ? AND refund_status = ?", billID, billFromRefundStatus).
+		Updates(map[string]interface{}{
+			"refund_status": billToRefundStatus,
+		})
+	if billResult.Error != nil {
+		return fmt.Errorf("reject refund in transaction failed: %w", billResult.Error)
+	}
+	if billResult.RowsAffected == 0 {
+		// 账单已不是 billFromRefundStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
+}
+
 func (m *BillManager) UpdateRoundSettlementDeductSuccess(ctx context.Context, roundTraceID string, successCount int, deductedAt time.Time) error {
-	return m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
-		Where("round_trace_id = ?", roundTraceID).
+	// 乐观锁：只允许在 deducted_at 未设置时更新，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
+		Where("round_trace_id = ? AND deducted_at IS NULL", roundTraceID).
 		Updates(map[string]interface{}{
 			"deduct_success_count": successCount,
 			"deducted_at":          deductedAt,
-		}).Error
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update round settlement deduct success failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已记录扣款成功（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) UpdateRoundSettlementSettleInfo(ctx context.Context, roundTraceID string, senderID int64, senderType string, totalAmount, commission int64, playerCount int, minPlayerID int64) error {
-	return m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
-		Where("round_trace_id = ?", roundTraceID).
+	// 乐观锁：只允许在 settle_info 未填充（sender_id = 0）时更新，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
+		Where("round_trace_id = ? AND sender_id = 0", roundTraceID).
 		Updates(map[string]interface{}{
 			"sender_id":     senderID,
 			"sender_type":   senderType,
@@ -331,7 +482,15 @@ func (m *BillManager) UpdateRoundSettlementSettleInfo(ctx context.Context, round
 			"commission":    commission,
 			"player_count":  playerCount,
 			"min_player_id": minPlayerID,
-		}).Error
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update round settlement settle info failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已填充 settle_info（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 func (m *BillManager) GetBillByBatchAndUser(ctx context.Context, batchID string, userID int64) (*model.BillRecord, error) {
@@ -356,18 +515,24 @@ func (m *BillManager) GetRetryableCredits(ctx context.Context, limit int) ([]*mo
 }
 
 func (m *BillManager) SetNextRetryTime(ctx context.Context, billID int64, nextRetryAt time.Time) error {
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
+	if err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Where("id = ?", billID).
-		Update("next_retry_at", nextRetryAt).Error
+		Update("next_retry_at", nextRetryAt).Error; err != nil {
+		return fmt.Errorf("set next retry time failed: %w", err)
+	}
+	return nil
 }
 
 func (m *BillManager) IncrementRetryCountWithNextRetryTime(ctx context.Context, billID int64, nextRetryAt time.Time) error {
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
+	if err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Where("id = ?", billID).
 		Updates(map[string]interface{}{
 			"retry_count":   gorm.Expr("retry_count + 1"),
 			"next_retry_at": nextRetryAt,
-		}).Error
+		}).Error; err != nil {
+		return fmt.Errorf("increment retry count failed: %w", err)
+	}
+	return nil
 }
 
 func (m *BillManager) GetFailedFirstRoundSettlements(ctx context.Context, since time.Time, limit int) ([]*model.RoundSettlement, error) {
@@ -391,9 +556,12 @@ func (m *BillManager) GetDeductedButNotSettled(ctx context.Context, since time.T
 }
 
 func (m *BillManager) UpdateBillExceptionID(ctx context.Context, billID, exceptionID int64) error {
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
+	if err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Where("id = ?", billID).
-		Update("exception_id", exceptionID).Error
+		Update("exception_id", exceptionID).Error; err != nil {
+		return fmt.Errorf("update bill exception id failed: %w", err)
+	}
+	return nil
 }
 
 func (m *BillManager) GetRefundsByStatus(ctx context.Context, status int, limit int, offset int) ([]*model.RefundAudit, error) {
@@ -437,19 +605,6 @@ func (m *BillManager) GetBillsBySessionTypeAndUser(ctx context.Context, sessionI
 	return bills, err
 }
 
-// CreateBillsOnly 仅批量创建账单，不更新轮次结算状态
-// 用于 creditRound：round_settlement.status 由 SettleRound 在所有子结算（credit+reward）成功后统一置为 Credited
-func (m *BillManager) CreateBillsOnly(ctx context.Context, bills []*model.BillRecord) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, bill := range bills {
-			if err := tx.Create(bill).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 // AggregatePayOutBySession 按玩家聚合该游戏的入账金额（amount > 0 的 Bill），返回 map[userID]sum(amount)
 func (m *BillManager) AggregatePayOutBySession(ctx context.Context, sessionID int64) (map[int64]int64, error) {
 	type result struct {
@@ -474,17 +629,27 @@ func (m *BillManager) AggregatePayOutBySession(ctx context.Context, sessionID in
 }
 
 // UpdateGameSettleStatusByUser 标记该玩家在该游戏中所有 Bill 的游戏级结算状态
-func (m *BillManager) UpdateGameSettleStatusByUser(ctx context.Context, sessionID int64, userID int64, status int) error {
+func (m *BillManager) UpdateGameSettleStatusByUser(ctx context.Context, sessionID int64, userID int64, fromStatus, toStatus int) error {
 	now := time.Now()
 	updates := map[string]interface{}{
-		"game_settle_status": status,
+		"game_settle_status": toStatus,
 	}
-	if status == dto.BillGameSettleSettled {
+	if toStatus == dto.BillGameSettleSettled {
 		updates["game_settled_at"] = now
 	}
-	return m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("session_id = ? AND user_id = ?", sessionID, userID).
-		Updates(updates).Error
+	// 乐观锁：只允许从 fromStatus 转换，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.BillRecord{}).
+		Where("session_id = ? AND user_id = ? AND game_settle_status = ?", sessionID, userID, fromStatus).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("update game settle status by user failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 // IsPlayerGameSettled 检查指定玩家在指定会话中是否已完成游戏级结算
@@ -522,17 +687,27 @@ func (m *BillManager) GetAllRoundSettlementsBySession(ctx context.Context, sessi
 }
 
 // UpdateGameSettleStatusBySession 标记该游戏所有 RoundSettlement 的游戏级结算状态
-func (m *BillManager) UpdateGameSettleStatusBySession(ctx context.Context, sessionID int64, status int) error {
+func (m *BillManager) UpdateGameSettleStatusBySession(ctx context.Context, sessionID int64, fromStatus, toStatus int) error {
 	updates := map[string]interface{}{
-		"game_settle_status": status,
+		"game_settle_status": toStatus,
 	}
-	if status == dto.GameSettleStatusSuccess {
+	if toStatus == dto.GameSettleStatusSuccess {
 		now := time.Now()
 		updates["game_settled_at"] = now
 	}
-	return m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
-		Where("session_id = ?", sessionID).
-		Updates(updates).Error
+	// 乐观锁：只允许从 fromStatus 转换，防止并发覆盖。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RoundSettlement{}).
+		Where("session_id = ? AND game_settle_status = ?", sessionID, fromStatus).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("update game settle status by session failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
 }
 
 // GetFailedGameSettlements 查询游戏级结算失败的 Session（用于重试）

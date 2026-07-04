@@ -21,6 +21,7 @@ type Config struct {
 	Avatar              commonconfig.AvatarConfig              `mapstructure:"avatar" yaml:"avatar"`
 	Robot               commonconfig.RobotConfig               `mapstructure:"robot" yaml:"robot"`
 	SettlementScheduler commonconfig.SettlementSchedulerConfig `mapstructure:"settlement_scheduler" yaml:"settlement_scheduler"`
+	Lock                commonconfig.LockConfig                `mapstructure:"lock" yaml:"lock"`
 	Lua                 commonconfig.LuaConfig                 `mapstructure:"lua" yaml:"lua"`
 }
 

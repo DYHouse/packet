@@ -16,6 +16,7 @@ import (
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
+	"gorm.io/gorm"
 )
 
 const defaultMaxConcurrentDeduct = 20
@@ -25,7 +26,9 @@ type DeductService struct {
 	billMgr             *BillManager
 	redis               *cRedis.Client
 	traceIDGen          *TraceIDGenerator
+	db                  *gorm.DB
 	cfg                 *config.PlatformConfig
+	lockCfg             *config.LockConfig
 	creditRetrySvc      *CreditRetryService
 	userIDConvert       *UserIDConvertService
 	callMgr             *PlatformCallManager
@@ -39,7 +42,9 @@ func NewDeductService(
 	billMgr *BillManager,
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
+	db *gorm.DB,
 	cfg *config.PlatformConfig,
+	lockCfg *config.LockConfig,
 	creditRetrySvc *CreditRetryService,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
@@ -49,12 +54,17 @@ func NewDeductService(
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
+	if lockCfg == nil {
+		lockCfg = config.DefaultLockConfig()
+	}
 	return &DeductService{
 		platform:            platformClient,
 		billMgr:             billMgr,
 		redis:               redis,
 		traceIDGen:          traceIDGen,
+		db:                  db,
 		cfg:                 cfg,
+		lockCfg:             lockCfg,
 		creditRetrySvc:      creditRetrySvc,
 		userIDConvert:       userIDConvert,
 		callMgr:             callMgr,
@@ -66,17 +76,24 @@ func NewDeductService(
 
 func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstRoundDeductRequest) (*dto.FirstRoundDeductResult, error) {
 	// 幂等性检查：基于 roundID 而非随机 batchID
-	if exists, _ := s.billMgr.ExistsRoundSettlement(ctx, req.RoundID); exists {
+	exists, err := s.billMgr.ExistsRoundSettlement(ctx, req.RoundID)
+	if err != nil {
+		return nil, fmt.Errorf("check exists failed: %w", err)
+	}
+	if exists {
 		return s.getExistingFirstRoundResult(ctx, req.RoundID)
 	}
 
 	lockKey := redis.FirstRoundDeductLockKey(req.SessionID)
 	var result *dto.FirstRoundDeductResult
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, 60, func() error {
+	err = lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.FirstRoundDeductLockTTL.Seconds()), func() error {
 		// 锁内二次检查
-		if exists, _ := s.billMgr.ExistsRoundSettlement(ctx, req.RoundID); exists {
-			var err error
+		exists, err := s.billMgr.ExistsRoundSettlement(ctx, req.RoundID)
+		if err != nil {
+			return fmt.Errorf("check exists failed: %w", err)
+		}
+		if exists {
 			result, err = s.getExistingFirstRoundResult(ctx, req.RoundID)
 			return err
 		}
@@ -211,20 +228,36 @@ func (s *DeductService) executeBatchDeduct(ctx context.Context, bills []*model.B
 }
 
 func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.BillRecord, amount int64) error {
+	// 1. 幂等跳过：已成功的账单不再重复扣款
+	if bill.Status == dto.BillStatusSuccess {
+		return nil
+	}
+
+	// 2. 重试场景：账单已处于 Processing，应先查询平台状态
+	if bill.Status == dto.BillStatusProcessing {
+		// TODO: 待平台提供 QueryStatus 接口后，先查询平台扣款状态以避免重复扣款
+		// 当前先 fall through 重试 RPC（平台应按 BizOrderNo 保证幂等）
+	}
+
+	// 3. 将账单置为 Processing（乐观锁 WHERE status = currentStatus）
+	if err := s.billMgr.UpdateBillStatus(ctx, bill.ID, bill.Status, dto.BillStatusProcessing, ""); err != nil {
+		return fmt.Errorf("update bill to processing failed: %w", err)
+	}
+
 	// 机器人虚拟通道
 	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
 		if err := s.virtualBalance.Deduct(ctx, bill.UserID, amount); err != nil {
-			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual deduct failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
-		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
 	}
 
 	// 原流程不变（真人玩家）
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
@@ -252,7 +285,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 
 	result, err := s.platform.Debit(ctx, debitReq)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
@@ -268,7 +301,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 	if err != nil {
 		logger.Error("parse balance amount failed after successful debit, mark bill as success with balance=0",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
-		if updateErr := s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, 0); updateErr != nil {
+		if updateErr := s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, 0); updateErr != nil {
 			logger.Error("update bill success failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
 		}
 		if callLog != nil {
@@ -280,7 +313,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 		}
 		return nil
 	}
-	if err := s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter); err != nil {
+	if err := s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter); err != nil {
 		logger.Error("update bill success failed", "bill_id", bill.ID, "error", err)
 		return err
 	}
@@ -324,12 +357,12 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 				AppliedBy:     0,
 			}
 
-			if err := s.billMgr.CreateRefundAudit(ctx, refundAudit); err != nil {
-				logger.Error("create refund audit failed", "user_id", userID, "batch_id", batchID, "error", err)
+			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				return s.billMgr.CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ctx, tx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
+			}); err != nil {
+				logger.Error("create refund audit and update bill refund status failed", "user_id", userID, "batch_id", batchID, "error", err)
 				continue
 			}
-
-			s.billMgr.UpdateBillRefundStatus(ctx, bill.ID, dto.RefundStatusPending, refundOrderNo)
 		}
 	}
 }
@@ -424,13 +457,21 @@ func (s *DeductService) DeductForLaterRound(ctx context.Context, req *dto.LaterR
 }
 
 func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.SystemPacketDeductRequest) error {
-	if exists, _ := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket); exists {
+	exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
+	if err != nil {
+		return fmt.Errorf("check exists failed: %w", err)
+	}
+	if exists {
 		return nil
 	}
 
 	lockKey := redis.SystemPacketDeductLockKey(req.RoundID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
-		if exists, _ := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket); exists {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SystemPacketDeductLockTTL.Seconds()), func() error {
+		exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
+		if err != nil {
+			return fmt.Errorf("check exists failed: %w", err)
+		}
+		if exists {
 			return nil
 		}
 
@@ -477,12 +518,20 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 }
 
 func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDeductRequest, lockKey string) error {
-	if exists, _ := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, req.BillType); exists {
+	exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
+	if err != nil {
+		return fmt.Errorf("check exists failed: %w", err)
+	}
+	if exists {
 		return nil
 	}
 
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
-		if exists, _ := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, req.BillType); exists {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.LaterRoundDeductLockTTL.Seconds()), func() error {
+		exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
+		if err != nil {
+			return fmt.Errorf("check exists failed: %w", err)
+		}
+		if exists {
 			return nil
 		}
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
@@ -67,7 +68,7 @@ func (s *SettlementCheckService) CheckDeductedButNotSettled(ctx context.Context,
 
 func (s *SettlementCheckService) handleDeductedNotSettled(ctx context.Context, settlement *model.RoundSettlement) error {
 	exception := &model.ExceptionRecord{
-		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(),
+		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(settlement.RoundID, strconv.Itoa(int(model.ExceptionTypeDeductedNotSettled))),
 		ExceptionType:   model.ExceptionTypeDeductedNotSettled,
 		RoundTraceID:    settlement.RoundTraceID,
 		RoundID:         settlement.RoundID,

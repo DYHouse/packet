@@ -30,6 +30,7 @@ type Container struct {
 	TimeoutCfg             *config.TimeoutConfig
 	AvatarCfg              *config.AvatarConfig
 	SettlementSchedulerCfg *config.SettlementSchedulerConfig
+	LockCfg                *config.LockConfig
 	DB                     *gorm.DB
 	Redis                  *cRedis.Client
 	KafkaProducer          *kafka.Producer
@@ -213,6 +214,7 @@ func (c *Container) InitAppServices() {
 		c.rewardSettler,
 		c.Redis,
 		c.TimeoutCfg,
+		c.LockCfg,
 		c.TaskRunner,
 	)
 

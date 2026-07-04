@@ -23,6 +23,7 @@ type RefundService struct {
 	traceIDGen    *TraceIDGenerator
 	db            *gorm.DB
 	cfg           *config.PlatformConfig
+	lockCfg       *config.LockConfig
 	userIDConvert *UserIDConvertService
 	callMgr       *PlatformCallManager
 }
@@ -34,11 +35,15 @@ func NewRefundService(
 	traceIDGen *TraceIDGenerator,
 	db *gorm.DB,
 	cfg *config.PlatformConfig,
+	lockCfg *config.LockConfig,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
 ) *RefundService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
+	}
+	if lockCfg == nil {
+		lockCfg = config.DefaultLockConfig()
 	}
 	return &RefundService{
 		platform:      platformClient,
@@ -47,6 +52,7 @@ func NewRefundService(
 		traceIDGen:    traceIDGen,
 		db:            db,
 		cfg:           cfg,
+		lockCfg:       lockCfg,
 		userIDConvert: userIDConvert,
 		callMgr:       callMgr,
 	}
@@ -55,7 +61,7 @@ func NewRefundService(
 func (s *RefundService) ApplyForRefund(ctx context.Context, req *dto.RefundApplyRequest) (string, error) {
 	lockKey := redis.RefundApplyLockKey(req.BillID)
 	var refundOrderNo string
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.RefundApplyLockTTL.Seconds()), func() error {
 		var applyErr error
 		refundOrderNo, applyErr = s.applyForRefundLocked(ctx, req)
 		return applyErr
@@ -134,7 +140,7 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *dto.RefundApprov
 	}
 
 	lockKey := redis.RefundLockKey(req.RefundOrderNo)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.RefundApproveLockTTL.Seconds()), func() error {
 		// 锁内二次检查状态，防止并发重复退款
 		refund, err := s.billMgr.GetRefundAuditByOrderNo(ctx, req.RefundOrderNo)
 		if err != nil {
@@ -155,9 +161,25 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *dto.RefundApprov
 }
 
 func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundAudit) error {
+	// 1. 幂等跳过：已退款的不再重复处理
+	if refund.Status == dto.RefundStatusRefunded {
+		return nil
+	}
+
+	// 2. 重试场景：退款单已处于 Processing，应先查询平台状态
+	if refund.Status == dto.RefundStatusProcessing {
+		// TODO: 待平台提供 QueryStatus 接口后，先查询平台退款状态以避免重复退款
+		// 当前先 fall through 重试 RPC（平台应按 BizOrderNo 保证幂等）
+	}
+
+	// 3. 将退款单置为 Processing（乐观锁 WHERE status = Approved）
+	if err := s.billMgr.UpdateRefundAuditToProcessing(ctx, refund.ID, dto.RefundStatusApproved); err != nil {
+		return fmt.Errorf("update refund to processing failed: %w", err)
+	}
+
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, refund.UserID)
 	if err != nil {
-		s.billMgr.UpdateRefundAuditError(ctx, refund.ID, err.Error())
+		s.billMgr.UpdateRefundAuditError(ctx, refund.ID, dto.RefundStatusProcessing, err.Error())
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -184,7 +206,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 
 	creditResult, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		s.billMgr.UpdateRefundAuditError(ctx, refund.ID, err.Error())
+		s.billMgr.UpdateRefundAuditError(ctx, refund.ID, dto.RefundStatusProcessing, err.Error())
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
 				ID:           callLog.ID,
@@ -205,7 +227,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 		})
 	}
 
-	return s.billMgr.UpdateRefundSuccessInTransaction(ctx, refund.ID, platformTransID, time.Now())
+	return s.billMgr.UpdateRefundSuccessInTransaction(ctx, refund.ID, dto.RefundStatusProcessing, dto.BillStatusSuccess, platformTransID, time.Now())
 }
 
 func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectRequest) error {
@@ -219,7 +241,7 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 	}
 
 	lockKey := redis.RefundLockKey(req.RefundOrderNo)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.RefundRejectLockTTL.Seconds()), func() error {
 		// Re-check status after acquiring lock
 		refund, err := s.billMgr.GetRefundAuditByOrderNo(ctx, req.RefundOrderNo)
 		if err != nil {
@@ -229,13 +251,9 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 			return fmt.Errorf("refund status is not pending")
 		}
 
-		now := time.Now()
-		if err := s.billMgr.UpdateRefundAuditStatus(ctx, refund.ID, dto.RefundStatusRejected,
-			now, req.RejectedBy, req.Remark); err != nil {
-			return err
-		}
-
-		return s.billMgr.UpdateBillRefundStatus(ctx, refund.BillID, dto.RefundStatusRejected, req.RefundOrderNo)
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.billMgr.RejectRefundInTransaction(ctx, tx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
+		})
 	})
 }
 

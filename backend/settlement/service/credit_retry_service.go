@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/cashparty/backend/api/platform"
@@ -38,6 +39,7 @@ type CreditRetryService struct {
 	redis         *cRedis.Client
 	traceIDGen    *TraceIDGenerator
 	cfg           *config.PlatformConfig
+	lockCfg       *config.LockConfig
 	retryCfg      *CreditRetryConfig
 	exceptionMgr  *ExceptionManager
 	userIDConvert *UserIDConvertService
@@ -50,6 +52,7 @@ func NewCreditRetryService(
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
+	lockCfg *config.LockConfig,
 	exceptionMgr *ExceptionManager,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
@@ -57,12 +60,16 @@ func NewCreditRetryService(
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
+	if lockCfg == nil {
+		lockCfg = config.DefaultLockConfig()
+	}
 	return &CreditRetryService{
 		billMgr:       billMgr,
 		platform:      platform,
 		redis:         redis,
 		traceIDGen:    traceIDGen,
 		cfg:           cfg,
+		lockCfg:       lockCfg,
 		retryCfg:      DefaultCreditRetryConfig(),
 		exceptionMgr:  exceptionMgr,
 		userIDConvert: userIDConvert,
@@ -76,7 +83,7 @@ func (s *CreditRetryService) GetRetryableCredits(ctx context.Context, limit int)
 
 func (s *CreditRetryService) RetryCredit(ctx context.Context, billID int64) error {
 	lockKey := redis.BillRetryLockKey(billID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.CreditRetryLockTTL.Seconds()), func() error {
 		return s.doRetryCredit(ctx, billID)
 	})
 }
@@ -113,12 +120,12 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 			"bill_type", bill.BillType,
 			"amount", bill.Amount,
 		)
-		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, 0)
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, 0)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -145,7 +152,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 
 	result, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
 				ID:           callLog.ID,
@@ -167,7 +174,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 				Status:   model.CallLogStatusSuccess,
 			})
 		}
-		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, 0)
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, 0)
 	}
 
 	if callLog != nil {
@@ -178,7 +185,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 		})
 	}
 
-	return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
+	return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
 }
 
 func (s *CreditRetryService) calculateNextRetryTime(retryCount int) time.Time {
@@ -192,7 +199,7 @@ func (s *CreditRetryService) calculateNextRetryTime(retryCount int) time.Time {
 
 func (s *CreditRetryService) createExceptionRecord(ctx context.Context, bill *model.BillRecord, exceptionType model.ExceptionType, detail string) error {
 	exception := &model.ExceptionRecord{
-		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(),
+		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(bill.ID, strconv.Itoa(int(exceptionType))),
 		ExceptionType:   exceptionType,
 		BillID:          bill.ID,
 		RoundTraceID:    bill.RoundTraceID,

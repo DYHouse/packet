@@ -21,7 +21,6 @@ const (
 	KeyRoomNode          = rediskeys.KeyRoomNode
 	KeyRoomSeq           = rediskeys.KeyRoomSeq
 	KeyDeadLetterQueue   = rediskeys.KeyDeadLetterQueue
-	KeyReconcileLock     = rediskeys.KeyReconcileLock
 	KeyRoomSeats         = rediskeys.KeyRoomSeats
 	KeyRoomSeatOwner     = rediskeys.KeyRoomSeatOwner
 	KeyRoomQueue         = rediskeys.KeyRoomQueue
@@ -106,10 +105,6 @@ func RoomSeqKey(date string) string {
 
 func DeadLetterQueueKey() string {
 	return rediskeys.DeadLetterQueueKey()
-}
-
-func ReconcileLockKey() string {
-	return rediskeys.ReconcileLockKey()
 }
 
 func RoomSeatsKey(roomID string) string {

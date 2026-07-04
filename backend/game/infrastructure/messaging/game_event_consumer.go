@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/kafka"
+	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
@@ -16,6 +17,7 @@ import (
 	"github.com/cashparty/backend/game/model"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 	settlementService "github.com/cashparty/backend/settlement/service"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -81,7 +83,7 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 		return fmt.Errorf("unmarshal event failed: %w", err)
 	}
 
-	acquired, acquireErr := c.tryAcquire(ctx, event.TraceID)
+	acquired, token, acquireErr := c.tryAcquire(ctx, event.TraceID)
 	if acquireErr != nil {
 		// Redis 不可用（fail-closed），返回 error 让 Kafka 重试
 		return acquireErr
@@ -90,6 +92,20 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 		logger.Warn("event already processed", "trace_id", event.TraceID)
 		return nil
 	}
+
+	// 仅在处理失败时释放抢占锁，让 Kafka 重试能重新进入；
+	// 处理成功时保留锁作为 7 天幂等标记，防止重复消费。
+	shouldRelease := false
+	defer func() {
+		if !shouldRelease {
+			return
+		}
+		if releaseErr := c.releaseAcquire(ctx, event.TraceID, token); releaseErr != nil {
+			logger.Warn("failed to release acquire lock",
+				"trace_id", event.TraceID,
+				"error", releaseErr)
+		}
+	}()
 
 	var err error
 	switch event.EventType {
@@ -106,7 +122,7 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 	}
 
 	if err != nil {
-		c.releaseAcquire(ctx, event.TraceID)
+		shouldRelease = true
 		logger.Error("handle game event failed",
 			"event_type", event.EventType,
 			"trace_id", event.TraceID,
@@ -366,56 +382,46 @@ func (c *GameEventConsumer) handleRoundSettle(ctx context.Context, event *domain
 			}
 		}
 
-		logger.Info("round settled",
-			"session_id", sessionIDInt64,
-			"round_id", event.RoundID,
-			"round_no", data.RoundNo)
-
-		players := make([]*settlementDto.PlayerSettleInfo, 0, len(data.Results))
-		for _, r := range data.Results {
-			players = append(players, &settlementDto.PlayerSettleInfo{
-				UserID: parseInt64(r.UserID),
-				Amount: r.Amount,
-				IsMin:  r.UserID == data.SenderID && data.SenderType != "system",
-			})
-		}
-
-		settleReq := &settlementDto.RoundSettleRequest{
-			RoomID:           parseInt64(event.RoomID),
-			SessionID:        sessionIDInt64,
-			RoundID:          parseInt64(event.RoundID),
-			RoundNo:          data.RoundNo,
-			SenderID:         parseInt64(data.SenderID),
-			SenderType:       data.SenderType,
-			TotalAmount:      data.TotalAmount,
-			Commission:       data.Commission,
-			RoomFeePerPlayer: data.RoomFeePerPlayer,
-			MinPlayerID:      parseInt64(data.MinPlayerID),
-			Players:          players,
-			RewardType:       data.RewardType,
-			RewardAmount:     data.RewardAmount,
-		}
-
-		if err := c.settlementService.SettleRound(ctx, settleReq); err != nil {
-			// SettleRound 失败必须 return err 触发事务回滚，避免 round 标记 Ended 但平台账未结算。
-			//
-			// 幂等性分析（Kafka 重试场景）：
-			//   - handleRoundSettle 入口检查 round.status == Ended → 已处理则跳过，避免重复进入事务 ✅
-			//   - SettleRound 内部：RoundStatusCredited 早返回 + GetBillByRoundTypeAndUser 跳过已创建 bill → 幂等 ✅
-			//   - grab_record：FirstOrCreate 按 round_id + user_id 查重 → 幂等 ✅
-			//   - session_player grab_count/send_count 的 +1 更新和 special_reward 的 Create 非幂等，
-			//     由入口幂等检查兜底；仅在 TOCTOU 窗口（检查与事务执行之间）并发触发时可能重复，
-			//     此时由 tryAcquire（SetNX）兜底防止重复消费。
-			//
-			// 事务一致性：SettleRound 内部用 billMgr.db（非事务 tx），其创建的 bill records 不随主事务回滚。
-			// 这是已知设计权衡：SettleRound 的幂等机制保证重试时不会重复创建 bill。
-			// 如需严格事务一致性，需让 billMgr 支持 tx 参数（影响面较大，未在本轮修复）。
-			return fmt.Errorf("settle round failed: %w", err)
-		}
-
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	logger.Info("round settled",
+		"session_id", sessionIDInt64,
+		"round_id", event.RoundID,
+		"round_no", data.RoundNo)
+
+	// SettleRound 在主事务之外调用：主事务已提交 round 数据，SettleRound 创建平台账 bill。
+	// 若 SettleRound 失败，Kafka 重试重新投递事件；SettleRound 内部幂等（RoundStatusCredited
+	// 早返回 + GetBillByRoundTypeAndUser 跳过已创建 bill）保证不重复创建 bill。
+	players := make([]*settlementDto.PlayerSettleInfo, 0, len(data.Results))
+	for _, r := range data.Results {
+		players = append(players, &settlementDto.PlayerSettleInfo{
+			UserID: parseInt64(r.UserID),
+			Amount: r.Amount,
+			IsMin:  r.UserID == data.SenderID && data.SenderType != "system",
+		})
+	}
+
+	settleReq := &settlementDto.RoundSettleRequest{
+		RoomID:           parseInt64(event.RoomID),
+		SessionID:        sessionIDInt64,
+		RoundID:          parseInt64(event.RoundID),
+		RoundNo:          data.RoundNo,
+		SenderID:         parseInt64(data.SenderID),
+		SenderType:       data.SenderType,
+		TotalAmount:      data.TotalAmount,
+		Commission:       data.Commission,
+		RoomFeePerPlayer: data.RoomFeePerPlayer,
+		MinPlayerID:      parseInt64(data.MinPlayerID),
+		Players:          players,
+		RewardType:       data.RewardType,
+		RewardAmount:     data.RewardAmount,
+	}
+
+	if err := c.settlementService.SettleRound(ctx, settleReq); err != nil {
+		return fmt.Errorf("settle round failed: %w", err)
 	}
 
 	// Trigger robot send behavior
@@ -471,57 +477,55 @@ func (c *GameEventConsumer) handleSessionEnd(ctx context.Context, event *domain.
 			}
 		}
 
-		logger.Info("session ended",
-			"session_id", sessionIDInt64,
-			"room_id", event.RoomID,
-			"actual_rounds", data.ActualRounds)
-
-		// Trigger game-level settlement after session ends.
-		// SettleGame 失败必须 return err 触发事务回滚，避免 session 标记 Completed 但结算未完成。
-		// 重试时依赖 session 幂等检查（L390-397）和 SettleGame 内部幂等（allSettled 返回 nil）。
-		if err := c.settlementService.SettleGame(ctx, sessionIDInt64); err != nil {
-			return fmt.Errorf("settle game failed: %w", err)
-		}
-
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	logger.Info("session ended",
+		"session_id", sessionIDInt64,
+		"room_id", event.RoomID,
+		"actual_rounds", data.ActualRounds)
+
+	// SettleGame 在主事务之外调用：主事务已提交 session 数据，SettleGame 完成平台账结算。
+	// 若 SettleGame 失败，Kafka 重试重新投递事件；SettleGame 内部幂等（allSettled 返回 nil）保证不重复结算。
+	if err := c.settlementService.SettleGame(ctx, sessionIDInt64); err != nil {
+		return fmt.Errorf("settle game failed: %w", err)
 	}
 
 	return nil
 }
 
 // tryAcquire 用 SetNX 原子抢占事件处理权。
-// 返回 (true, nil) 表示抢占成功（首次处理）。
-// 返回 (false, nil) 表示已被其他 consumer 处理过（幂等跳过）。
-// 返回 (false, err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
+// 返回 (true, token, nil) 表示抢占成功（首次处理），token 为本次持有的随机值，释放锁时需传入。
+// 返回 (false, "", nil) 表示已被其他 consumer 处理过（幂等跳过）。
+// 返回 (false, "", err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
+// token 用于 releaseAcquire 校验持有者，防止 TTL 过期后误删其他实例的锁（§7.4/§15.5）。
 // 业务侧幂等（DB 唯一索引/FirstOrCreate/状态机）仍作为兜底防线。
-func (c *GameEventConsumer) tryAcquire(ctx context.Context, traceID string) (bool, error) {
+func (c *GameEventConsumer) tryAcquire(ctx context.Context, traceID string) (bool, string, error) {
 	if c.redis == nil {
-		return true, nil
+		return true, "", nil
 	}
+	token := uuid.New().String()
 	key := redisKeys.GameEventProcessedKey(traceID)
-	ok, err := c.redis.SetNX(ctx, key, 1, 7*24*time.Hour).Result()
+	ok, err := c.redis.SetNX(ctx, key, token, 7*24*time.Hour).Result()
 	if err != nil {
 		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
 			"trace_id", traceID,
 			"error", err)
-		return false, fmt.Errorf("tryAcquire SetNX failed: %w", err)
+		return false, "", fmt.Errorf("tryAcquire SetNX failed: %w", err)
 	}
-	return ok, nil
+	return ok, token, nil
 }
 
 // releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。
-func (c *GameEventConsumer) releaseAcquire(ctx context.Context, traceID string) {
+// 通过 Lua 脚本原子校验 token 后才 DEL，防止 TTL 过期后被其他实例抢占，原持有者误删新持有者的锁（§7.4/§15.5）。
+func (c *GameEventConsumer) releaseAcquire(ctx context.Context, traceID string, token string) error {
 	if c.redis == nil {
-		return
+		return nil
 	}
 	key := redisKeys.GameEventProcessedKey(traceID)
-	if err := c.redis.Del(ctx, key).Err(); err != nil {
-		logger.Warn("releaseAcquire Del failed",
-			"trace_id", traceID,
-			"error", err)
-	}
+	return lockScripts.ReleaseLockScript.Run(ctx, c.redis, []string{key}, token).Err()
 }
 
 func parseInt64(v interface{}) int64 {

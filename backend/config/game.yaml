@@ -34,6 +34,22 @@ settlement_scheduler:
     initial_delay: 1m
     lock_ttl: 300
 
+lock:
+  first_round_deduct_lock_ttl: 60s
+  later_round_deduct_lock_ttl: 30s
+  system_packet_deduct_lock_ttl: 30s
+  settle_round_lock_ttl: 30s
+  game_settle_lock_ttl: 60s
+  game_settle_retry_lock_ttl: 30s
+  credit_retry_lock_ttl: 30s
+  refund_apply_lock_ttl: 30s
+  refund_approve_lock_ttl: 30s
+  refund_reject_lock_ttl: 30s
+  send_packet_lock_ttl: 10s
+  send_timeout_lock_ttl: 10s
+  replace_timeout_lock_ttl: 30s
+  game_app_settle_lock_ttl: 30s
+
 redis:
   mode: "standalone"
   addr: "127.0.0.1:6379"

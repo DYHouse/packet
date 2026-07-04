@@ -187,10 +187,19 @@ func (s *RobotSchedulerService) sortRoomsByPriority(rooms []roomCandidate) {
 // not actually seated.
 func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roomCandidate) error {
 	// 1. Check room assign rate limit lock
-	locked, err := s.robotSchedulerRedis.AcquireRoomAssignLock(ctx, room.RoomID, s.config.Scheduler.RoomAssignLockTTL)
-	if err != nil || !locked {
+	locked, lockToken, err := s.robotSchedulerRedis.AcquireRoomAssignLock(ctx, room.RoomID, s.config.Scheduler.RoomAssignLockTTL)
+	if err != nil {
+		logger.Warn("acquire room assign lock failed", "room_id", room.RoomID, "error", err)
 		return nil // skip, rate limited
 	}
+	if !locked {
+		return nil // skip, rate limited
+	}
+	defer func() {
+		if releaseErr := s.robotSchedulerRedis.ReleaseRoomAssignLock(ctx, room.RoomID, lockToken); releaseErr != nil {
+			logger.Warn("release room assign lock failed", "room_id", room.RoomID, "error", releaseErr)
+		}
+	}()
 
 	// 2. Detect and recycle zombie robots (in room set but not seated)
 	existingRobots, _ := s.robotSchedulerRedis.GetRoomRobots(ctx, room.RoomID)

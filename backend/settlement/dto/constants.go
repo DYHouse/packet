@@ -25,6 +25,7 @@ const (
 	MaxRetryCount        int   = 3
 	PenaltyRoundID       int64 = 0
 	CreditRetryBaseDelay       = 5 * time.Second
+	CreditRetryMaxDelay        = 5 * time.Minute
 )
 
 const (
@@ -57,11 +58,12 @@ const (
 )
 
 const (
-	RefundStatusNone     = 0
-	RefundStatusPending  = 1
-	RefundStatusApproved = 2
-	RefundStatusRefunded = 3
-	RefundStatusRejected = 4
+	RefundStatusNone       = 0
+	RefundStatusPending    = 1
+	RefundStatusApproved   = 2
+	RefundStatusRefunded   = 3
+	RefundStatusRejected   = 4
+	RefundStatusProcessing = 5
 )
 
 const (
@@ -91,6 +93,7 @@ const (
 
 // BillGameSettleStatus — 单笔 Bill 的游戏级结算标记
 const (
-	BillGameSettleNone    = 0
-	BillGameSettleSettled = 1
+	BillGameSettleNone       = 0
+	BillGameSettleSettled    = 1
+	BillGameSettleProcessing = 2
 )

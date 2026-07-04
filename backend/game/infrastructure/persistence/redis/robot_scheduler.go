@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
+	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
@@ -73,9 +74,21 @@ func (s *RobotSchedulerRedis) ReleaseAssignLock(ctx context.Context, userID int6
 }
 
 // AcquireRoomAssignLock 获取房间分配限流锁
-// 返回 true 表示获取成功
-func (s *RobotSchedulerRedis) AcquireRoomAssignLock(ctx context.Context, roomID string, ttl time.Duration) (bool, error) {
-	return s.redis.SetNX(ctx, RobotRoomAssignLockKey(roomID), 1, ttl).Result()
+// 返回 (locked, token, error)：locked=true 时 token 是本次持有的随机值，释放锁时需传入
+// token 用于 ReleaseRoomAssignLock 校验持有者，防止 TTL 过期后误删其他持有者的锁
+func (s *RobotSchedulerRedis) AcquireRoomAssignLock(ctx context.Context, roomID string, ttl time.Duration) (bool, string, error) {
+	token := uuid.New().String()
+	ok, err := s.redis.SetNX(ctx, RobotRoomAssignLockKey(roomID), token, ttl).Result()
+	if err != nil {
+		return false, "", err
+	}
+	return ok, token, nil
+}
+
+// ReleaseRoomAssignLock 释放房间分配限流锁（需校验 token）
+// 若 TTL 已过期被他人抢占，GET != token，不会 del，保护新持有者
+func (s *RobotSchedulerRedis) ReleaseRoomAssignLock(ctx context.Context, roomID string, token string) error {
+	return lockScripts.ReleaseLockScript.Run(ctx, s.redis, []string{RobotRoomAssignLockKey(roomID)}, token).Err()
 }
 
 // SetRecycleCooldown 设置回收冷却

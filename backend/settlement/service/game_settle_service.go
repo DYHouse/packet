@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/cashparty/backend/api/platform"
@@ -21,6 +22,7 @@ type GameSettleService struct {
 	redis          *cRedis.Client
 	traceIDGen     *TraceIDGenerator
 	cfg            *config.PlatformConfig
+	lockCfg        *config.LockConfig
 	userIDConvert  *UserIDConvertService
 	callMgr        *PlatformCallManager
 	robotChecker   RobotChecker
@@ -33,6 +35,7 @@ func NewGameSettleService(
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
+	lockCfg *config.LockConfig,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
 	robotChecker RobotChecker,
@@ -41,12 +44,16 @@ func NewGameSettleService(
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
+	if lockCfg == nil {
+		lockCfg = config.DefaultLockConfig()
+	}
 	return &GameSettleService{
 		platform:       platformClient,
 		billMgr:        billMgr,
 		redis:          redis,
 		traceIDGen:     traceIDGen,
 		cfg:            cfg,
+		lockCfg:        lockCfg,
 		userIDConvert:  userIDConvert,
 		callMgr:        callMgr,
 		robotChecker:   robotChecker,
@@ -57,8 +64,27 @@ func NewGameSettleService(
 // SettleGame performs game-level settlement: aggregates bill records and calls platform.Settle(/settle) for each player.
 // This only reports game results (bet_amount, payout, result) without moving funds (funds already moved via Debit+Credit).
 func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) error {
+	// Cheap pre-check BEFORE acquiring lock — if all settled, short-circuit
+	allSettled, err := s.checkAllPlayersSettled(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("check all players settled failed: %w", err)
+	}
+	if allSettled {
+		logger.Info("all players already settled, skipping", "session_id", sessionID)
+		return nil
+	}
+
 	lockKey := redis.GameSettleLockKey(sessionID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 60, func() error {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.GameSettleLockTTL.Seconds()), func() error {
+		// Double-check inside lock (in case of race)
+		allSettled, err := s.checkAllPlayersSettled(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		if allSettled {
+			return nil
+		}
+
 		// Check if already settled
 		settlements, err := s.billMgr.GetAllRoundSettlementsBySession(ctx, sessionID)
 		if err != nil {
@@ -66,18 +92,6 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 		}
 		if len(settlements) == 0 {
 			return fmt.Errorf("no round settlements found for session: %d", sessionID)
-		}
-
-		// Check if game settle already done
-		allSettled := true
-		for _, rs := range settlements {
-			if rs.GameSettleStatus != dto.GameSettleStatusSuccess {
-				allSettled = false
-				break
-			}
-		}
-		if allSettled {
-			return nil
 		}
 
 		// Check all rounds are credited
@@ -88,7 +102,7 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 		}
 
 		// Mark game settle as in progress
-		if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusSettling); err != nil {
+		if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusNone, dto.GameSettleStatusSettling); err != nil {
 			logger.Error("update game settle status to settling failed", "session_id", sessionID, "error", err)
 		}
 
@@ -160,7 +174,7 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 		if !allSuccess {
 			finalStatus = dto.GameSettleStatusFailed
 		}
-		if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, finalStatus); err != nil {
+		if err := s.billMgr.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusSettling, finalStatus); err != nil {
 			logger.Error("update game settle final status failed", "session_id", sessionID, "error", err)
 		}
 
@@ -169,6 +183,24 @@ func (s *GameSettleService) SettleGame(ctx context.Context, sessionID int64) err
 		}
 		return nil
 	})
+}
+
+// checkAllPlayersSettled checks whether all round settlements for a session have GameSettleStatusSuccess.
+// Used as a cheap pre-check before acquiring the Redis lock in SettleGame.
+func (s *GameSettleService) checkAllPlayersSettled(ctx context.Context, sessionID int64) (bool, error) {
+	settlements, err := s.billMgr.GetAllRoundSettlementsBySession(ctx, sessionID)
+	if err != nil {
+		return false, fmt.Errorf("get round settlements failed: %w", err)
+	}
+	if len(settlements) == 0 {
+		return false, fmt.Errorf("no round settlements found for session: %d", sessionID)
+	}
+	for _, rs := range settlements {
+		if rs.GameSettleStatus != dto.GameSettleStatusSuccess {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // settlePlayer calls platform.Settle(/settle) for a single player's game result
@@ -182,9 +214,12 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 		return nil
 	}
 
+	// Retry case: if game_settle_status is Processing, previous RPC might have succeeded but DB update failed
+	// TODO: query platform status when available
+
 	// 机器人虚拟通道：跳过 platform.Settle，仅更新状态
 	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
-		if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleSettled); err != nil {
+		if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleNone, dto.BillGameSettleSettled); err != nil {
 			logger.Error("mark robot game settle status failed", "session_id", sessionID, "user_id", userID, "error", err)
 		}
 		return nil
@@ -228,8 +263,15 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 		logger.Warn("create call log failed", "biz_order_no", bizOrderNo, "error", callLogErr)
 	}
 
+	// Set game_settle_status to Processing before RPC (intermediate state for idempotency)
+	if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleNone, dto.BillGameSettleProcessing); err != nil {
+		return fmt.Errorf("update game settle status to processing failed: %w", err)
+	}
+
 	result, err := s.platform.Settle(ctx, settleReq)
 	if err != nil {
+		// RPC failed — revert to None so it can be retried
+		_ = s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleProcessing, dto.BillGameSettleNone)
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
 				ID:           callLog.ID,
@@ -240,8 +282,8 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 		return fmt.Errorf("game settle failed: %w", err)
 	}
 
-	// Mark all bills for this user in this game as settled
-	if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleSettled); err != nil {
+	// RPC succeeded — update to Settled
+	if err := s.billMgr.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleProcessing, dto.BillGameSettleSettled); err != nil {
 		logger.Error("mark player game settle status failed", "session_id", sessionID, "user_id", userID, "error", err)
 	}
 
@@ -259,7 +301,7 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 // RetryPlayerSettle retries game-level settle for a single player
 func (s *GameSettleService) RetryPlayerSettle(ctx context.Context, sessionID int64, userID int64) error {
 	lockKey := redis.GameSettleRetryLockKey(sessionID, userID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.GameSettleRetryLockTTL.Seconds()), func() error {
 		betMap, err := s.billMgr.AggregateBetBySession(ctx, sessionID)
 		if err != nil {
 			return fmt.Errorf("aggregate bet by session failed: %w", err)
@@ -348,19 +390,35 @@ func (s *GameSettleService) creditSessionPayout(ctx context.Context, sessionID i
 // executeSessionCredit calls platform.Credit() for a session credit bill.
 // On success, marks bill as Success. On failure, marks as Failed and sets next_retry_at.
 func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *model.BillRecord) error {
+	// Idempotency: already success
+	if bill.Status == dto.BillStatusSuccess {
+		return nil
+	}
+
+	// Retry case: bill is already Processing — previous RPC might have succeeded but DB update failed
+	// TODO: query platform status when available
+
+	// Transition bill to Processing (from current status) before calling RPC
+	if bill.Status != dto.BillStatusProcessing {
+		if err := s.billMgr.UpdateBillStatus(ctx, bill.ID, bill.Status, dto.BillStatusProcessing, ""); err != nil {
+			return fmt.Errorf("update bill to processing failed: %w", err)
+		}
+		bill.Status = dto.BillStatusProcessing
+	}
+
 	// 机器人虚拟通道
 	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
 		if err := s.virtualBalance.Credit(ctx, bill.UserID, bill.Amount); err != nil {
-			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual credit failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
-		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -387,10 +445,15 @@ func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *mode
 
 	result, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusFailed, err.Error())
-		nextRetryAt := time.Now().Add(5 * time.Second)
-		if retryErr := s.billMgr.SetNextRetryTime(ctx, bill.ID, nextRetryAt); retryErr != nil {
-			logger.Error("set next retry time failed", "bill_id", bill.ID, "error", retryErr)
+		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		// Exponential backoff: delay = base * 2^retryCount, capped at max
+		delay := time.Duration(float64(dto.CreditRetryBaseDelay) * math.Pow(2, float64(bill.RetryCount)))
+		if delay > dto.CreditRetryMaxDelay {
+			delay = dto.CreditRetryMaxDelay
+		}
+		nextRetryAt := time.Now().Add(delay)
+		if retryErr := s.billMgr.IncrementRetryCountWithNextRetryTime(ctx, bill.ID, nextRetryAt); retryErr != nil {
+			logger.Error("increment retry count with next retry time failed", "bill_id", bill.ID, "error", retryErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
@@ -413,7 +476,7 @@ func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *mode
 				Status:   model.CallLogStatusSuccess,
 			})
 		}
-		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, 0)
+		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, 0)
 	}
 
 	if callLog != nil {
@@ -424,5 +487,5 @@ func (s *GameSettleService) executeSessionCredit(ctx context.Context, bill *mode
 		})
 	}
 
-	return s.billMgr.UpdateBillSuccess(ctx, bill.ID, 0, balanceAfter)
+	return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
 }

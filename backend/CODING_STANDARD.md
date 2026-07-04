@@ -25,6 +25,7 @@
 15. [禁止的写法（Anti-Patterns）](#15-禁止的写法anti-patterns)
 16. [字符串拼接](#16-字符串拼接)
 17. [调度器（Scheduler）](#17-调度器scheduler)
+18. [分布式锁与事务规约](#18-分布式锁与事务规约)
 
 ---
 
@@ -347,6 +348,8 @@
 
 `common/lock` 包当前依赖 `redsync` 内部实现，未自持 Lua；新模块如需自持锁应直接采用上述 token + Lua 模式，不得引入新的依赖。
 
+> 本章锁规约详见 [§18 分布式锁与事务规约](#18-分布式锁与事务规约)。
+
 ### 7.4 Kafka 幂等锁（MUST）
 
 - `tryAcquire` 必须返回 `(bool, error)`：
@@ -383,12 +386,16 @@
 - **必须收敛**：[settlement/service/refund_service.go:106-121](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/refund_service.go) 当前直接 `s.db.WithContext(ctx).Transaction(...)`，必须下沉到 `BillManager`。
 - 跨服务调用（如 `SettleReward`、`SettleRound`）必须移出主事务，靠内部幂等机制保证；主事务回滚不得连带回滚 bill 记录（项目记忆约定）。
 
+> 事务规约详见 [§18 分布式锁与事务规约](#18-分布式锁与事务规约)。
+
 ### 8.3 乐观锁（MUST）
 
 所有"状态机推进"类的 UPDATE 必须带 `WHERE status = ?` 或 `WHERE status != ?` 条件，并检查 `RowsAffected`：
 
 - `RowsAffected == 0` 表示状态已被并发推进，按"幂等成功"处理：返回 `nil`（不得返回 error）。
 - 必须收敛：[settlement/service/bill_manager.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/bill_manager.go) 当前只有 `UpdateRoundSettlementCredited` / `UpdateRoundSettlementStatus` / `UpdateRefundAuditStatus` 三处带乐观锁，其余 `Update*` 方法（`UpdateBillStatus`、`UpdateBillSuccess`、`UpdateGameSettleStatusByUser`、`UpdateGameSettleStatusBySession` 等）必须补乐观锁条件。
+
+> 事务规约详见 [§18 分布式锁与事务规约](#18-分布式锁与事务规约)。
 
 ### 8.4 唯一索引与幂等（MUST）
 
@@ -929,6 +936,228 @@ handler(handlerCtx, roomID, data)
 
 ---
 
+## 18. 分布式锁与事务规约
+
+本章基于 lock-transaction-refactor 重构成果，汇总分布式锁与事务的一致性规约。锁规约编号 **DL-1 ~ DL-12**（Distributed Lock），事务规约编号 **TX-1 ~ TX-12**（Transaction）。每条规约给出 **必须（MUST）/ 应当（SHOULD）/ 不可（MUST NOT）** 约束，并附参考实现。
+
+### 18.1 DL-1：锁初始化必须用 sync.Once（MUST）
+
+`InitLocker` 必须用 `sync.Once` 保证全局只初始化一次，**禁止** `sync.Mutex` + nil 检查模式。
+
+- 历史代码 [common/lock/distributed_lock.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/distributed_lock.go) 曾用 `sync.Mutex` + nil 检查，本次重构已改为 `sync.Once`（`initOnce`）。
+- 与 §3.7 构造函数、§6.6 单例初始化规约一致。
+
+参考实现：
+
+```go
+var initOnce sync.Once
+
+func InitLocker(redis *cRedis.Client) {
+    initOnce.Do(func() {
+        redisClient = redis
+        pool := goredis.NewPool(redis.Raw())
+        redsyncClient = redsync.New(pool)
+    })
+}
+```
+
+### 18.2 DL-2：WithLock 必须有 panic recover（MUST）
+
+`WithLock` 必须用 `defer recover()` 捕获业务函数 panic，并将 panic 转换为 error 返回，**禁止** panic 直接逃逸到调用方。
+
+- recover 中必须记录 `debug.Stack()` 便于定位。
+- 包装格式统一：`fmt.Errorf("panic in lock fn: %v\n%s", r, debug.Stack())`。
+
+参考：[common/lock/distributed_lock.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/distributed_lock.go) 的 `WithLock`。
+
+### 18.3 DL-3：WithLock 必须在 defer 中释放锁（MUST）
+
+`WithLock` 获取锁后必须 `defer lock.Release(ctx)`，确保业务函数 panic 或 return 时锁被释放。
+
+- **禁止**在业务函数体内手动 `Release`（容易漏释放）。
+- **禁止**不调用 `Release`（锁只能等 TTL 过期，影响并发度）。
+
+### 18.4 DL-4：startWatchdog 必须监听 ctx.Done（MUST）
+
+`startWatchdog` 必须接收 `ctx context.Context` 参数，select 中必须包含 `case <-ctx.Done(): return`，**禁止**用 `time.Sleep` 阻塞。
+
+- watchdog 续期 goroutine 随 ctx 取消而退出，确保优雅关停。
+- 与 §17.4 SCH-4 InitialDelay 使用 select 规约一致。
+
+参考：[common/lock/distributed_lock.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/distributed_lock.go) 的 `startWatchdog`。
+
+### 18.5 DL-5：锁值必须用 UUID token（MUST）
+
+`SetNX` 的 value 必须用 `uuid.New().String()` 作为 token，**禁止**用 `"1"` 或固定字符串。
+
+- token 用于释放锁时的所有权校验（DL-6）。
+- **禁止**用 roomID / userID 等业务字段作为锁值（§7.3、§15.5）。
+- 与 §16.9 SC-9 UUID 使用规约一致。
+
+### 18.6 DL-6：锁释放必须用 Lua 脚本校验 token（MUST）
+
+锁释放必须用 Lua 脚本（`scripts.ReleaseLockScript`）校验 token 后 DEL，**禁止**裸 `redis.Del` 释放锁。
+
+- 裸 `Del` 会误删 TTL 过期后被其他实例抢占的锁（原持有者恢复后误删新持有者的锁）。
+- Lua 脚本：`if GET key == token then DEL key end`。
+
+参考：[common/lock/scripts/release_lock.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/scripts/release_lock.lua.go) 的 `ReleaseLockScript`。
+
+### 18.7 DL-7：tryAcquire 必须返回 (bool, string, error)（MUST）
+
+`tryAcquire` 必须返回 `(bool, string, error)`：token 传给调用方用于安全释放。
+
+- `false, "", nil`：已处理（幂等命中）
+- `false, "", error`：Redis 不可用（fail-closed，触发 Kafka 重试）
+- `true, token, nil`：抢占成功，token 为 `uuid.New().String()`
+
+**禁止**返回旧签名 `(bool, error)`（无法传递 token，导致裸 `Del` 释放）。
+
+### 18.8 DL-8：调用方必须保存 token 并按结果释放（MUST）
+
+调用方获取锁后必须保存 token：
+
+- 业务**失败**时用 token 调用 `releaseAcquire` 释放锁，允许重试。
+- 业务**成功**时保留锁作为幂等标记（不释放），由 TTL 过期自动清理。
+
+**禁止**成功后立即释放锁（会导致重复消费）；**禁止**失败时不释放锁（阻塞重试直到 TTL 过期）。
+
+### 18.9 DL-9：AcquireRoomAssignLock / AcquireAssignLock 必须返回 token（MUST）
+
+`AcquireRoomAssignLock` / `AcquireAssignLock` 必须返回 `(bool, string, error)`，调用方必须 `defer ReleaseXxxLock(ctx, id, token)` 释放。
+
+- **禁止**返回旧签名 `(bool, error)`（无法传递 token）。
+- **禁止**获取锁后不释放（依赖 TTL 过期影响并发度）。
+
+### 18.10 DL-10：WithRedisLock 禁止每次 nil 检查（MUST）
+
+`WithRedisLock` 及锁相关入口**禁止**每次 `if redsyncClient == nil { InitLocker(client) }` 检查。
+
+- `InitLocker` 必须在 `bootstrap` 启动时调用一次（§12 依赖注入与生命周期）。
+- 运行期 nil 检查掩盖了启动装配错误，且引入并发开销。
+
+### 18.11 DL-11：锁 TTL 必须从配置读取（MUST）
+
+锁 TTL 必须从配置读取（`cfg.Lock.XxxTTL`），**禁止**硬编码。
+
+- 新增 `LockConfig` 结构体定义在 `common/config/types.go`。
+- 默认值在 `Set*Defaults` 函数中设置，YAML 配置段必须与配置结构体字段对应。
+- 与 §17.7 SCH-7 配置外部化、§11 配置管理一致。
+
+### 18.12 DL-12：死代码必须删除（MUST）
+
+未使用的锁常量（如 `LockKeyRoom`）、未使用的锁方法（如 `ReconcileLock`）必须删除，**禁止**保留。
+
+- 与 §15.8 重复代码规约一致。
+- 死代码会误导后续开发者，增加维护成本。
+
+### 18.13 TX-1：UPDATE 必须带乐观锁条件（MUST）
+
+所有"状态机推进"类的 UPDATE 必须带 `WHERE status = ?` 条件，并检查 `RowsAffected`：
+
+- `RowsAffected == 0` 表示状态已被并发推进，按"幂等成功"处理：返回 `nil`（**不得**返回 error）。
+- 与 §8.3 乐观锁、§15.4 数据库 Anti-Pattern 一致。
+
+### 18.14 TX-2：跨表写操作必须在同一事务（MUST）
+
+跨表的写操作必须放入同一 `db.Transaction()` 中，**禁止**分散在多个独立调用中。
+
+- 如创建 `refund_audit` + 更新 `bill` refund_status 必须同一事务（`handleFirstRoundDeductFailure`）。
+- 如 `RejectRefund` 的 `UpdateRefundAuditStatus` + `UpdateBillRefundStatus` 必须同一事务。
+- 与 §8.2 事务边界规约一致。
+
+### 18.15 TX-3：RPC 调用与 DB 写必须有 Processing 中间态（MUST）
+
+RPC 调用与 DB 写操作必须有 Processing 中间态：
+
+1. 先置 Processing（带乐观锁，TX-1）
+2. 调 RPC
+3. 成功置 Success / Refunded，失败置 Failed / Rejected
+
+**禁止**直接从 Pending → Success 跳跃（RPC 成功但 DB 失败时重试会重复调 RPC）。
+
+涉及 `executeRefund` / `executeSingleDeduct` / `creditSessionPayout` / `settlePlayer` 四处。
+
+### 18.16 TX-4：重试发现 Processing 必须先查平台侧状态（MUST）
+
+重试时若发现 Processing 状态，必须先查平台侧状态（用 BizID）：
+
+- 平台已成功则置终态，**不重复调 RPC**。
+- 平台未成功则继续调 RPC。
+
+待平台 `QueryStatus` 接口可用后实施。
+
+### 18.17 TX-5：跨服务调用必须在主事务外执行（MUST）
+
+`SettleRound` / `SettleGame` 等跨服务调用必须在主 `db.Transaction()` 外执行，主事务只更新本服务的数据。
+
+- **禁止**"伪事务"——主事务回滚但跨服务调用无法回滚。
+- 与 §8.2 事务边界、项目记忆约定（SettleRound 移出主事务）一致。
+
+### 18.18 TX-6：重试退避必须用指数退避（MUST）
+
+重试退避必须用指数退避：`delay = base * 2^retryCount`，封顶 `CreditRetryMaxDelay`。
+
+- **禁止** flat `time.Second` 延迟（不递增会导致无限重试）。
+- 与 §9.5 重试规约一致。
+
+### 18.19 TX-7：重试必须更新 retry_count 和 next_retry_time（MUST）
+
+调用 `IncrementRetryCountWithNextRetryTime` 更新重试计数和下次重试时间。
+
+- **禁止**只更新状态不更新 retry_count（会导致无限重试）。
+- **禁止**用 `UpdateBillStatus` 直接覆盖状态而不递增 retry_count。
+
+### 18.20 TX-8：幂等性检查必须覆盖所有非终态（MUST）
+
+幂等性检查必须覆盖所有非终态，**禁止**只检查 Success。
+
+- 如 `DeductPenaltyToPlatform` 必须检查 `bill.Status != dto.BillStatusFailed`（覆盖 Success / Processing / Pending）。
+- 只检查 Success 会导致 Processing 状态重复调 RPC。
+
+### 18.21 TX-9：BillRecord 必须有复合唯一索引（MUST）
+
+`BillRecord` 必须有复合唯一索引 `(round_trace_id, bill_type, user_id)` 防止重复创建账单。
+
+- GORM 标签：`uniqueIndex:idx_round_trace_bill_user,priority:1` 等。
+- 与 §8.4 唯一索引与幂等规约一致。
+
+### 18.22 TX-10：ExceptionNo 必须确定性生成（MUST）
+
+`ExceptionNo` 必须用确定性生成：`EXC_{billID}_{exceptionType}`，**禁止**时间戳 + 随机数。
+
+- 确定性生成保证重试时可复现，便于幂等去重。
+- 与 §9.3 幂等键生成、§16.8 SC-8 TraceID/BizOrderNo 生成一致。
+
+### 18.23 TX-11：return err 必须用 %w 包装（MUST）
+
+所有 `return err` 必须用 `fmt.Errorf("xxx failed: %w", err)` 包装，**禁止**裸返回。
+
+- 包装格式：`"<动词+对象> failed: %w"`。
+- 与 §4.3 错误包装、§16.6 SC-6 错误包装一致。
+
+### 18.24 TX-12：禁止 if exists, _ := 模式（MUST）
+
+`if exists, _ :=` 模式**禁止**使用，必须检查 error 并返回：
+
+```go
+// 正确
+if exists, err := s.billMgr.ExistsByRoundAndType(ctx, roundID, billType); err != nil {
+    return fmt.Errorf("check exists failed: %w", err)
+} else if exists {
+    return nil
+}
+
+// 禁止
+if exists, _ := s.billMgr.ExistsByRoundAndType(...) {
+    return nil
+}
+```
+
+- 与 §4.4 错误吞没、§15.2 错误处理 Anti-Pattern 一致。
+
+---
+
 ## 附录 A：参考实现索引
 
 | 主题 | 参考文件 |
@@ -938,6 +1167,8 @@ handler(handlerCtx, roomID, data)
 | 错误码 + GameError | [common/message/errors.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/errors.go) |
 | Lua 脚本注册 | [game/infrastructure/persistence/redis/scripts/registry.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/registry.go) |
 | Token 锁释放 | [game/infrastructure/persistence/redis/scripts/robot_lock.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/robot_lock.lua.go) |
+| 分布式锁框架 | [common/lock/distributed_lock.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/distributed_lock.go) |
+| 锁释放 Lua 脚本 | [common/lock/scripts/release_lock.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/lock/scripts/release_lock.lua.go) |
 | 三层幂等 | [settlement/service/deduct_service.go:67-80](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/deduct_service.go) |
 | 指数退避重试 | [settlement/service/credit_retry_service.go:184-191](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/credit_retry_service.go) |
 | 乐观锁 UPDATE | [settlement/service/bill_manager.go:99-119](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/bill_manager.go) |
@@ -957,3 +1188,4 @@ handler(handlerCtx, roomID, data)
 | 2026-07-04 | 初版，基于 backend/ 全量代码（171 文件）分析制定 |
 | 2026-07-04 | 新增 §16 字符串拼接规约（SC-1~SC-10）；§4.3 补充 `%w` vs `%v` 说明；§7.1 补充 `common/rediskeys` 统一包说明、Prefix 尾随冒号约定、Lua 孤儿 key 禁止规则 |
 | 2026-07-04 | 新增 §17 调度器规约（SCH-1~SCH-12）；§6.2 更新为引用 §17；附录 A 调度器参考实现指向 `common/scheduler/base.go` |
+| 2026-07-04 | 新增 §18 分布式锁与事务规约（DL-1~DL-12、TX-1~TX-12）；§7.3 / §8.2 / §8.3 添加 §18 交叉引用；附录 A 补充分布式锁框架与锁释放 Lua 脚本参考实现 |

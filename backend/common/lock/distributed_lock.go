@@ -16,26 +16,17 @@ import (
 var (
 	redsyncClient *redsync.Redsync
 	redisClient   *cRedis.Client
-	mu            sync.Mutex
+	initOnce      sync.Once
 )
 
 func InitLocker(redis *cRedis.Client) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if redsyncClient != nil {
-		return
-	}
-
-	redisClient = redis
-	pool := goredis.NewPool(redis.Raw())
-	redsyncClient = redsync.New(pool)
-	logger.Info("redis locker initialized with redsync")
+	initOnce.Do(func() {
+		redisClient = redis
+		pool := goredis.NewPool(redis.Raw())
+		redsyncClient = redsync.New(pool)
+		logger.Info("redis locker initialized with redsync")
+	})
 }
-
-const (
-	LockKeyRoom = "cashparty:lock:room:%s"
-)
 
 type LockOptions struct {
 	Expiry           time.Duration
@@ -91,7 +82,7 @@ func Obtain(ctx context.Context, key string, opts *LockOptions) (*Lock, error) {
 
 	if opts.EnableWatchdog {
 		lock.watchdogStop = make(chan struct{})
-		lock.startWatchdog(opts.WatchdogInterval)
+		lock.startWatchdog(ctx, opts.WatchdogInterval)
 	}
 
 	return lock, nil
@@ -112,7 +103,7 @@ func (l *Lock) Release(ctx context.Context) error {
 	return nil
 }
 
-func (l *Lock) startWatchdog(interval time.Duration) {
+func (l *Lock) startWatchdog(ctx context.Context, interval time.Duration) {
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
@@ -135,25 +126,32 @@ func (l *Lock) startWatchdog(interval time.Duration) {
 				logger.Debug("lock extended by watchdog", "key", l.key)
 			case <-l.watchdogStop:
 				return
+			case <-ctx.Done():
+				logger.Info("watchdog stopped by ctx done", "key", l.key)
+				return
 			}
 		}
 	}()
 }
 
-func WithLock(ctx context.Context, key string, opts *LockOptions, fn func() error) error {
+func WithLock(ctx context.Context, key string, opts *LockOptions, fn func() error) (err error) {
 	lock, err := Obtain(ctx, key, opts)
 	if err != nil {
 		return err
 	}
 	defer lock.Release(ctx)
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in lock fn: %v", r)
+			logger.Error("panic recovered in WithLock",
+				"key", key, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 	return fn()
 }
 
 func WithRedisLock(ctx context.Context, client *cRedis.Client, key string, expirySeconds int, fn func() error) error {
-	if redsyncClient == nil {
-		InitLocker(client)
-	}
-
 	opts := &LockOptions{
 		Expiry:           time.Duration(expirySeconds) * time.Second,
 		RetryCount:       3,

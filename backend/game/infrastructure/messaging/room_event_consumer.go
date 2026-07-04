@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/kafka"
+	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
 	redisKeys "github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/google/uuid"
 )
 
 type RoomEventConsumer struct {
@@ -52,7 +54,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		return fmt.Errorf("parse room event failed: %w", err)
 	}
 
-	acquired, acquireErr := c.tryAcquire(ctx, event)
+	acquired, token, acquireErr := c.tryAcquire(ctx, event.EventID)
 	if acquireErr != nil {
 		// Redis 不可用（fail-closed），返回 error 让 Kafka 重试
 		return acquireErr
@@ -64,6 +66,20 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 			"user_id", event.UserID)
 		return nil
 	}
+
+	// 仅在处理失败时释放抢占锁，让 Kafka 重试能重新进入；
+	// 处理成功时保留锁作为 7 天幂等标记，防止重复消费。
+	shouldRelease := false
+	defer func() {
+		if !shouldRelease {
+			return
+		}
+		if releaseErr := c.releaseAcquire(ctx, event.EventID, token); releaseErr != nil {
+			logger.Warn("failed to release acquire lock",
+				"event_id", event.EventID,
+				"error", releaseErr)
+		}
+	}()
 
 	var handleErr error
 	switch event.EventType {
@@ -86,7 +102,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 	}
 
 	if handleErr != nil {
-		c.releaseAcquire(ctx, event)
+		shouldRelease = true
 		logger.Error("handle room event failed",
 			"event_type", event.EventType,
 			"room_id", event.RoomID,
@@ -141,36 +157,35 @@ func (c *RoomEventConsumer) handleSpectatorKick(ctx context.Context, event *doma
 }
 
 // tryAcquire 用 SetNX 原子抢占事件处理权。
-// 返回 (true, nil) 表示抢占成功（首次处理）。
-// 返回 (false, nil) 表示已被其他 consumer 处理过（幂等跳过）。
-// 返回 (false, err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
+// 返回 (true, token, nil) 表示抢占成功（首次处理），token 为本次持有的随机值，释放锁时需传入。
+// 返回 (false, "", nil) 表示已被其他 consumer 处理过（幂等跳过）。
+// 返回 (false, "", err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
+// token 用于 releaseAcquire 校验持有者，防止 TTL 过期后误删其他实例的锁（§7.4/§15.5）。
 // 业务侧幂等（DB 唯一索引/FirstOrCreate/状态机）仍作为兜底防线。
-func (c *RoomEventConsumer) tryAcquire(ctx context.Context, event *domain.RoomEvent) (bool, error) {
+func (c *RoomEventConsumer) tryAcquire(ctx context.Context, eventID string) (bool, string, error) {
 	if c.redis == nil {
-		return true, nil
+		return true, "", nil
 	}
-	key := redisKeys.RoomEventProcessedKey(event.EventID)
-	ok, err := c.redis.SetNX(ctx, key, "1", 7*24*time.Hour).Result()
+	token := uuid.New().String()
+	key := redisKeys.RoomEventProcessedKey(eventID)
+	ok, err := c.redis.SetNX(ctx, key, token, 7*24*time.Hour).Result()
 	if err != nil {
 		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
-			"event_id", event.EventID,
+			"event_id", eventID,
 			"error", err)
-		return false, fmt.Errorf("tryAcquire SetNX failed: %w", err)
+		return false, "", fmt.Errorf("tryAcquire SetNX failed: %w", err)
 	}
-	return ok, nil
+	return ok, token, nil
 }
 
 // releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。
-func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, event *domain.RoomEvent) {
+// 通过 Lua 脚本原子校验 token 后才 DEL，防止 TTL 过期后被其他实例抢占，原持有者误删新持有者的锁（§7.4/§15.5）。
+func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, eventID string, token string) error {
 	if c.redis == nil {
-		return
+		return nil
 	}
-	key := redisKeys.RoomEventProcessedKey(event.EventID)
-	if err := c.redis.Del(ctx, key).Err(); err != nil {
-		logger.Warn("releaseAcquire Del failed",
-			"event_id", event.EventID,
-			"error", err)
-	}
+	key := redisKeys.RoomEventProcessedKey(eventID)
+	return lockScripts.ReleaseLockScript.Run(ctx, c.redis, []string{key}, token).Err()
 }
 
 func (c *RoomEventConsumer) Start(ctx context.Context) error {

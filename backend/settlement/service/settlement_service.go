@@ -23,6 +23,7 @@ type SettlementService struct {
 	deductSvc      *DeductService
 	rewardSettler  *RewardSettler
 	cfg            *config.PlatformConfig
+	lockCfg        *config.LockConfig
 	userIDConvert  *UserIDConvertService
 	gameSettleSvc  *GameSettleService
 	callMgr        *PlatformCallManager
@@ -36,6 +37,7 @@ func NewSettlementService(
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
+	lockCfg *config.LockConfig,
 	deductSvc *DeductService,
 	rewardSettler *RewardSettler,
 	gameSettleSvc *GameSettleService,
@@ -47,6 +49,9 @@ func NewSettlementService(
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
+	if lockCfg == nil {
+		lockCfg = config.DefaultLockConfig()
+	}
 
 	return &SettlementService{
 		platform:       platformClient,
@@ -56,6 +61,7 @@ func NewSettlementService(
 		deductSvc:      deductSvc,
 		rewardSettler:  rewardSettler,
 		cfg:            cfg,
+		lockCfg:        lockCfg,
 		userIDConvert:  userIDConvert,
 		gameSettleSvc:  gameSettleSvc,
 		callMgr:        callMgr,
@@ -71,7 +77,7 @@ func (s *SettlementService) SettleRound(ctx context.Context, req *dto.RoundSettl
 	}
 
 	lockKey := redis.SettleRoundLockKey(req.RoundID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, 30, func() error {
+	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SettleRoundLockTTL.Seconds()), func() error {
 		existingSettlement, err := s.billMgr.GetRoundSettlementByRoundID(ctx, req.RoundID)
 		if err != nil {
 			return fmt.Errorf("get round settlement failed: %w", err)
@@ -173,7 +179,7 @@ func (s *SettlementService) creditRound(ctx context.Context, settlement *model.R
 	}
 
 	if len(bills) > 0 {
-		if err := s.billMgr.CreateBillsOnly(ctx, bills); err != nil {
+		if err := s.billMgr.CreateBillsInTransaction(ctx, bills); err != nil {
 			return 0, 0, fmt.Errorf("create grab bills failed: %w", err)
 		}
 	}
@@ -213,12 +219,19 @@ func (s *SettlementService) settleCommission(ctx context.Context, settlement *mo
 func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dto.PenaltyDeductRequest) error {
 	roundTraceID := s.traceIDGen.GeneratePenaltyDeductTraceID(req.RoomID, req.SessionID)
 
-	// 幂等检查：若已存在同 traceID + BillType + userID 的 Success 状态 bill，直接返回 nil。
-	// 对于 Processing/Failed 状态的 bill 不跳过，继续走原流程：
-	//   - platform.Debit 的 BizID 是确定性的（基于 roundTraceID），平台侧会幂等处理
-	//   - 但会重复创建 bill，需依赖 DB 唯一索引兜底（Task 9 将添加复合唯一索引）
+	// 幂等检查：若已存在同 traceID + BillType + userID 的非 Failed 状态 bill，直接返回 nil。
+	//   - Success：已扣款成功，跳过
+	//   - Processing：扣款进行中，由重试流程完成，跳过避免重复创建 bill
+	//   - Pending：扣款已排队，将由后续流程处理，跳过
+	//   - Failed：允许重新创建 bill 并重试扣款
+	// 注意：仅 Failed 状态才放行；其他非 Failed 状态都视为「已完成或进行中」从而跳过，
+	// 避免重试时重复创建 bill 导致重复扣款（依赖 DB 唯一索引兜底仍会留下冗余记录）。
 	existingBill, err := s.billMgr.GetBillByTraceTypeAndUser(ctx, roundTraceID, dto.BillTypePenaltyIncome, req.UserID)
-	if err == nil && existingBill != nil && existingBill.Status == dto.BillStatusSuccess {
+	if err == nil && existingBill != nil && existingBill.Status != dto.BillStatusFailed {
+		logger.Info("penalty bill already exists, skipping",
+			"round_trace_id", roundTraceID,
+			"bill_id", existingBill.ID,
+			"status", existingBill.Status)
 		return nil
 	}
 
@@ -258,16 +271,16 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 	// 机器人虚拟通道：跳过 platform.Debit，直接走虚拟钱包扣款
 	if isRobot {
 		if err := s.virtualBalance.Deduct(ctx, req.UserID, req.Amount); err != nil {
-			s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusFailed, err.Error())
+			s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual deduct penalty failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, req.UserID)
-		return s.billMgr.UpdateBillSuccess(ctx, playerBill.ID, 0, balanceAfter)
+		return s.billMgr.UpdateBillSuccess(ctx, playerBill.ID, dto.BillStatusProcessing, 0, balanceAfter)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, req.UserID)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -294,7 +307,7 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 
 	result, err := s.platform.Debit(ctx, debitReq)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusFailed, err.Error())
+		s.billMgr.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
 				ID:           callLog.ID,
@@ -311,7 +324,7 @@ func (s *SettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dt
 			"bill_id", playerBill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
 		balanceAfter = 0
 	}
-	if err := s.billMgr.UpdateBillSuccess(ctx, playerBill.ID, 0, balanceAfter); err != nil {
+	if err := s.billMgr.UpdateBillSuccess(ctx, playerBill.ID, dto.BillStatusProcessing, 0, balanceAfter); err != nil {
 		return err
 	}
 
