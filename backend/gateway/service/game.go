@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/strutil"
 	"github.com/cashparty/backend/gateway/config"
 	"github.com/cashparty/backend/gateway/model"
 )
@@ -94,7 +95,10 @@ func (s *GameService) StartGame(ctx context.Context, req *GameStartRequest, game
 	params.Set("version", req.Version)
 	params.Set("wsUrl", s.cfg.Merchant.WsURL)
 
-	gameURL := fmt.Sprintf("%s/%s?%s", s.cfg.Merchant.GameEntryURL, game.GameCode, params.Encode())
+	gameURL, err := strutil.BuildURLWithQuery(s.cfg.Merchant.GameEntryURL, game.GameCode, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build game url: %w", err)
+	}
 
 	gameConfig := map[string]interface{}{
 		"user_token": token,
@@ -128,7 +132,7 @@ func (s *GameService) saveUserAndGetInternalID(ctx context.Context, userID, nick
 	internalUserID, avatarURL, err := s.userSaver.SaveUser(ctx, userID, nickname, avatar, clientIP, "")
 	if err != nil {
 		logger.Error("failed to save user", "error", err, "user_id", userID)
-		return "", "", fmt.Errorf("%w: %v", ErrUserSaveFailed, err)
+		return "", "", fmt.Errorf("%w: %w", ErrUserSaveFailed, err)
 	}
 
 	return internalUserID, avatarURL, nil

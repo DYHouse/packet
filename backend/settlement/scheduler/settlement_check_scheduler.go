@@ -5,6 +5,7 @@ import (
 	"time"
 
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/service"
 )
 
@@ -18,7 +19,7 @@ func NewSettlementCheckScheduler(ctx context.Context, settlementCheck *service.S
 		Name:         "settlement_check",
 		Interval:     5 * time.Minute,
 		InitialDelay: time.Minute,
-		LockKey:      "scheduler:settlement_check:lock",
+		LockKey:      rediskeys.KeySchedulerSettlementCheckLock,
 		LockTTL:      300,
 	}
 

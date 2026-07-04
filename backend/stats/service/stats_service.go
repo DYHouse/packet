@@ -26,14 +26,9 @@ func NewStatsService(repo *repository.StatsRepository, cache redis.Cmdable) *Sta
 	return &StatsService{repo: repo, cache: cache}
 }
 
-// formatDateRange 返回日期范围的缓存 key 后缀.
-func formatDateRange(startDate, endDate time.Time) string {
-	return fmt.Sprintf("%s:%s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
-}
-
 // cacheKey 生成缓存 key.
 func cacheKey(prefix, method string, startDate, endDate time.Time) string {
-	return fmt.Sprintf("%s:%s:%s", cachePrefix, method, formatDateRange(startDate, endDate))
+	return fmt.Sprintf("%s:%s:%s", cachePrefix, method, FormatDateRange(startDate, endDate))
 }
 
 // getCache 尝试从缓存读取, 如果缓存不可用则静默降级.
@@ -122,7 +117,7 @@ func (s *StatsService) GetAmountDistribution(ctx context.Context, startDate, end
 }
 
 func (s *StatsService) GetRoomRanking(ctx context.Context, startDate, endDate time.Time, limit, offset int) ([]dto.RoomRanking, error) {
-	key := fmt.Sprintf("%s:%s:%s:%d:%d", cachePrefix, "room_ranking", formatDateRange(startDate, endDate), limit, offset)
+	key := fmt.Sprintf("%s:%s:%s:%d:%d", cachePrefix, "room_ranking", FormatDateRange(startDate, endDate), limit, offset)
 
 	if cached, ok := getCache[[]dto.RoomRanking](s, ctx, key); ok {
 		return cached, nil

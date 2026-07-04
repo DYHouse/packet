@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
@@ -47,13 +48,13 @@ func (l *CustomLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
 }
 
 func (l *CustomLogger) Info(ctx context.Context, msg string, data ...interface{}) {
-	logger.Info(msg, "data", data)
+	logger.Info(msg, "data", fmt.Sprint(data...))
 }
 
 func (l *CustomLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
-	logger.Warn(msg, "data", data)
+	logger.Warn(msg, "data", fmt.Sprint(data...))
 }
 
 func (l *CustomLogger) Error(ctx context.Context, msg string, data ...interface{}) {
-	logger.Error(msg, "data", data)
+	logger.Error(msg, "data", fmt.Sprint(data...))
 }

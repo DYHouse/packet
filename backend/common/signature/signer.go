@@ -1,9 +1,11 @@
 package signature
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,8 +28,28 @@ func (s *Signer) MerchantID() string {
 	return s.merchantID
 }
 
-func (s *Signer) SignGET(params map[string]string) (ts int64, sign string) {
-	ts = currentTimeSeconds()
+// marshalString 将字符串序列化为 JSON 字符串字面量（含双引号）。
+// 使用 json.Encoder 并禁用 HTML 转义（SetEscapeHTML(false)），
+// 以保持与原有 fmt.Sprintf 拼接行为一致（不转义 <, >, &），
+// 同时修复 " 和 \ 未转义导致的 JSON 注入与签名不一致问题。
+// 规约参考 CODING_STANDARD.md §16 SC-1。
+func marshalString(s string) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return "", err
+	}
+	// json.Encoder.Encode 末尾会追加换行符，需去除
+	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+// buildSortedJSON 构建按键名字典序排序的紧凑 JSON 字符串。
+// 格式：{"k1":"v1","k2":"v2"}（无空格），与原手写拼接格式一致。
+func buildSortedJSON(params map[string]string) (string, error) {
+	if len(params) == 0 {
+		return "", nil
+	}
 
 	sortedKeys := make([]string, 0, len(params))
 	for key := range params {
@@ -37,15 +59,51 @@ func (s *Signer) SignGET(params map[string]string) (ts int64, sign string) {
 
 	var jsonPairs []string
 	for _, key := range sortedKeys {
-		jsonPairs = append(jsonPairs, fmt.Sprintf(`"%s":"%s"`, key, params[key]))
+		keyJSON, err := marshalString(key)
+		if err != nil {
+			return "", fmt.Errorf("marshal key %q: %w", key, err)
+		}
+		valJSON, err := marshalString(params[key])
+		if err != nil {
+			return "", fmt.Errorf("marshal value %q: %w", params[key], err)
+		}
+		jsonPairs = append(jsonPairs, keyJSON+":"+valJSON)
 	}
 
-	jsonStr := ""
-	if len(jsonPairs) > 0 {
-		jsonStr = "{" + strings.Join(jsonPairs, ",") + "}"
+	return "{" + strings.Join(jsonPairs, ",") + "}", nil
+}
+
+// buildSignStr 构建签名串。
+// 格式：{paramsJSON}{"mid":"<merchantID>","ts":"<ts>"}
+// 保持与平台方约定的双 JSON 对象拼接格式。
+func buildSignStr(paramsJSON, merchantID string, ts int64) (string, error) {
+	midJSON, err := marshalString(merchantID)
+	if err != nil {
+		return "", fmt.Errorf("marshal merchantID: %w", err)
+	}
+	// ts 作为字符串值，与原有格式保持一致（"ts":"%d"）
+	tsJSON, err := marshalString(fmt.Sprintf("%d", ts))
+	if err != nil {
+		return "", fmt.Errorf("marshal ts: %w", err)
+	}
+	suffix := `{"mid":` + midJSON + `,"ts":` + tsJSON + `}`
+	return paramsJSON + suffix, nil
+}
+
+func (s *Signer) SignGET(params map[string]string) (ts int64, sign string) {
+	ts = currentTimeSeconds()
+
+	paramsJSON, err := buildSortedJSON(params)
+	if err != nil {
+		// 签名串构建失败时回退到空 params 的签名以避免 panic。
+		// 调用方应通过 VerifyGET 校验，签名不匹配将被拒绝。
+		paramsJSON = ""
 	}
 
-	signStr := fmt.Sprintf(`%s{"mid":"%s","ts":"%d"}`, jsonStr, s.merchantID, ts)
+	signStr, err := buildSignStr(paramsJSON, s.merchantID, ts)
+	if err != nil {
+		signStr, _ = buildSignStr("", s.merchantID, ts)
+	}
 	sign = s.computeHMACSHA256(signStr)
 
 	return ts, sign
@@ -54,7 +112,10 @@ func (s *Signer) SignGET(params map[string]string) (ts int64, sign string) {
 func (s *Signer) SignPOST(body []byte) (ts int64, sign string) {
 	ts = currentTimeSeconds()
 
-	signStr := fmt.Sprintf(`%s{"mid":"%s","ts":"%d"}`, string(body), s.merchantID, ts)
+	signStr, err := buildSignStr(string(body), s.merchantID, ts)
+	if err != nil {
+		signStr, _ = buildSignStr("", s.merchantID, ts)
+	}
 	sign = s.computeHMACSHA256(signStr)
 
 	return ts, sign
@@ -71,30 +132,25 @@ func (s *Signer) VerifyPOST(body []byte, ts int64, sign string) bool {
 }
 
 func (s *Signer) signGETWithTS(params map[string]string, ts int64) (int64, string) {
-	sortedKeys := make([]string, 0, len(params))
-	for key := range params {
-		sortedKeys = append(sortedKeys, key)
-	}
-	sort.Strings(sortedKeys)
-
-	var jsonPairs []string
-	for _, key := range sortedKeys {
-		jsonPairs = append(jsonPairs, fmt.Sprintf(`"%s":"%s"`, key, params[key]))
+	paramsJSON, err := buildSortedJSON(params)
+	if err != nil {
+		paramsJSON = ""
 	}
 
-	jsonStr := ""
-	if len(jsonPairs) > 0 {
-		jsonStr = "{" + strings.Join(jsonPairs, ",") + "}"
+	signStr, err := buildSignStr(paramsJSON, s.merchantID, ts)
+	if err != nil {
+		signStr, _ = buildSignStr("", s.merchantID, ts)
 	}
-
-	signStr := fmt.Sprintf(`%s{"mid":"%s","ts":"%d"}`, jsonStr, s.merchantID, ts)
 	sign := s.computeHMACSHA256(signStr)
 
 	return ts, sign
 }
 
 func (s *Signer) signPOSTWithTS(body []byte, ts int64) string {
-	signStr := fmt.Sprintf(`%s{"mid":"%s","ts":"%d"}`, string(body), s.merchantID, ts)
+	signStr, err := buildSignStr(string(body), s.merchantID, ts)
+	if err != nil {
+		signStr, _ = buildSignStr("", s.merchantID, ts)
+	}
 	return s.computeHMACSHA256(signStr)
 }
 

@@ -234,5 +234,5 @@ func (r *MessageRouter) sendError(conn *connection.Connection, cmd, requestID st
 }
 
 func generateRequestID() string {
-	return fmt.Sprintf("req_%d_%s", time.Now().UnixMilli(), uuid.New().String()[:8])
+	return fmt.Sprintf("req_%d_%s", time.Now().UnixMilli(), uuid.New().String()[:12])
 }

@@ -1,5 +1,10 @@
 package config
 
+import (
+	"os"
+	"path/filepath"
+)
+
 // NacosConfig 是 nacos 共用配置基础。各服务独有的 DataID 通过嵌入扩展。
 // Used by: game (via GameNacosConfig), gateway (via GatewayNacosConfig).
 // Not used by: stats.
@@ -52,9 +57,10 @@ func SetNacosDefaults(cfg *NacosConfig) {
 		cfg.LogLevel = "warn"
 	}
 	if cfg.LogDir == "" {
-		cfg.LogDir = "/tmp/nacos/log"
+		// 使用 filepath.Join 构建跨平台路径，禁止硬编码 /tmp（规约 SC-4）
+		cfg.LogDir = filepath.Join(os.TempDir(), "nacos", "log")
 	}
 	if cfg.CacheDir == "" {
-		cfg.CacheDir = "/tmp/nacos/cache"
+		cfg.CacheDir = filepath.Join(os.TempDir(), "nacos", "cache")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/application"
 	gameconfig "github.com/cashparty/backend/game/config"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
@@ -155,7 +156,7 @@ func clearRobotAccounts(ctx context.Context, db *gorm.DB, redisClient *cRedis.Cl
 	}
 
 	// 4. Clear user cache keys for robot users
-	userCacheKeys, err := rawClient.Keys(ctx, "cashparty:user:*").Result()
+	userCacheKeys, err := rawClient.Keys(ctx, fmt.Sprintf("%s:user:*", rediskeys.KeyPrefix)).Result()
 	if err != nil {
 		return fmt.Errorf("get user cache keys failed: %w", err)
 	}

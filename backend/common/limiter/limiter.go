@@ -7,6 +7,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 )
 
 type RateLimiter struct {
@@ -16,8 +17,9 @@ type RateLimiter struct {
 
 func NewRateLimiter(redis *cRedis.Client, prefix string) *RateLimiter {
 	return &RateLimiter{
-		redis:  redis,
-		prefix: prefix,
+		redis: redis,
+		// 加上 cashparty: 命名空间前缀，避免被清理脚本漏掉（规约 SC-5 / P1-4 修复）
+		prefix: rediskeys.KeyPrefix + ":" + prefix,
 	}
 }
 

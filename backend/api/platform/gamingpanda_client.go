@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/signature"
+	"github.com/cashparty/backend/common/strutil"
 )
 
 type GamingPandaClient struct {
@@ -59,14 +61,17 @@ func NewGamingPandaClient(cfg *GamingPandaConfig) *GamingPandaClient {
 }
 
 func (c *GamingPandaClient) GetBalance(ctx context.Context, req *BalanceRequest) (*BalanceResponse, error) {
-	url := fmt.Sprintf("%s/balance", c.baseURL)
+	requestURL, err := strutil.JoinURLPath(c.baseURL, "balance")
+	if err != nil {
+		return nil, fmt.Errorf("build balance url failed: %w", err)
+	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	resp, err := c.doPOSTWithRetry(ctx, url, body)
+	resp, err := c.doPOSTWithRetry(ctx, requestURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +82,7 @@ func (c *GamingPandaClient) GetBalance(ctx context.Context, req *BalanceRequest)
 		return nil, fmt.Errorf("read response failed: %w", err)
 	}
 
-	logger.Debug("balance response", "url", url, "status", resp.StatusCode, "body", string(respBody))
+	logger.Debug("balance response", "url", requestURL, "status", resp.StatusCode, "body", string(respBody))
 
 	var result BalanceResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
@@ -88,7 +93,10 @@ func (c *GamingPandaClient) GetBalance(ctx context.Context, req *BalanceRequest)
 }
 
 func (c *GamingPandaClient) Debit(ctx context.Context, req *DebitRequest) (*CommonResponse, error) {
-	url := fmt.Sprintf("%s/debit", c.baseURL)
+	requestURL, err := strutil.JoinURLPath(c.baseURL, "debit")
+	if err != nil {
+		return nil, fmt.Errorf("build debit url failed: %w", err)
+	}
 
 	if req.GameID == 0 {
 		req.GameID = c.gameID
@@ -108,7 +116,7 @@ func (c *GamingPandaClient) Debit(ctx context.Context, req *DebitRequest) (*Comm
 		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	resp, err := c.doPOSTWithRetry(ctx, url, body)
+	resp, err := c.doPOSTWithRetry(ctx, requestURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +135,10 @@ func (c *GamingPandaClient) Debit(ctx context.Context, req *DebitRequest) (*Comm
 }
 
 func (c *GamingPandaClient) Credit(ctx context.Context, req *CreditRequest) (*CommonResponse, error) {
-	url := fmt.Sprintf("%s/credit", c.baseURL)
+	requestURL, err := strutil.JoinURLPath(c.baseURL, "credit")
+	if err != nil {
+		return nil, fmt.Errorf("build credit url failed: %w", err)
+	}
 
 	if req.GameID == 0 {
 		req.GameID = c.gameID
@@ -147,7 +158,7 @@ func (c *GamingPandaClient) Credit(ctx context.Context, req *CreditRequest) (*Co
 		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	resp, err := c.doPOSTWithRetry(ctx, url, body)
+	resp, err := c.doPOSTWithRetry(ctx, requestURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +177,10 @@ func (c *GamingPandaClient) Credit(ctx context.Context, req *CreditRequest) (*Co
 }
 
 func (c *GamingPandaClient) Settle(ctx context.Context, req *SettleRequest) (*CommonResponse, error) {
-	url := fmt.Sprintf("%s/settle", c.baseURL)
+	requestURL, err := strutil.JoinURLPath(c.baseURL, "settle")
+	if err != nil {
+		return nil, fmt.Errorf("build settle url failed: %w", err)
+	}
 
 	if req.GameID == 0 {
 		req.GameID = c.gameID
@@ -186,7 +200,7 @@ func (c *GamingPandaClient) Settle(ctx context.Context, req *SettleRequest) (*Co
 		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	resp, err := c.doPOSTWithRetry(ctx, url, body)
+	resp, err := c.doPOSTWithRetry(ctx, requestURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +218,7 @@ func (c *GamingPandaClient) Settle(ctx context.Context, req *SettleRequest) (*Co
 	return &result, nil
 }
 
-func (c *GamingPandaClient) doPOSTWithRetry(ctx context.Context, url string, body []byte) (*http.Response, error) {
+func (c *GamingPandaClient) doPOSTWithRetry(ctx context.Context, requestURL string, body []byte) (*http.Response, error) {
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -221,7 +235,7 @@ func (c *GamingPandaClient) doPOSTWithRetry(ctx context.Context, url string, bod
 			}
 		}
 
-		resp, err := c.doPOST(ctx, url, body)
+		resp, err := c.doPOST(ctx, requestURL, body)
 		if err != nil {
 			lastErr = err
 			continue
@@ -239,10 +253,18 @@ func (c *GamingPandaClient) doPOSTWithRetry(ctx context.Context, url string, bod
 	return nil, fmt.Errorf("max retries (%d) exceeded: %w", c.maxRetries, lastErr)
 }
 
-func (c *GamingPandaClient) doPOST(ctx context.Context, url string, body []byte) (*http.Response, error) {
+func (c *GamingPandaClient) doPOST(ctx context.Context, requestURL string, body []byte) (*http.Response, error) {
 	ts, sign := c.signer.SignPOST(body)
 
-	fullURL := fmt.Sprintf("%s?mid=%s&ts=%d&sign=%s", url, c.signer.MerchantID(), ts, sign)
+	params := url.Values{}
+	params.Set("mid", c.signer.MerchantID())
+	params.Set("ts", fmt.Sprintf("%d", ts))
+	params.Set("sign", sign)
+
+	fullURL, err := strutil.BuildURLWithQuery(requestURL, "", params)
+	if err != nil {
+		return nil, fmt.Errorf("build full url failed: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewReader(body))
 	if err != nil {

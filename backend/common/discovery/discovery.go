@@ -10,6 +10,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/nacos"
+	"github.com/cashparty/backend/common/strutil"
 	commonPb "github.com/cashparty/backend/proto/common"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -93,7 +94,7 @@ func (r *nacosResolver) updateAddresses() {
 	var addrs []resolver.Address
 	for _, ins := range instances {
 		addrs = append(addrs, resolver.Address{
-			Addr:       fmt.Sprintf("%s:%d", ins.Ip, ins.Port),
+			Addr:       strutil.JoinHostPort(ins.Ip, int(ins.Port)),
 			ServerName: r.serviceName,
 		})
 	}

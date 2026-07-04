@@ -23,6 +23,7 @@
 13. [注释与文档](#13-注释与文档)
 14. [格式化与 gofmt](#14-格式化与-gofmt)
 15. [禁止的写法（Anti-Patterns）](#15-禁止的写法anti-patterns)
+16. [字符串拼接](#16-字符串拼接)
 
 ---
 
@@ -193,6 +194,7 @@
 
 - 跨层返回错误时必须用 `fmt.Errorf("<action> failed: %w", err)` 包装，保留调用栈。
 - 包装消息格式统一：`"<动词+对象> failed: %w"`，例如 `"get virtual balance failed: %w"`、`"create round settlement and bills failed: %w"`。
+- **`%w` vs `%v`**：包装 `error` 类型时 MUST 使用 `%w`（保留 `errors.Is`/`errors.As` 解包能力），禁止 `%v`。Go 1.20+ 支持多个 `%w`（如 `fmt.Errorf("%w: %w", err1, err2)`）。`%v` 仅用于包装非 error 类型（如 `recover()` 返回的 `interface{}`）。
 - **必须收敛**：[settlement/service/bill_manager.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/bill_manager.go) 当前直接返回 `m.db.WithContext(ctx).Create(bill).Error` 而不包装，新代码必须包装为 `fmt.Errorf("create bill failed: %w", err)`。
 - **必须收敛**：[game/application/](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/application/) 各 service 不包装错误，新代码必须在 service 边界做包装。
 - [common/broadcast/](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/broadcast/) 各 broadcaster 直接 `return err`，必须包装。
@@ -313,10 +315,15 @@
 ### 7.1 Key 命名（MUST）
 
 - 统一前缀 `cashparty:`，分隔符 `:`。
-- 工厂函数命名 `XxxKey(args...)`，集中在 `infrastructure/persistence/redis/keys.go`。
+- 所有 Redis key 常量与工厂函数 MUST 集中在 [common/rediskeys/keys.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/rediskeys/keys.go)（单一真相源，跨服务共享）。
+- `game/infrastructure/persistence/redis/keys.go`、`settlement/infrastructure/persistence/redis/keys.go`、`gateway/keys.go` 仅为 re-export 兼容层，MUST 委托到 `common/rediskeys`，禁止新增定义。
+- 工厂函数命名 `XxxKey(args...)`。
 - 禁止裸字符串拼 key 散落在 service 里。
+- 所有 `*Prefix` 常量 MUST 带尾随冒号（如 `KeyRoomHashPrefix = "cashparty:room:hash:"`），调用方一律 `+ "*"` 或 `+ specificKey`。
+- 多参数 key 的分隔符 MUST 统一为 `:`，禁止下划线 `_`（如 `KeyDeductLock = "cashparty:deduct:%d:%d:%d"`）。
+- Lua 脚本中使用的 key 前缀 MUST 在 `common/rediskeys` 有对应常量，禁止出现 Lua 孤儿 key。
 
-参考：[game/infrastructure/persistence/redis/keys.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/keys.go)、[settlement/infrastructure/persistence/redis/keys.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/infrastructure/persistence/redis/keys.go)。
+参考：[common/rediskeys/keys.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/rediskeys/keys.go)、[game/infrastructure/persistence/redis/scripts/packet.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/packet.lua.go)（Lua key 与 Go 常量映射注释）。
 
 ### 7.2 Lua 脚本（MUST）
 
@@ -726,6 +733,80 @@ func respondError(c *gin.Context, httpStatus int, code int, msg string) {
 
 ---
 
+## 16. 字符串拼接
+
+字符串拼接是后端代码中最易引入安全漏洞（JSON 注入、URL 双斜杠、签名绕过）与正确性 Bug（Redis key 命名、错误包装丢失解包）的领域。本节规约覆盖 JSON、URL、host:port、文件路径、Redis key、错误包装、SQL、TraceID、UUID 七大场景。
+
+### 16.1 SC-1：JSON 构建（MUST）
+
+- 构建 JSON 字符串（用于协议、签名、存储）MUST 使用 `json.Marshal` 或 `json.NewEncoder`。
+- **禁止** `fmt.Sprintf` 反引号模板拼接含用户输入的 JSON（token/roomID/userID 含 `"` 或 `\` 会破坏协议）。
+- 签名场景如需控制 HTML 转义，使用 `json.NewEncoder` + `SetEscapeHTML(false)`。
+
+参考：[gateway/server/server.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/gateway/server/server.go)（`json.Marshal` 替代内联 JSON）、[common/signature/signer.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/signature/signer.go)（`json.NewEncoder` + `SetEscapeHTML(false)`）。
+
+### 16.2 SC-2：URL 拼接（MUST）
+
+- URL 路径拼接 MUST 使用 `url.JoinPath`（Go 1.19+）或 [strutil.JoinURLPath](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/strutil/url.go)，自动处理末尾斜杠避免双斜杠。
+- query 参数 MUST 使用 `url.Values.Encode()`，禁止手动 `fmt.Sprintf("%s?%s", ...)`。
+- 完整 URL + query 拼接使用 `strutil.BuildURLWithQuery`。
+
+参考：[api/platform/gamingpanda_client.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/api/platform/gamingpanda_client.go)、[gateway/service/game.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/gateway/service/game.go)。
+
+### 16.3 SC-3：host:port 构建（MUST）
+
+- 构建 `host:port` 地址（gRPC、HTTP 监听、服务发现）MUST 使用 `net.JoinHostPort(host, strconv.Itoa(port))` 或 [strutil.JoinHostPort](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/strutil/hostport.go)。
+- **禁止** `fmt.Sprintf("%s:%d", ip, port)`（IPv6 地址不含方括号会导致解析错误）。
+
+参考：[common/discovery/discovery.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/discovery/discovery.go)、[common/nacos/client.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/nacos/client.go)。
+
+### 16.4 SC-4：文件路径构建（MUST）
+
+- 跨平台文件路径 MUST 使用 `filepath.Join`，禁止硬编码 `/` 分隔符。
+- 临时目录 MUST 使用 `os.TempDir()` 而非硬编码 `/tmp`。
+
+参考：[common/config/nacos.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/config/nacos.go)。
+
+### 16.5 SC-5：Redis key 构建（MUST）
+
+- Redis key MUST 使用 [common/rediskeys](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/rediskeys/keys.go) 包的常量或工厂函数，禁止散落在 service 里的裸字符串拼接。
+- 详见 §7.1。
+
+### 16.6 SC-6：错误包装（MUST）
+
+- 包装底层 error MUST 使用 `fmt.Errorf("...: %w", err)`，禁止 `%v` 包装 `error` 类型。
+- Go 1.20+ 支持多个 `%w`（如 `fmt.Errorf("%w: %w", err1, err2)`）。
+- `%v` 仅用于包装非 error 类型（如 `recover()` 返回的 `interface{}`）。
+- 详见 §4.3。
+
+### 16.7 SC-7：SQL 查询构建（MUST）
+
+- 动态 SQL MUST 使用 GORM 占位符 `?` 传递值，禁止字符串拼接值。
+- 动态 WHERE 子句仅允许拼接字面量结构（如 `AND col = ?`），值通过 args 传递。
+- 无法参数化的动态结构（如 CASE WHEN 分支标签）MUST 在配置加载时做白名单字符校验。
+
+参考：[stats/repository/stats_repository.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/stats/repository/stats_repository.go)（`validateAmountRanges` 白名单校验）、[stats/config/config.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/stats/config/config.go)。
+
+### 16.8 SC-8：TraceID / BizOrderNo 生成（MUST）
+
+- TraceID / BizOrderNo MUST 通过 [TraceIDGenerator](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/trace_id_generator.go) 方法生成，禁止业务代码内联 `fmt.Sprintf`。
+- 基于业务语义确定性生成（重试时可复现），便于幂等去重。
+
+参考：[settlement/service/trace_id_generator.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/service/trace_id_generator.go)（`GenerateGameSettleTraceID`、`GenerateSessionCreditTraceID`）。
+
+### 16.9 SC-9：UUID 使用（MUST）
+
+- 生成唯一 ID MUST 使用 `github.com/google/uuid`（`uuid.New().String()`），禁止 [common/utils/utils.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/utils/utils.go) 的手写 UUID。
+- 截断 UUID 不得少于 12 字符（`uuid.New().String()[:12]`），禁止 `[:8]` 增加碰撞概率。
+
+### 16.10 SC-10：Redis key 分隔符与 Prefix 约定（MUST）
+
+- Redis key 多参数分隔符 MUST 使用 `:`，禁止下划线 `_`。
+- 所有 `*Prefix` 常量 MUST 带尾随冒号（如 `KeyRoomHashPrefix = "cashparty:room:hash:"`），调用方一律 `+ "*"` 而非 `+ ":*"`。
+- 详见 §7.1。
+
+---
+
 ## 附录 A：参考实现索引
 
 | 主题 | 参考文件 |
@@ -752,3 +833,4 @@ func respondError(c *gin.Context, httpStatus int, code int, msg string) {
 | 日期 | 变更 |
 |---|---|
 | 2026-07-04 | 初版，基于 backend/ 全量代码（171 文件）分析制定 |
+| 2026-07-04 | 新增 §16 字符串拼接规约（SC-1~SC-10）；§4.3 补充 `%w` vs `%v` 说明；§7.1 补充 `common/rediskeys` 统一包说明、Prefix 尾随冒号约定、Lua 孤儿 key 禁止规则 |

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -21,6 +22,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+// authRequest 鉴权请求（避免 fmt.Sprintf 拼接 JSON 导致注入风险，规约 SC-1）。
+type authRequest struct {
+	Cmd       string   `json:"cmd"`
+	RequestID string   `json:"request_id"`
+	Data      authData `json:"data"`
+	Timestamp int64    `json:"timestamp"`
+}
+
+type authData struct {
+	Token string `json:"token"`
+}
+
+// reconnectRequest 重连请求（避免 fmt.Sprintf 拼接 JSON 导致注入风险，规约 SC-1）。
+type reconnectRequest struct {
+	Cmd       string        `json:"cmd"`
+	RequestID string        `json:"request_id"`
+	Data      reconnectData `json:"data"`
+}
+
+type reconnectData struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
 
 type Config struct {
 	Port            int
@@ -223,10 +248,19 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 func (s *Server) handleConnection(ctx context.Context, conn *connection.Connection, token string) {
 	defer s.cleanupConnection(conn)
 
-	authReq := fmt.Sprintf(`{"cmd":"auth","request_id":"auth_%s","data":{"token":"%s"},"timestamp":%d}`,
-		conn.ConnID, token, time.Now().UnixMilli())
+	authReq := authRequest{
+		Cmd:       "auth",
+		RequestID: "auth_" + conn.ConnID,
+		Data:      authData{Token: token},
+		Timestamp: time.Now().UnixMilli(),
+	}
+	authReqBytes, err := json.Marshal(authReq)
+	if err != nil {
+		logger.Error("marshal auth request failed", "conn_id", conn.ConnID, "error", err)
+		return
+	}
 
-	if err := s.auth.OnConnect(ctx, conn, []byte(authReq)); err != nil {
+	if err := s.auth.OnConnect(ctx, conn, authReqBytes); err != nil {
 		logger.Warn("authentication failed", "conn_id", conn.ConnID, "error", err)
 		return
 	}
@@ -265,12 +299,21 @@ func (s *Server) handleReconnect(ctx context.Context, conn *connection.Connectio
 		return
 	}
 
-	reconnectReq := fmt.Sprintf(
-		`{"cmd":"reconnect","request_id":"rc_%s","data":{"room_id":"%s","user_id":"%s"}}`,
-		conn.ConnID, roomID, conn.UserID,
-	)
+	reconnectReq := reconnectRequest{
+		Cmd:       "reconnect",
+		RequestID: "rc_" + conn.ConnID,
+		Data: reconnectData{
+			RoomID: roomID,
+			UserID: conn.UserID,
+		},
+	}
+	reconnectReqBytes, err := json.Marshal(reconnectReq)
+	if err != nil {
+		logger.Error("marshal reconnect request failed", "conn_id", conn.ConnID, "error", err)
+		return
+	}
 
-	s.router.Route(ctx, conn, []byte(reconnectReq))
+	s.router.Route(ctx, conn, reconnectReqBytes)
 }
 
 func (s *Server) readPump(ctx context.Context, conn *connection.Connection) {

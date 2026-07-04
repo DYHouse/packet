@@ -6,6 +6,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
 )
@@ -21,7 +22,7 @@ func NewRefundProcessScheduler(ctx context.Context, refundSvc *service.RefundSer
 		Name:         "refund_process",
 		Interval:     time.Minute,
 		InitialDelay: 30 * time.Second,
-		LockKey:      "scheduler:refund_process:lock",
+		LockKey:      rediskeys.KeySchedulerRefundProcessLock,
 		LockTTL:      120,
 	}
 

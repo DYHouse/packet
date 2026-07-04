@@ -200,7 +200,7 @@ func (s *GameSettleService) settlePlayer(ctx context.Context, sessionID int64, u
 		gameResult = "win"
 	}
 
-	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(fmt.Sprintf("GAME_SETTLE_%d", sessionID), dto.BillTypeGameSettle, userID)
+	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(s.traceIDGen.GenerateGameSettleTraceID(sessionID), dto.BillTypeGameSettle, userID)
 
 	settleReq := &platform.SettleRequest{
 		BizID:           bizOrderNo,
@@ -323,7 +323,7 @@ func (s *GameSettleService) creditSessionPayout(ctx context.Context, sessionID i
 		}
 	}
 
-	traceID := fmt.Sprintf("SESSION_CREDIT_%d_%d", sessionID, userID)
+	traceID := s.traceIDGen.GenerateSessionCreditTraceID(sessionID, userID)
 	bill := &model.BillRecord{
 		RoundTraceID: traceID,
 		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(traceID, dto.BillTypeSessionCredit, userID),

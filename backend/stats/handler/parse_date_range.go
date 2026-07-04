@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"fmt"
 	"time"
 
+	"github.com/cashparty/backend/stats/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -39,6 +39,7 @@ func ParseDateRange(c *gin.Context, defaultOffset int) (time.Time, time.Time, bo
 }
 
 // FormatDateRange 返回日期范围的缓存 key 后缀.
+// 委托给 service.FormatDateRange，确保全项目日期范围格式单一真相源。
 func FormatDateRange(startDate, endDate time.Time) string {
-	return fmt.Sprintf("%s:%s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	return service.FormatDateRange(startDate, endDate)
 }

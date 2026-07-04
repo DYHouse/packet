@@ -310,7 +310,9 @@ func (s *RobotSchedulerService) recycleZombieRobots(ctx context.Context, roomID 
 // status is Waiting. The returned candidates are pre-populated with seated
 // count, ready player count and room fee for downstream filtering.
 func (s *RobotSchedulerService) getWaitingRooms(ctx context.Context) []roomCandidate {
-	const scanPattern = redis.KeyRoomHashPrefix + ":*"
+	// KeyRoomHashPrefix 已带尾随冒号（cashparty:room:hash:），直接 + "*" 即可。
+	// 旧代码因 Prefix 无尾随冒号需 + ":*"，迁移到 common/rediskeys 后 Prefix 统一带尾随冒号。
+	const scanPattern = redis.KeyRoomHashPrefix + "*"
 	const scanCount = 200
 
 	roomIDs := s.scanRoomIDs(ctx, scanPattern, scanCount)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/strutil"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
@@ -116,7 +117,7 @@ func (c *Client) RegisterService() error {
 
 	logger.Info("service registered to nacos",
 		"service", c.serviceName,
-		"address", fmt.Sprintf("%s:%d", c.serviceAddr, c.servicePort),
+		"address", strutil.JoinHostPort(c.serviceAddr, int(c.servicePort)),
 		"group", c.cfg.Group,
 	)
 	return nil

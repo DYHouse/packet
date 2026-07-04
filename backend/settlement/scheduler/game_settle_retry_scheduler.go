@@ -6,6 +6,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
 )
@@ -21,7 +22,7 @@ func NewGameSettleRetryScheduler(ctx context.Context, billMgr *service.BillManag
 		Name:         "game_settle_retry",
 		Interval:     30 * time.Second,
 		InitialDelay: 15 * time.Second,
-		LockKey:      "scheduler:game_settle_retry:lock",
+		LockKey:      rediskeys.KeySchedulerGameSettleRetryLock,
 		LockTTL:      60,
 	}
 

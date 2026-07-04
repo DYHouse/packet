@@ -10,14 +10,6 @@ import (
 	"time"
 )
 
-// GenerateUUID 生成UUID
-func GenerateUUID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%12x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
 // GenerateConnID 生成连接ID
 func GenerateConnID() string {
 	timestamp := time.Now().UnixMilli()
@@ -136,4 +128,3 @@ func ShuffleInt64(slice []int64) {
 		slice[i], slice[j] = slice[j], slice[i]
 	}
 }
-

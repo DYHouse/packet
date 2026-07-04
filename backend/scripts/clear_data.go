@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/rediskeys"
 	gameconfig "github.com/cashparty/backend/game/config"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
@@ -66,7 +67,7 @@ func clearRedis(cfg config.RedisConfig) error {
 
 	ctx := context.Background()
 
-	keys, err := rdb.Keys(ctx, "cashparty:*").Result()
+	keys, err := rdb.Keys(ctx, fmt.Sprintf("%s:*", rediskeys.KeyPrefix)).Result()
 	if err != nil {
 		return fmt.Errorf("获取 Redis keys 失败: %w", err)
 	}

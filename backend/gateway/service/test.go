@@ -73,7 +73,7 @@ func (s *TestService) saveUserAndGetInternalID(ctx context.Context, userID, nick
 	internalUserID, avatarURL, err := s.userSaver.SaveUser(ctx, userID, nickname, avatar, "127.0.0.1", "test-device")
 	if err != nil {
 		logger.Error("failed to save test user", "error", err, "user_id", userID)
-		return "", "", fmt.Errorf("%w: %v", ErrUserSaveFailed, err)
+		return "", "", fmt.Errorf("%w: %w", ErrUserSaveFailed, err)
 	}
 
 	return internalUserID, avatarURL, nil

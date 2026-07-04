@@ -16,6 +16,7 @@ docker exec -i cashparty-redis redis-cli PUBLISH cashparty:gateway:broadcast '{"
 echo ""
 
 echo "4. 检查Redis中的Key（注意：Pub/Sub Channel不会作为Key存储）:"
+# "cashparty:*" 为 Redis key 命名空间前缀，对应 Go 常量 rediskeys.KeyPrefix（shell 无法引用 Go 常量，硬编码）
 docker exec -i cashparty-redis redis-cli KEYS "cashparty:*" | head -20
 echo ""
 

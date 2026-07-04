@@ -1,5 +1,17 @@
 package scripts
 
+// 本文件中的 Lua 脚本通过字符串拼接构造 Redis key，对应的 Go 侧常量定义在
+// common/rediskeys/keys.go。新增/修改 Lua key 时 MUST 同步更新 Go 常量，避免出现孤儿 key。
+//
+// Lua 拼接的 key 与 Go 常量映射：
+//   - keyPrefix .. ':packet:available:' .. packetID  → rediskeys.KeyPacketAvailablePrefix + packetID
+//                                                  （工厂函数 rediskeys.PacketAvailableKey(packetID)）
+//   - keyPrefix .. ':global:packet_id'               → rediskeys.KeyGlobalPacketID
+//   - keyPrefix .. ':packet:info:' .. packetID       → packet info key（Lua 专用，无 Go 常量，通过 keyPrefix 拼接）
+//   - keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID → rediskeys.RoundGrabbedKey(roundID, userID)
+//
+// 注意：keyPrefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPrefix（"cashparty"）。
+
 // LuaGrabPacket 抢红包脚本
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey]
 // ARGV: [userID, now, grabTimeout, roomID, keyPrefix, packetID]

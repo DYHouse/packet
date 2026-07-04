@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -112,11 +113,11 @@ func main() {
 
 	defer client.Close()
 
-	roomHashKey := fmt.Sprintf("cashparty:room:hash:%s", *roomID)
-	playersKey := fmt.Sprintf("cashparty:room:players:%s", *roomID)
-	spectatorsKey := fmt.Sprintf("cashparty:room:spectators:%s", *roomID)
-	seatsKey := fmt.Sprintf("cashparty:room:seats:%s", *roomID)
-	seatOwnerKey := fmt.Sprintf("cashparty:room:seat_owner:%s", *roomID)
+	roomHashKey := rediskeys.RoomHashKey(*roomID)
+	playersKey := rediskeys.RoomPlayersKey(*roomID)
+	spectatorsKey := rediskeys.RoomSpectatorsKey(*roomID)
+	seatsKey := rediskeys.RoomSeatsKey(*roomID)
+	seatOwnerKey := rediskeys.RoomSeatOwnerKey(*roomID)
 
 	fmt.Printf("Force ending room: %s\n", *roomID)
 	fmt.Printf("Room hash key: %s\n", roomHashKey)

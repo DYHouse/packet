@@ -61,7 +61,7 @@ func NewRobotBehaviorEngine(
 // Note: grab actions are scheduled directly via OnPacketCreated with an
 // extended format that includes the round id.
 func (e *RobotBehaviorEngine) ScheduleAction(ctx context.Context, roomID string, robotUserID string, action string, delay time.Duration) {
-	data := fmt.Sprintf("%s:%s:%s:0", robotUserID, action, uuid.New().String()[:8])
+	data := fmt.Sprintf("%s:%s:%s:0", robotUserID, action, uuid.New().String()[:12])
 	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 }
 
@@ -94,9 +94,9 @@ func (e *RobotBehaviorEngine) scheduleRetry(ctx context.Context, roomID string, 
 	var data string
 	if action == "grab" && roundID != "" {
 		// grab 格式必须保留 roundID，否则重试时 GrabPacket 拿到错误的 roundID
-		data = fmt.Sprintf("%s:grab:%s:%s:%d", robotUserID, roundID, uuid.New().String()[:8], retryCount+1)
+		data = fmt.Sprintf("%s:grab:%s:%s:%d", robotUserID, roundID, uuid.New().String()[:12], retryCount+1)
 	} else {
-		data = fmt.Sprintf("%s:%s:%s:%d", robotUserID, action, uuid.New().String()[:8], retryCount+1)
+		data = fmt.Sprintf("%s:%s:%s:%d", robotUserID, action, uuid.New().String()[:12], retryCount+1)
 	}
 	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 	logger.Info("robot action retry scheduled",
@@ -260,7 +260,7 @@ func (e *RobotBehaviorEngine) OnPacketCreated(ctx context.Context, roomID string
 		}
 		delay := e.randomDelay(e.config.Behavior.GrabDelayMin, e.config.Behavior.GrabDelayMax)
 		robotUserID := converter.FormatID(robotID)
-		data := fmt.Sprintf("%s:grab:%s:%s:0", robotUserID, roundID, uuid.New().String()[:8])
+		data := fmt.Sprintf("%s:grab:%s:%s:0", robotUserID, roundID, uuid.New().String()[:12])
 		e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 	}
 }
@@ -295,7 +295,7 @@ func (e *RobotBehaviorEngine) OnRoundSettle(ctx context.Context, roomID string, 
 
 	delay := e.randomDelay(e.config.Behavior.SendDelayMin, e.config.Behavior.SendDelayMax)
 	robotUserID := converter.FormatID(minPlayerID)
-	data := fmt.Sprintf("%s:send:%s:0", robotUserID, uuid.New().String()[:8])
+	data := fmt.Sprintf("%s:send:%s:0", robotUserID, uuid.New().String()[:12])
 	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
 }
 

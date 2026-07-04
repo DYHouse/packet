@@ -55,6 +55,16 @@ func (g *TraceIDGenerator) GeneratePenaltyDistTraceID(roomID, sessionID int64) s
 	return fmt.Sprintf("PENALTY_DIST_%d_%d", roomID, sessionID)
 }
 
+// GenerateGameSettleTraceID 游戏结算 traceID（基于 sessionID 确定性生成，重试时可复现）
+func (g *TraceIDGenerator) GenerateGameSettleTraceID(sessionID int64) string {
+	return fmt.Sprintf("GAME_SETTLE_%d", sessionID)
+}
+
+// GenerateSessionCreditTraceID 会话级入账 traceID（基于 sessionID+userID 确定性生成，重试时可复现）
+func (g *TraceIDGenerator) GenerateSessionCreditTraceID(sessionID int64, userID int64) string {
+	return fmt.Sprintf("SESSION_CREDIT_%d_%d", sessionID, userID)
+}
+
 func ParseRoundTraceID(roundTraceID string) (sessionID int64, roundNo int, err error) {
 	parts := strings.Split(roundTraceID, "_")
 	if len(parts) != 3 || parts[0] != "RT" {

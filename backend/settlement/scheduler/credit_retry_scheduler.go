@@ -6,6 +6,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/service"
 )
 
@@ -19,7 +20,7 @@ func NewCreditRetryScheduler(ctx context.Context, creditRetry *service.CreditRet
 		Name:         "credit_retry",
 		Interval:     30 * time.Second,
 		InitialDelay: 10 * time.Second,
-		LockKey:      "scheduler:credit_retry:lock",
+		LockKey:      rediskeys.KeySchedulerCreditRetryLock,
 		LockTTL:      60,
 	}
 

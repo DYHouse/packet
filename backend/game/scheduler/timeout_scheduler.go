@@ -272,6 +272,9 @@ func (s *TimeoutScheduler) checkTimeouts(timeoutType TimeoutType) {
 	}
 }
 
+// parseMember 解析 ZSET member 为 (roomID, data)。
+// 约定：member 格式为 "roomID:data"，以第一个 ':' 分隔；roomID 不得包含 ':'（否则会被截断）。
+// 当前 data 由调用方构造（见 addTimeout），格式为 "userID:action:retryCount" 等，允许包含 ':'。
 func (s *TimeoutScheduler) parseMember(member string) (string, string) {
 	for i := 0; i < len(member); i++ {
 		if member[i] == ':' {

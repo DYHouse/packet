@@ -6,6 +6,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/service"
 )
 
@@ -20,7 +21,7 @@ func NewGameSettleTimeoutScheduler(ctx context.Context, billMgr *service.BillMan
 		Name:         "game_settle_timeout",
 		Interval:     5 * time.Minute,
 		InitialDelay: 1 * time.Minute,
-		LockKey:      "scheduler:game_settle_timeout:lock",
+		LockKey:      rediskeys.KeySchedulerGameSettleTimeoutLock,
 		LockTTL:      300,
 	}
 
