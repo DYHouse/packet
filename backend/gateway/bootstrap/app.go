@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/nacos"
 	cRedis "github.com/cashparty/backend/common/redis"
 	gatewayConfig "github.com/cashparty/backend/gateway/config"
-	"github.com/cashparty/backend/gateway/discovery"
 	"github.com/cashparty/backend/gateway/router"
 )
 
@@ -44,7 +44,7 @@ func NewApplicationWithConfig(cfg *gatewayConfig.Config, routerPath string) (*Ap
 	}
 
 	if nacosClient != nil && cfg.Nacos.ConfigDataID != "" {
-		cfg = reloadConfigFromNacos(nacosClient, cfg)
+		cfg = reloadMainConfigFromNacos(nacosClient, cfg)
 	}
 
 	initLogger(cfg)
@@ -68,6 +68,15 @@ func NewApplicationWithConfig(cfg *gatewayConfig.Config, routerPath string) (*Ap
 	var kafkaProducer *kafka.Producer
 	if cfg.Kafka.Enabled {
 		kafkaProducer = kafka.NewProducerWithBrokers(cfg.Kafka.Brokers)
+	}
+
+	if nacosClient != nil && cfg.Nacos.RateLimiterDataID != "" {
+		rlCfg, err := loadRateLimiterConfigFromNacos(nacosClient, cfg)
+		if err != nil {
+			logger.Warn("failed to load rate limiter config from nacos, using local config", "error", err)
+		} else if rlCfg != nil {
+			cfg.RateLimiter = *rlCfg
+		}
 	}
 
 	container := NewContainer(cfg, redisClient, kafkaProducer, nodeID)
@@ -108,31 +117,11 @@ func (a *Application) Start(ctx context.Context) error {
 
 	if a.nacos != nil {
 		if err := a.nacos.RegisterService(); err != nil {
-			logger.Error("failed to register service to nacos", "error", err)
+			logger.Warn("failed to register service to nacos", "error", err)
 		}
 	}
 
-	if a.nacos != nil && a.cfg.Nacos.RateLimiterDataID != "" {
-		go func() {
-			err := a.nacos.ListenConfig(
-				a.cfg.Nacos.RateLimiterDataID,
-				a.cfg.Nacos.RateLimiterGroup,
-				func(content string) {
-					logger.Info("rate limiter config changed, reloading...")
-					rlCfg, err := gatewayConfig.LoadRateLimiterFromContent(content)
-					if err != nil {
-						logger.Error("failed to parse rate limiter config", "error", err)
-						return
-					}
-					a.Container.RateLimiter.UpdateConfig(rlCfg)
-					logger.Info("rate limiter config reloaded successfully")
-				},
-			)
-			if err != nil {
-				logger.Error("failed to listen rate limiter config", "error", err)
-			}
-		}()
-	}
+	registerConfigListeners(a.nacos, a.cfg, a.Container)
 
 	go func() {
 		if err := a.Container.Server.Start(); err != nil {
@@ -162,7 +151,9 @@ func (a *Application) Stop() {
 	a.Container.Stop()
 
 	if a.nacos != nil {
-		a.nacos.Close()
+		if err := a.nacos.Close(); err != nil {
+			logger.Warn("failed to close nacos client", "error", err)
+		}
 	}
 
 	if a.Container.Redis != nil {
@@ -211,16 +202,7 @@ func initNacos(cfg *gatewayConfig.Config) (*nacos.Client, error) {
 		return nil, nil
 	}
 
-	nacosClient, err := nacos.NewClient(&nacos.ClientConfig{
-		ServerAddr:  cfg.Nacos.ServerAddr,
-		Namespace:   cfg.Nacos.Namespace,
-		Group:       cfg.Nacos.Group,
-		Username:    cfg.Nacos.Username,
-		Password:    cfg.Nacos.Password,
-		ServiceName: cfg.Nacos.ServiceName,
-		ServiceAddr: cfg.Nacos.ServiceAddr,
-		ServicePort: uint64(cfg.Nacos.ServicePort),
-	})
+	nacosClient, err := nacos.NewClient(&cfg.Nacos.NacosConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create nacos client: %w", err)
 	}
@@ -228,7 +210,7 @@ func initNacos(cfg *gatewayConfig.Config) (*nacos.Client, error) {
 	return nacosClient, nil
 }
 
-func reloadConfigFromNacos(nacosClient *nacos.Client, cfg *gatewayConfig.Config) *gatewayConfig.Config {
+func reloadMainConfigFromNacos(nacosClient *nacos.Client, cfg *gatewayConfig.Config) *gatewayConfig.Config {
 	content, err := nacosClient.GetConfig(cfg.Nacos.ConfigDataID, cfg.Nacos.ConfigGroup)
 	if err != nil {
 		logger.Warn("failed to get config from nacos, using local config", "error", err)
@@ -294,4 +276,23 @@ func loadRouterConfig(nacosClient *nacos.Client, cfg *gatewayConfig.Config, rout
 	}
 
 	return routerConfig, nil
+}
+
+// loadRateLimiterConfigFromNacos 从 nacos 拉取 rate limiter 配置。
+// 返回 (nil, nil) 表示未配置或 nacos 未启用。
+func loadRateLimiterConfigFromNacos(nacosClient *nacos.Client, cfg *gatewayConfig.Config) (*gatewayConfig.RateLimiterConfig, error) {
+	if nacosClient == nil || cfg.Nacos.RateLimiterDataID == "" {
+		return nil, nil
+	}
+	content, err := nacosClient.GetConfig(cfg.Nacos.RateLimiterDataID, cfg.Nacos.RateLimiterGroup)
+	if err != nil {
+		return nil, fmt.Errorf("get rate limiter config from nacos failed: %w", err)
+	}
+	rlCfg, err := gatewayConfig.LoadRateLimiterFromContent(content)
+	if err != nil {
+		return nil, fmt.Errorf("parse rate limiter config from nacos failed: %w", err)
+	}
+	logger.Info("rate limiter config loaded from nacos",
+		"data_id", cfg.Nacos.RateLimiterDataID)
+	return rlCfg, nil
 }

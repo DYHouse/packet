@@ -55,7 +55,7 @@ type Container struct {
 	GameSettleTimeoutScheduler *settlementScheduler.GameSettleTimeoutScheduler
 
 	// Rate limiter (grab command)
-	UserLimiter                 *limiter.UserLimiter
+	UserLimiter *limiter.UserLimiter
 
 	// Robot system services
 	RobotCfg                    *config.RobotConfig

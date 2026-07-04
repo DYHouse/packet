@@ -2,8 +2,12 @@ package nacos
 
 import (
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
 
+	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
@@ -16,43 +20,32 @@ import (
 type Client struct {
 	configClient config_client.IConfigClient
 	namingClient naming_client.INamingClient
-	cfg          *ClientConfig
+	cfg          *config.NacosConfig
 	serviceName  string
 	serviceAddr  string
 	servicePort  uint64
-	mu           sync.RWMutex
-	listeners    []func(content string)
+	mu           sync.Mutex
+	closed       bool
 }
 
-func NewClient(cfg *ClientConfig) (*Client, error) {
+func NewClient(cfg *config.NacosConfig) (*Client, error) {
+	host, port := parseServerAddr(cfg.ServerAddr)
 	serverConfigs := []constant.ServerConfig{
 		{
-			IpAddr: cfg.ServerAddr,
-			Port:   8848,
+			IpAddr: host,
+			Port:   port,
 		},
-	}
-
-	if len(cfg.ServerAddr) > 0 && cfg.ServerAddr[len(cfg.ServerAddr)-1] >= '0' && cfg.ServerAddr[len(cfg.ServerAddr)-1] <= '9' {
-		for i := len(cfg.ServerAddr) - 1; i >= 0; i-- {
-			if cfg.ServerAddr[i] == ':' {
-				var port uint64
-				fmt.Sscanf(cfg.ServerAddr[i+1:], "%d", &port)
-				serverConfigs[0].IpAddr = cfg.ServerAddr[:i]
-				serverConfigs[0].Port = port
-				break
-			}
-		}
 	}
 
 	clientConfig := constant.ClientConfig{
 		NamespaceId:         cfg.Namespace,
 		Username:            cfg.Username,
 		Password:            cfg.Password,
-		TimeoutMs:           5000,
+		TimeoutMs:           cfg.TimeoutMs,
 		NotLoadCacheAtStart: true,
-		LogDir:              "/tmp/nacos/log",
-		CacheDir:            "/tmp/nacos/cache",
-		LogLevel:            "warn",
+		LogDir:              cfg.LogDir,
+		CacheDir:            cfg.CacheDir,
+		LogLevel:            cfg.LogLevel,
 	}
 
 	configClient, err := clients.NewConfigClient(
@@ -82,13 +75,29 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 		serviceName:  cfg.ServiceName,
 		serviceAddr:  cfg.ServiceAddr,
 		servicePort:  cfg.ServicePort,
-		listeners:    make([]func(content string), 0),
 	}, nil
+}
+
+// parseServerAddr 解析 ServerAddr（host 或 host:port）。
+// 使用 net.SplitHostPort 解析，更健壮。
+func parseServerAddr(addr string) (string, uint64) {
+	if !strings.Contains(addr, ":") {
+		return addr, 8848
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr, 8848
+	}
+	port, err := strconv.ParseUint(portStr, 10, 64)
+	if err != nil {
+		return host, 8848
+	}
+	return host, port
 }
 
 func (c *Client) RegisterService() error {
 	if c.serviceName == "" {
-		return fmt.Errorf("service name is empty")
+		return ErrServiceNameEmpty
 	}
 
 	_, err := c.namingClient.RegisterInstance(vo.RegisterInstanceParam{
@@ -126,8 +135,7 @@ func (c *Client) DeregisterService() error {
 		Ephemeral:   true,
 	})
 	if err != nil {
-		logger.Error("failed to deregister service", "error", err)
-		return err
+		return fmt.Errorf("deregister service %s failed: %w", c.serviceName, err)
 	}
 
 	logger.Info("service deregistered from nacos", "service", c.serviceName)
@@ -149,18 +157,6 @@ func (c *Client) DiscoverService(serviceName string) ([]model.Instance, error) {
 	}
 
 	return instances, nil
-}
-
-func (c *Client) GetOneInstance(serviceName string) (*model.Instance, error) {
-	instance, err := c.namingClient.SelectOneHealthyInstance(vo.SelectOneHealthInstanceParam{
-		ServiceName: serviceName,
-		GroupName:   c.cfg.Group,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get one instance for service %s: %w", serviceName, err)
-	}
-
-	return instance, nil
 }
 
 func (c *Client) GetConfig(dataID, group string) (string, error) {
@@ -192,32 +188,12 @@ func (c *Client) ListenConfig(dataID, group string, onChange func(content string
 	return nil
 }
 
-func (c *Client) PublishConfig(dataID, group, content string) (bool, error) {
-	return c.configClient.PublishConfig(vo.ConfigParam{
-		DataId:  dataID,
-		Group:   group,
-		Content: content,
-	})
-}
-
-func (c *Client) SubscribeService(serviceName string, callback func(services []model.Instance)) error {
-	err := c.namingClient.Subscribe(&vo.SubscribeParam{
-		ServiceName: serviceName,
-		GroupName:   c.cfg.Group,
-		SubscribeCallback: func(services []model.Instance, err error) {
-			if err != nil {
-				logger.Error("service subscribe callback error", "error", err)
-				return
-			}
-			callback(services)
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to subscribe service: %w", err)
+func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
 	}
-	return nil
-}
-
-func (c *Client) Close() {
-	c.DeregisterService()
+	c.closed = true
+	return c.DeregisterService()
 }

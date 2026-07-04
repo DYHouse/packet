@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/cashparty/backend/api/platform"
-	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/lock"
@@ -18,6 +17,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
+	gameconfig "github.com/cashparty/backend/game/config"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	redisRepo "github.com/cashparty/backend/game/infrastructure/persistence/redis"
@@ -28,7 +28,7 @@ import (
 
 type Application struct {
 	Container  *Container
-	config     *config.Config
+	config     *gameconfig.Config
 	grpcServer *server.GRPCServer
 	cancel     context.CancelFunc
 	nacos      *nacos.Client
@@ -36,7 +36,7 @@ type Application struct {
 }
 
 func NewApplication(cfgPath string) (*Application, error) {
-	cfg, err := config.Load(cfgPath)
+	cfg, err := gameconfig.Load(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
@@ -44,50 +44,19 @@ func NewApplication(cfgPath string) (*Application, error) {
 	return NewApplicationWithConfig(cfg)
 }
 
-func NewApplicationWithConfig(cfg *config.Config) (*Application, error) {
-	var nacosClient *nacos.Client
-	var err error
+func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
+	nacosClient := initNacos(cfg)
 
-	if cfg.Nacos.Enabled {
-		nacosClient, err = nacos.NewClient(&nacos.ClientConfig{
-			ServerAddr:  cfg.Nacos.ServerAddr,
-			Namespace:   cfg.Nacos.Namespace,
-			Group:       cfg.Nacos.Group,
-			Username:    cfg.Nacos.Username,
-			Password:    cfg.Nacos.Password,
-			ServiceName: cfg.Nacos.ServiceName,
-			ServiceAddr: cfg.Nacos.ServiceAddr,
-			ServicePort: cfg.Nacos.ServicePort,
-		})
+	if nacosClient != nil && cfg.Nacos.ConfigDataID != "" {
+		cfg = reloadMainConfigFromNacos(nacosClient, cfg)
+	}
+
+	if nacosClient != nil && cfg.Nacos.AlgorithmDataID != "" {
+		algoCfg, err := loadAlgorithmConfigFromNacos(nacosClient, cfg)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create nacos client: %w", err)
-		}
-
-		if cfg.Nacos.ConfigDataID != "" {
-			content, err := nacosClient.GetConfig(cfg.Nacos.ConfigDataID, cfg.Nacos.ConfigGroup)
-			if err != nil {
-				logger.Warn("failed to get config from nacos, using local config", "error", err)
-			} else {
-				cfg, err = config.LoadFromContent(content)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse config from nacos: %w", err)
-				}
-				logger.Info("loaded config from nacos", "data_id", cfg.Nacos.ConfigDataID)
-			}
-		}
-
-		if cfg.Nacos.AlgorithmDataID != "" {
-			content, err := nacosClient.GetConfig(cfg.Nacos.AlgorithmDataID, cfg.Nacos.AlgorithmGroup)
-			if err != nil {
-				logger.Warn("failed to get algorithm config from nacos, using local config", "error", err)
-			} else {
-				algoCfg, err := config.LoadAlgorithmFromContent(content)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse algorithm config from nacos: %w", err)
-				}
-				cfg.Algorithm = *algoCfg
-				logger.Info("loaded algorithm config from nacos", "data_id", cfg.Nacos.AlgorithmDataID)
-			}
+			logger.Warn("failed to load algorithm config from nacos, using local config", "error", err)
+		} else if algoCfg != nil {
+			cfg.Algorithm = *algoCfg
 		}
 	}
 
@@ -210,32 +179,11 @@ func (a *Application) Start(ctx context.Context) error {
 
 	if a.nacos != nil {
 		if err := a.nacos.RegisterService(); err != nil {
-			logger.Error("failed to register service to nacos", "error", err)
-		}
-
-		if a.config.Nacos.AlgorithmDataID != "" {
-			go func() {
-				err := a.nacos.ListenConfig(
-					a.config.Nacos.AlgorithmDataID,
-					a.config.Nacos.AlgorithmGroup,
-					func(content string) {
-						logger.Info("algorithm config changed, reloading...")
-						algoCfg, err := config.LoadAlgorithmFromContent(content)
-						if err != nil {
-							logger.Error("failed to parse algorithm config", "error", err)
-							return
-						}
-						newConfig := convertAlgorithmConfig(algoCfg)
-						a.Container.PacketGenerator.UpdateConfig(newConfig)
-						logger.Info("algorithm config reloaded successfully")
-					},
-				)
-				if err != nil {
-					logger.Error("failed to listen algorithm config", "error", err)
-				}
-			}()
+			logger.Warn("failed to register service to nacos", "error", err)
 		}
 	}
+
+	registerConfigListeners(a.nacos, a.config, a.Container)
 
 	if err := a.grpcServer.Start(); err != nil {
 		return err
@@ -259,7 +207,9 @@ func (a *Application) Stop() {
 	}
 
 	if a.nacos != nil {
-		a.nacos.Close()
+		if err := a.nacos.Close(); err != nil {
+			logger.Warn("failed to close nacos client", "error", err)
+		}
 	}
 
 	if a.Container.KafkaProducer != nil {
@@ -296,7 +246,7 @@ func Run() {
 	app.Stop()
 }
 
-func convertAlgorithmConfig(cfg *config.AlgorithmConfig) *algorithm.Config {
+func convertAlgorithmConfig(cfg *gameconfig.AlgorithmConfig) *algorithm.Config {
 	algoCfg := algorithm.DefaultConfig()
 
 	// 用 nil 判断"未设置"，区分"显式 0"与"未配置"。

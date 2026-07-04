@@ -7,21 +7,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/gateway/connection"
-	"github.com/cashparty/backend/gateway/discovery"
 	commonPb "github.com/cashparty/backend/proto/common"
 	"github.com/google/uuid"
 )
 
 type RouteConfig struct {
-	CmdPrefix string `yaml:"cmd_prefix" json:"cmd_prefix"`
-	Service   string `yaml:"service" json:"service"`
+	CmdPrefix string `mapstructure:"cmd_prefix" yaml:"cmd_prefix" json:"cmd_prefix"`
+	Service   string `mapstructure:"service" yaml:"service" json:"service"`
 }
 
 type RouterConfig struct {
-	Routes []RouteConfig `yaml:"routes" json:"routes"`
+	Routes []RouteConfig `mapstructure:"routes" yaml:"routes" json:"routes"`
 }
 
 type MessageRouter struct {

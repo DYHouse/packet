@@ -7,11 +7,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/application"
+	gameconfig "github.com/cashparty/backend/game/config"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"gorm.io/driver/mysql"
@@ -25,7 +25,7 @@ func main() {
 	clearExisting := flag.Bool("clear", false, "Clear existing robot accounts before initialization")
 	flag.Parse()
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := gameconfig.Load(*configPath)
 	if err != nil {
 		log.Fatalf("load config failed: %v", err)
 	}
