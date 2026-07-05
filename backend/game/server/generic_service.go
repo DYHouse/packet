@@ -40,6 +40,10 @@ type GenericServiceServer struct {
 	redis       *cRedis.Client
 	userLimiter *limiter.UserLimiter
 	broadcastFn BroadcastFunc
+	// grab 命令 fail-open 策略(资金操作)
+	grabFailOpen bool
+	// 资金命令(send_packet 等)fail-open 策略
+	financialFailOpen bool
 }
 
 func NewGenericServiceServer(
@@ -53,18 +57,22 @@ func NewGenericServiceServer(
 	redis *cRedis.Client,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
+	grabFailOpen bool,
+	financialFailOpen bool,
 ) *GenericServiceServer {
 	return &GenericServiceServer{
-		roomAppSvc:  roomAppSvc,
-		seatAppSvc:  seatAppSvc,
-		gameAppSvc:  gameAppSvc,
-		grabSvc:     grabSvc,
-		userSvc:     userSvc,
-		balanceSvc:  balanceSvc,
-		historySvc:  historySvc,
-		redis:       redis,
-		userLimiter: userLimiter,
-		broadcastFn: broadcastFn,
+		roomAppSvc:        roomAppSvc,
+		seatAppSvc:        seatAppSvc,
+		gameAppSvc:        gameAppSvc,
+		grabSvc:           grabSvc,
+		userSvc:           userSvc,
+		balanceSvc:        balanceSvc,
+		historySvc:        historySvc,
+		redis:             redis,
+		userLimiter:       userLimiter,
+		broadcastFn:       broadcastFn,
+		grabFailOpen:      grabFailOpen,
+		financialFailOpen: financialFailOpen,
 	}
 }
 
@@ -172,6 +180,11 @@ func (s *GenericServiceServer) handleJoinRoom(ctx context.Context, req *commonPb
 		return resp, nil
 	}
 
+	// 业务限流(非资金操作,fail-open)
+	if resp, ok := s.checkRateLimit(ctx, req, "join_room", true); !ok {
+		return resp, nil
+	}
+
 	result, err := s.roomAppSvc.JoinAndAutoSeat(ctx, &application.JoinRoomRequest{
 		UserID: req.UserId,
 		RoomID: data.RoomID,
@@ -191,6 +204,11 @@ func (s *GenericServiceServer) handleJoinRoom(ctx context.Context, req *commonPb
 }
 
 func (s *GenericServiceServer) handleAutoMatch(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	// 业务限流(非资金操作,fail-open)
+	if resp, ok := s.checkRateLimit(ctx, req, "auto_match", true); !ok {
+		return resp, nil
+	}
+
 	result, err := s.roomAppSvc.AutoMatchAndJoin(ctx, &application.AutoMatchRequest{
 		UserID: req.UserId,
 	})
@@ -259,6 +277,11 @@ func (s *GenericServiceServer) handleSelectSeat(ctx context.Context, req *common
 		return resp, nil
 	}
 
+	// 业务限流(非资金操作,fail-open)
+	if resp, ok := s.checkRateLimit(ctx, req, "select_seat", true); !ok {
+		return resp, nil
+	}
+
 	result, err := s.seatAppSvc.SelectSeat(ctx, &application.SelectSeatRequest{
 		RoomID: data.RoomID,
 		UserID: req.UserId,
@@ -303,6 +326,11 @@ func (s *GenericServiceServer) handlePlayerReady(ctx context.Context, req *commo
 		return resp, nil
 	}
 
+	// 业务限流(非资金操作,fail-open)
+	if resp, ok := s.checkRateLimit(ctx, req, "player_ready", true); !ok {
+		return resp, nil
+	}
+
 	result, err := s.seatAppSvc.PlayerReady(ctx, &application.PlayerReadyRequest{
 		RoomID: data.RoomID,
 		UserID: req.UserId,
@@ -321,6 +349,11 @@ func (s *GenericServiceServer) handleSendPacket(ctx context.Context, req *common
 		RoomID string `json:"room_id"`
 	}
 	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
+	}
+
+	// 业务限流(资金操作,fail-closed)
+	if resp, ok := s.checkRateLimit(ctx, req, "send_packet", s.financialFailOpen); !ok {
 		return resp, nil
 	}
 
@@ -346,18 +379,9 @@ func (s *GenericServiceServer) handleGrabPacket(ctx context.Context, req *common
 		return resp, nil
 	}
 
-	if s.userLimiter != nil {
-		allowed, err := s.userLimiter.AllowGrab(ctx, req.UserId)
-		if err != nil {
-			// 限流服务异常时 fail-open（放行），但记录告警以便排查
-			logger.Warn("grab rate limiter error, fail-open",
-				"user_id", req.UserId,
-				"request_id", req.RequestId,
-				"error", err)
-		}
-		if err == nil && !allowed {
-			return s.errorResponse(req, message.CodeRateLimitExceeded, message.GetErrorMsg(message.CodeRateLimitExceeded)), nil
-		}
+	// 业务限流(资金操作,fail-closed)
+	if resp, ok := s.checkRateLimit(ctx, req, "grab", s.grabFailOpen); !ok {
+		return resp, nil
 	}
 
 	result, err := s.gameAppSvc.GrabPacket(ctx, &application.GrabPacketRequest{
@@ -656,6 +680,37 @@ func (s *GenericServiceServer) SaveUser(ctx context.Context, req *commonPb.SaveU
 	}, nil
 }
 
+// checkRateLimit 统一限流检查
+// cmd: 命令名,对应配置中的 key
+// failOpen: 该命令在 Redis 故障时是否 fail-open
+// 返回值: (nil, true) 表示通过限流; (errorResponse, false) 表示被拒绝
+func (s *GenericServiceServer) checkRateLimit(ctx context.Context, req *commonPb.ForwardRequest, cmd string, failOpen bool) (*commonPb.ForwardResponse, bool) {
+	if s.userLimiter == nil {
+		return nil, true
+	}
+	allowed, err := s.userLimiter.Allow(ctx, req.UserId, cmd)
+	if err != nil {
+		if failOpen {
+			logger.Warn("rate limiter error, fail-open",
+				"cmd", cmd, "user_id", req.UserId,
+				"request_id", req.RequestId, "error", err)
+			return nil, true
+		}
+		logger.Error("rate limiter error, fail-closed",
+			"cmd", cmd, "user_id", req.UserId,
+			"request_id", req.RequestId, "error", err)
+		return s.errorResponse(req, message.CodeSystemError,
+			"rate limit service unavailable"), false
+	}
+	if !allowed {
+		logger.Warn("rate limit exceeded",
+			"cmd", cmd, "user_id", req.UserId, "request_id", req.RequestId)
+		return s.errorResponse(req, message.CodeRateLimitExceeded,
+			message.GetErrorMsg(message.CodeRateLimitExceeded)), false
+	}
+	return nil, true
+}
+
 func (s *GenericServiceServer) handleError(req *commonPb.ForwardRequest, err error) *commonPb.ForwardResponse {
 	if gameErr, ok := message.IsGameError(err); ok {
 		return s.errorResponse(req, gameErr.Code, gameErr.Msg)
@@ -707,6 +762,8 @@ func NewGRPCServer(
 	redis *cRedis.Client,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
+	grabFailOpen bool,
+	financialFailOpen bool,
 ) *GRPCServer {
 	kaParams := keepalive.ServerParameters{
 		MaxConnectionIdle: 15 * time.Minute,
@@ -735,6 +792,8 @@ func NewGRPCServer(
 		redis,
 		userLimiter,
 		broadcastFn,
+		grabFailOpen,
+		financialFailOpen,
 	)
 	commonPb.RegisterGenericServiceServer(server, genericServiceServer)
 

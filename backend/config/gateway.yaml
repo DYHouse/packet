@@ -41,8 +41,6 @@ nacos:
   config_group: "DEFAULT_GROUP"
   router_data_id: "gateway-router.yaml"
   router_group: "DEFAULT_GROUP"
-  rate_limiter_data_id: "gateway-ratelimiter.yaml"
-  rate_limiter_group: "DEFAULT_GROUP"
 
 kafka:
   enabled: true
@@ -75,13 +73,6 @@ log:
   max_age: 30
   compress: true
 
-rate_limiter:
-  ip_requests_per_second: 100
-  ip_burst_size: 200
-  user_requests_per_second: 50
-  user_burst_size: 100
-  global_requests_per_sec: 10000
-
 id_generator:
   enabled: true
   # 节点 ID，范围 [0, 1023]。
@@ -89,3 +80,9 @@ id_generator:
   # >0 表示显式指定（单实例/测试环境；多实例部署时每个实例必须唯一）
   # 多实例部署禁止使用默认值 1，否则会产生 ID 冲突
   node_id: 1
+
+# Auth 锁定配置（Redis 持久化，多实例共享）
+auth_lock:
+  max_attempts: 5          # 最大失败尝试次数
+  lock_duration: "15m"      # 锁定时长
+  counter_window: "15m"    # 失败计数窗口

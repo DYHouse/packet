@@ -14,6 +14,7 @@ import (
 	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
+	gameconfig "github.com/cashparty/backend/game/config"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/broadcast"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
@@ -64,7 +65,8 @@ type Container struct {
 	TaskRunner *async.TaskRunner
 
 	// Rate limiter (grab command)
-	UserLimiter *limiter.UserLimiter
+	UserLimiter    *limiter.UserLimiter
+	RateLimiterCfg *gameconfig.RateLimiterConfig
 
 	// Robot system services
 	RobotCfg              *config.RobotConfig
@@ -121,6 +123,7 @@ func NewContainer(
 	taskRunner *async.TaskRunner,
 	settlementSchedulerCfg *config.SettlementSchedulerConfig,
 	redisTTL *config.RedisTTLConfig,
+	rateLimiterCfg *gameconfig.RateLimiterConfig,
 	idGen idgen.IDGenerator,
 ) *Container {
 	dbRepo := mysqlRepo.NewDBRepository(db)
@@ -142,6 +145,10 @@ func NewContainer(
 
 	grabService := application.NewGrabService(redis, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
 	penaltyService := application.NewPenaltyService(redis, nil, settlementSvc, *redisTTL)
+
+	// 从 RateLimiterConfig.Commands 构建 UserLimiter 配置
+	userLimiterConfigs := buildUserLimiterConfigs(rateLimiterCfg)
+	userLimiter := limiter.NewUserLimiter(redis, userLimiterConfigs)
 
 	return &Container{
 		PlatformCfg:            platformCfg,
@@ -166,7 +173,8 @@ func NewContainer(
 		DeductSvc:              deductSvc,
 		RefundSvc:              refundSvc,
 		PacketGenerator:        packetGenerator,
-		UserLimiter:            limiter.NewUserLimiter(redis),
+		UserLimiter:            userLimiter,
+		RateLimiterCfg:         rateLimiterCfg,
 		TaskRunner:             taskRunner,
 
 		platformClient:           platformClient,
@@ -366,4 +374,20 @@ func (c *Container) StartSchedulers(appCtx context.Context) error {
 
 func (c *Container) Stop() {
 	c.SchedulerRegistry.StopAll(30 * time.Second)
+}
+
+// buildUserLimiterConfigs 将 RateLimiterConfig.Commands 转换为 limiter.LimitConfig map。
+// cfg 为 nil 时返回空 map（保持与默认行为兼容）。
+func buildUserLimiterConfigs(cfg *gameconfig.RateLimiterConfig) map[string]limiter.LimitConfig {
+	configs := make(map[string]limiter.LimitConfig)
+	if cfg == nil {
+		return configs
+	}
+	for cmd, c := range cfg.Commands {
+		configs[cmd] = limiter.LimitConfig{
+			Limit:  int64(c.Limit),
+			Window: c.Window,
+		}
+	}
+	return configs
 }

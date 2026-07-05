@@ -24,6 +24,7 @@ type Config struct {
 	Lock                commonconfig.LockConfig                `mapstructure:"lock" yaml:"lock"`
 	Lua                 commonconfig.LuaConfig                 `mapstructure:"lua" yaml:"lua"`
 	RedisTTL            commonconfig.RedisTTLConfig            `mapstructure:"redis_ttl" yaml:"redis_ttl"`
+	RateLimiter         RateLimiterConfig                      `mapstructure:"rate_limiter" yaml:"rate_limiter"`
 }
 
 func Load(path string) (*Config, error) {

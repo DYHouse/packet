@@ -1,0 +1,30 @@
+# 业务限流配置
+# limit: 窗口内允许的最大请求数
+# window: 时间窗口(Go duration 格式)
+# fail_open: Redis 故障时是否放行(资金相关操作建议 false)
+
+defaults:
+  fail_open: true              # 通用命令默认 fail-open
+  financial_fail_open: false   # 资金命令(grab, send_packet)默认 fail-closed
+
+commands:
+  grab:
+    limit: 10
+    window: "1s"
+    fail_open: false           # 覆盖默认值,资金操作 fail-closed
+  send_packet:
+    limit: 5
+    window: "1s"
+    fail_open: false
+  join_room:
+    limit: 5
+    window: "1m"
+  auto_match:
+    limit: 3
+    window: "10s"
+  select_seat:
+    limit: 10
+    window: "1s"
+  player_ready:
+    limit: 5
+    window: "1s"

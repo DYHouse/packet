@@ -123,6 +123,8 @@ nacos:
   config_group: "DEFAULT_GROUP"
   algorithm_data_id: "algorithm.yaml"
   algorithm_group: "DEFAULT_GROUP"
+  rate_limiter_data_id: "game-ratelimiter.yaml"
+  rate_limiter_group: "DEFAULT_GROUP"
 
 id_generator:
   enabled: true

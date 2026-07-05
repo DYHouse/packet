@@ -18,6 +18,7 @@ func registerConfigListeners(nacosClient *nacos.Client, cfg *gameconfig.Config, 
 		return
 	}
 	registerAlgorithmConfigListener(nacosClient, cfg, container)
+	registerRateLimiterListener(nacosClient, cfg, container)
 }
 
 func registerAlgorithmConfigListener(nacosClient *nacos.Client, cfg *gameconfig.Config, container *Container) {

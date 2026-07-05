@@ -1,6 +1,0 @@
-rate_limiter:
-  ip_requests_per_second: 10000
-  ip_burst_size: 20000
-  user_requests_per_second: 5000
-  user_burst_size: 10000
-  global_requests_per_sec: 10000

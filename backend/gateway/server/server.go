@@ -64,7 +64,6 @@ type Server struct {
 	auth                *middleware.AuthMiddleware
 	router              *router.MessageRouter
 	broadcast           *broadcast.BroadcastService
-	rateLimiter         *middleware.RateLimiter
 	healthChecker       *health.HealthChecker
 	signatureMiddleware *middleware.SignatureMiddleware
 	gameHandler         *handler.GameHandler
@@ -81,7 +80,6 @@ func NewServer(
 	auth *middleware.AuthMiddleware,
 	router *router.MessageRouter,
 	broadcast *broadcast.BroadcastService,
-	rateLimiter *middleware.RateLimiter,
 	healthChecker *health.HealthChecker,
 	signatureMiddleware *middleware.SignatureMiddleware,
 	gameHandler *handler.GameHandler,
@@ -95,7 +93,6 @@ func NewServer(
 		auth:                auth,
 		router:              router,
 		broadcast:           broadcast,
-		rateLimiter:         rateLimiter,
 		healthChecker:       healthChecker,
 		signatureMiddleware: signatureMiddleware,
 		gameHandler:         gameHandler,
@@ -138,7 +135,6 @@ func (s *Server) setupRoutes() {
 	}
 
 	wsGroup := s.engine.Group("")
-	wsGroup.Use(middleware.RateLimitMiddleware(s.rateLimiter))
 	wsGroup.GET("/ws", s.handleWebSocket)
 
 	game := s.engine.Group("/game")

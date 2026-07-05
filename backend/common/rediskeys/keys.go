@@ -258,6 +258,8 @@ const (
 	KeyRateLimitCmd = KeyPrefix + ":ratelimit:cmd:%s:%s"
 	// KeyGatewayLockedIP 网关锁定 IP 集合。
 	KeyGatewayLockedIP = KeyPrefix + ":gateway:locked_ip:%s"
+	// KeyGatewayAuthFail Auth 失败计数 key
+	KeyGatewayAuthFail = KeyPrefix + ":gateway:auth_fail:%s"
 )
 
 // ============================================================================
@@ -698,6 +700,11 @@ func RateLimitCmdKey(cmd, userID string) string {
 // GatewayLockedIPKey 网关锁定 IP 集合 key
 func GatewayLockedIPKey(ip string) string {
 	return fmt.Sprintf(KeyGatewayLockedIP, ip)
+}
+
+// GatewayAuthFailKey 生成 Auth 失败计数 key
+func GatewayAuthFailKey(ip string) string {
+	return fmt.Sprintf(KeyGatewayAuthFail, ip)
 }
 
 // ============================================================================

@@ -56,8 +56,6 @@ func setDefaults(cfg *Config) {
 		cfg.Log.MaxAge = 30
 	}
 
-	setRateLimiterDefaults(&cfg.RateLimiter)
-
 	if cfg.Token.SecretKey == "" {
 		cfg.Token.SecretKey = "default-secret-key-please-change-in-production"
 	}
@@ -70,4 +68,15 @@ func setDefaults(cfg *Config) {
 
 	// 雪花 ID 生成器默认值与范围校验（规约 SID-CFG1、SID-CFG2）
 	commonconfig.SetIDGeneratorDefaults(&cfg.IDGenerator)
+
+	// Auth 锁定默认值
+	if cfg.AuthLock.MaxAttempts == 0 {
+		cfg.AuthLock.MaxAttempts = 5
+	}
+	if cfg.AuthLock.LockDuration == 0 {
+		cfg.AuthLock.LockDuration = 15 * time.Minute
+	}
+	if cfg.AuthLock.CounterWindow == 0 {
+		cfg.AuthLock.CounterWindow = 15 * time.Minute
+	}
 }

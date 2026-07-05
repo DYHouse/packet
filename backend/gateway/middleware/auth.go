@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"runtime/debug"
-	"sync"
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/gateway"
 	"github.com/cashparty/backend/gateway/connection"
 	"github.com/cashparty/backend/gateway/service"
@@ -24,30 +23,35 @@ var (
 	ErrTooManyFailedAttempts = errors.New("too many failed authentication attempts")
 )
 
-type AuthMiddleware struct {
-	tokenService   *service.TokenService
-	redis          *cRedis.Client
-	failedAttempts sync.Map
-	maxAttempts    int
-	lockDuration   time.Duration
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
+// AuthLockConfig Auth 锁定配置
+type AuthLockConfig struct {
+	MaxAttempts   int
+	LockDuration  time.Duration
+	CounterWindow time.Duration
 }
 
-func NewAuthMiddleware(tokenService *service.TokenService, redis *cRedis.Client) *AuthMiddleware {
+type AuthMiddleware struct {
+	tokenService  *service.TokenService
+	redis         *cRedis.Client
+	maxAttempts   int
+	lockDuration  time.Duration
+	counterWindow time.Duration
+	ctx           context.Context
+	cancel        context.CancelFunc
+}
+
+// NewAuthMiddleware 创建 Auth 中间件
+func NewAuthMiddleware(tokenService *service.TokenService, redis *cRedis.Client, cfg AuthLockConfig) *AuthMiddleware {
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &AuthMiddleware{
-		tokenService: tokenService,
-		redis:        redis,
-		maxAttempts:  5,
-		lockDuration: 15 * time.Minute,
-		ctx:          ctx,
-		cancel:       cancel,
+	return &AuthMiddleware{
+		tokenService:  tokenService,
+		redis:         redis,
+		maxAttempts:   cfg.MaxAttempts,
+		lockDuration:  cfg.LockDuration,
+		counterWindow: cfg.CounterWindow,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
-	m.wg.Add(1)
-	go m.cleanupRoutine()
-	return m
 }
 
 func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connection, firstMessage []byte) error {
@@ -79,7 +83,7 @@ func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connect
 		return ErrInvalidToken
 	}
 
-	if m.isLocked(conn.IP) {
+	if m.isLocked(ctx, conn.IP) {
 		logger.Warn("IP is locked due to too many failed attempts", "conn_id", conn.ConnID, "ip", conn.IP)
 		m.sendError(conn, req.Cmd, req.RequestID, message.CodeForbidden)
 		return ErrTooManyFailedAttempts
@@ -93,7 +97,7 @@ func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connect
 		return ErrAuthFailed
 	}
 
-	m.clearFailedAttempts(conn.IP)
+	m.clearFailedAttempts(ctx, conn.IP)
 
 	conn.SetUserInfo(claims.InternalUserID, claims.Nickname, claims.Avatar)
 	conn.SetStatus(connection.StatusAuthed)
@@ -125,63 +129,56 @@ func (m *AuthMiddleware) sendSuccess(conn *connection.Connection, cmd, requestID
 	conn.Send(respData)
 }
 
-func (m *AuthMiddleware) isLocked(ip string) bool {
-	attempts, ok := m.failedAttempts.Load(ip)
-	if !ok {
-		return false
+// isLocked 检查 IP 是否被锁定（查 Redis）
+func (m *AuthMiddleware) isLocked(ctx context.Context, ip string) bool {
+	key := gateway.GatewayLockedIPKey(ip)
+	exists, err := m.redis.Exists(ctx, key).Result()
+	if err != nil {
+		logger.Error("failed to check ip lock in redis",
+			"ip", ip, "error", err)
+		return false // Redis 故障时 fail-open，避免锁死所有用户
 	}
-	return attempts.(int) >= m.maxAttempts
+	return exists > 0
 }
 
+// recordFailedAttempt 记录失败尝试（Redis INCR 持久化）
 func (m *AuthMiddleware) recordFailedAttempt(ctx context.Context, ip string) {
-	attempts, _ := m.failedAttempts.LoadOrStore(ip, 0)
-	newAttempts := attempts.(int) + 1
-	m.failedAttempts.Store(ip, newAttempts)
+	counterKey := rediskeys.GatewayAuthFailKey(ip)
+	count, err := m.redis.Incr(ctx, counterKey).Result()
+	if err != nil {
+		logger.Error("failed to record failed attempt",
+			"ip", ip, "error", err)
+		return
+	}
+	if count == 1 {
+		if err := m.redis.Expire(ctx, counterKey, m.counterWindow).Err(); err != nil {
+			logger.Warn("failed to set expire on auth fail counter",
+				"ip", ip, "error", err)
+		}
+	}
 
-	if newAttempts >= m.maxAttempts {
-		key := gateway.GatewayLockedIPKey(ip)
-		m.redis.Set(ctx, key, "1", m.lockDuration)
-		logger.Warn("IP locked due to too many failed attempts", "ip", ip, "attempts", newAttempts)
+	if count >= int64(m.maxAttempts) {
+		lockKey := gateway.GatewayLockedIPKey(ip)
+		if err := m.redis.Set(ctx, lockKey, "1", m.lockDuration).Err(); err != nil {
+			logger.Error("failed to set ip lock",
+				"ip", ip, "error", err)
+		}
+		logger.Warn("IP locked due to too many failed attempts",
+			"ip", ip, "attempts", count, "lock_duration", m.lockDuration)
 	}
 }
 
-func (m *AuthMiddleware) clearFailedAttempts(ip string) {
-	m.failedAttempts.Delete(ip)
-}
-
-func (m *AuthMiddleware) cleanupRoutine() {
-	defer m.wg.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Error("cleanup routine panic",
-				"panic", r, "stack", string(debug.Stack()))
-		}
-	}()
-
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-			m.failedAttempts.Range(func(key, value interface{}) bool {
-				m.failedAttempts.Delete(key)
-				return true
-			})
-		}
+// clearFailedAttempts 清理失败计数（成功登录后调用）
+func (m *AuthMiddleware) clearFailedAttempts(ctx context.Context, ip string) {
+	counterKey := rediskeys.GatewayAuthFailKey(ip)
+	lockKey := gateway.GatewayLockedIPKey(ip)
+	if err := m.redis.Del(ctx, counterKey, lockKey).Err(); err != nil {
+		logger.Warn("failed to clear failed attempts",
+			"ip", ip, "error", err)
 	}
 }
 
+// Stop 停止 Auth 中间件
 func (m *AuthMiddleware) Stop() {
 	m.cancel()
-	// v3 新增：等待 cleanupRoutine 退出
-	done := make(chan struct{})
-	go func() { m.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		logger.Warn("auth middleware stop timeout")
-	}
 }

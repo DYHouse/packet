@@ -9,4 +9,6 @@ type GameNacosConfig struct {
 	commonconfig.NacosConfig `mapstructure:",squash" yaml:",inline"`
 	AlgorithmDataID          string `mapstructure:"algorithm_data_id" yaml:"algorithm_data_id"`
 	AlgorithmGroup           string `mapstructure:"algorithm_group" yaml:"algorithm_group"`
+	RateLimiterDataID        string `mapstructure:"rate_limiter_data_id" yaml:"rate_limiter_data_id"`
+	RateLimiterGroup         string `mapstructure:"rate_limiter_group" yaml:"rate_limiter_group"`
 }

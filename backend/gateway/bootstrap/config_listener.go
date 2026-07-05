@@ -1,9 +1,6 @@
 package bootstrap
 
 import (
-	"runtime/debug"
-
-	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/nacos"
 	gatewayConfig "github.com/cashparty/backend/gateway/config"
 )
@@ -17,41 +14,4 @@ func registerConfigListeners(nacosClient *nacos.Client, cfg *gatewayConfig.Confi
 	if nacosClient == nil {
 		return
 	}
-	registerRateLimiterConfigListener(nacosClient, cfg, container)
-}
-
-func registerRateLimiterConfigListener(nacosClient *nacos.Client, cfg *gatewayConfig.Config, container *Container) {
-	if cfg.Nacos.RateLimiterDataID == "" {
-		return
-	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("rate limiter config listener panic",
-					"data_id", cfg.Nacos.RateLimiterDataID,
-					"panic", r,
-					"stack", string(debug.Stack()))
-			}
-		}()
-		if err := nacosClient.ListenConfig(
-			cfg.Nacos.RateLimiterDataID,
-			cfg.Nacos.RateLimiterGroup,
-			func(content string) {
-				rlCfg, err := gatewayConfig.LoadRateLimiterFromContent(content)
-				if err != nil {
-					logger.Warn("parse rate limiter config from nacos failed, keep old config",
-						"data_id", cfg.Nacos.RateLimiterDataID,
-						"error", err)
-					return
-				}
-				container.RateLimiter.UpdateConfig(rlCfg)
-				logger.Info("rate limiter config reloaded from nacos",
-					"data_id", cfg.Nacos.RateLimiterDataID)
-			},
-		); err != nil {
-			logger.Warn("listen rate limiter config failed",
-				"data_id", cfg.Nacos.RateLimiterDataID,
-				"error", err)
-		}
-	}()
 }

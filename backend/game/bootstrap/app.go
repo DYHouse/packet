@@ -67,6 +67,9 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 		}
 	}
 
+	// 从 nacos 加载限流配置（可选,未配置 RateLimiterDataID 时使用本地配置）
+	loadRateLimiterConfigFromNacos(nacosClient, cfg)
+
 	logger.Init(&logger.LogConfig{
 		Level:    cfg.Log.Level,
 		Filename: cfg.Log.Filename,
@@ -173,7 +176,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	}
 
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
-		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, idGen)
+		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen)
 	container.LockCfg = &cfg.Lock
 	container.InitAppServices()
 
@@ -241,6 +244,18 @@ func (a *Application) Start(ctx context.Context) error {
 		}
 	}()
 
+	// 从限流配置读取 fail-open 策略
+	// grab: 命令级别覆盖 > defaults.fail_open
+	grabFailOpen := a.config.RateLimiter.Defaults.FailOpen
+	if grabCfg, ok := a.config.RateLimiter.Commands["grab"]; ok && grabCfg.FailOpen != nil {
+		grabFailOpen = *grabCfg.FailOpen
+	}
+	// send_packet: 命令级别覆盖 > defaults.financial_fail_open
+	financialFailOpen := a.config.RateLimiter.Defaults.FinancialFailOpen
+	if sendCfg, ok := a.config.RateLimiter.Commands["send_packet"]; ok && sendCfg.FailOpen != nil {
+		financialFailOpen = *sendCfg.FailOpen
+	}
+
 	a.grpcServer = server.NewGRPCServer(
 		a.grpcPort,
 		a.Container.RoomAppService,
@@ -253,6 +268,8 @@ func (a *Application) Start(ctx context.Context) error {
 		a.Container.Redis,
 		a.Container.UserLimiter,
 		a.Container.Broadcaster.Broadcast,
+		grabFailOpen,
+		financialFailOpen,
 	)
 
 	if a.nacos != nil {
@@ -415,4 +432,27 @@ func convertAlgorithmConfig(cfg *gameconfig.AlgorithmConfig) *algorithm.Config {
 	}
 
 	return algoCfg
+}
+
+// loadRateLimiterConfigFromNacos 从 nacos 拉取限流配置并覆盖 cfg.RateLimiter。
+// 未配置 RateLimiterDataID 或拉取/解析失败时保持本地配置,仅 Warn 不阻塞启动。
+func loadRateLimiterConfigFromNacos(nacosClient *nacos.Client, cfg *gameconfig.Config) {
+	if nacosClient == nil || cfg.Nacos.RateLimiterDataID == "" {
+		return
+	}
+	content, err := nacosClient.GetConfig(cfg.Nacos.RateLimiterDataID, cfg.Nacos.RateLimiterGroup)
+	if err != nil {
+		logger.Warn("failed to load rate limiter config from nacos, using local config", "error", err)
+		return
+	}
+	if content == "" {
+		return
+	}
+	rateLimiterCfg, err := gameconfig.LoadRateLimiterFromContent(content)
+	if err != nil {
+		logger.Warn("failed to parse rate limiter config from nacos, using local config", "error", err)
+		return
+	}
+	cfg.RateLimiter = *rateLimiterCfg
+	logger.Info("rate limiter config loaded from nacos", "data_id", cfg.Nacos.RateLimiterDataID)
 }

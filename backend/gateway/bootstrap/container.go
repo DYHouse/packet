@@ -32,7 +32,6 @@ type Container struct {
 	TokenService        *service.TokenService
 	TestService         *service.TestService
 	AuthMiddleware      *middleware.AuthMiddleware
-	RateLimiter         *middleware.RateLimiter
 	HealthChecker       *health.HealthChecker
 	SignatureMiddleware *middleware.SignatureMiddleware
 	GameService         *service.GameService
@@ -65,7 +64,6 @@ func (c *Container) InitServices(serviceDiscovery *discovery.ServiceDiscovery, r
 	c.RouterConfig = routerConfig
 	c.MessageRouter = router.NewMessageRouter(c.ServiceDiscovery, c.RouterConfig)
 
-	c.RateLimiter = middleware.NewRateLimiter(c.Redis, &c.Config.RateLimiter)
 	c.HealthChecker = health.NewHealthChecker(c.Redis, c.ConnMgr)
 
 	c.TokenService = service.NewTokenService(&service.TokenConfig{
@@ -74,7 +72,12 @@ func (c *Container) InitServices(serviceDiscovery *discovery.ServiceDiscovery, r
 		Issuer:    c.Config.Token.Issuer,
 	})
 
-	c.AuthMiddleware = middleware.NewAuthMiddleware(c.TokenService, c.Redis)
+	authCfg := middleware.AuthLockConfig{
+		MaxAttempts:   c.Config.AuthLock.MaxAttempts,
+		LockDuration:  c.Config.AuthLock.LockDuration,
+		CounterWindow: c.Config.AuthLock.CounterWindow,
+	}
+	c.AuthMiddleware = middleware.NewAuthMiddleware(c.TokenService, c.Redis, authCfg)
 
 	c.SignatureMiddleware = middleware.NewSignatureMiddleware(
 		c.Config.Merchant.ID,
@@ -117,7 +120,6 @@ func (c *Container) InitServer() {
 		c.AuthMiddleware,
 		c.MessageRouter,
 		c.BroadcastSvc,
-		c.RateLimiter,
 		c.HealthChecker,
 		c.SignatureMiddleware,
 		c.GameHandler,
@@ -135,9 +137,6 @@ func (c *Container) InitKafkaConsumer() {
 }
 
 func (c *Container) Stop() {
-	if c.RateLimiter != nil {
-		c.RateLimiter.Stop()
-	}
 	if c.AuthMiddleware != nil {
 		c.AuthMiddleware.Stop()
 	}

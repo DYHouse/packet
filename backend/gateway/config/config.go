@@ -17,8 +17,15 @@ type Config struct {
 	Merchant    MerchantConfig                 `mapstructure:"merchant" yaml:"merchant"`
 	Token       TokenConfig                    `mapstructure:"token" yaml:"token"`
 	Log         LogConfig                      `mapstructure:"log" yaml:"log"`
-	RateLimiter RateLimiterConfig              `mapstructure:"rate_limiter" yaml:"rate_limiter"`
 	IDGenerator commonconfig.IDGeneratorConfig `mapstructure:"id_generator" yaml:"id_generator"`
+	AuthLock    AuthLockConfig                 `mapstructure:"auth_lock" yaml:"auth_lock"`
+}
+
+// AuthLockConfig Auth 锁定配置（config 层 DTO，与 middleware.AuthLockConfig 字段一致）
+type AuthLockConfig struct {
+	MaxAttempts   int           `mapstructure:"max_attempts" yaml:"max_attempts"`
+	LockDuration  time.Duration `mapstructure:"lock_duration" yaml:"lock_duration"`
+	CounterWindow time.Duration `mapstructure:"counter_window" yaml:"counter_window"`
 }
 
 type ServerConfig struct {

@@ -1346,7 +1346,7 @@ func TestSettleGame(t *testing.T) {
             want:    SettleResult{},
             wantErr: ErrAlreadySettled,
         },
-        // ... more cases
+        // ... 更多用例
     }
 
     for _, tt := range tests {
@@ -1660,28 +1660,31 @@ TraceID 按职责分两类，生成方式不同：
 
 ### 17.1 语言（MUST）
 
-- 代码注释统一用**英文**。
-- 用户可见字符串（错误消息、日志消息）可以保留中文，但同一类消息全项目语言一致。
+- 代码注释统一用**中文**（项目内沟通与可读性优先）。
+- 用户可见字符串（错误消息、日志消息）保留英文、第三人称、过去时风格，与 §5.4 保持一致。
 - **禁止**中英文混排注释（同一文件内）。
+- **禁止**全英文注释（与项目规约冲突）。
+- 注释中的标识符（函数名、变量名、类型名）保持代码原样，不翻译。
 
 ### 17.2 godoc 规范（MUST）
 
 - 导出类型、导出函数、接口方法必须有 godoc 注释，以类型/函数名开头。
+- godoc 注释首行以中文简要说明用途，必要时补充参数、返回值、错误的中文说明。
 
 ```go
-// BillManager manages bill records, including creation, status update, and query.
+// BillManager 管理账单记录，包括创建、状态更新和查询。
 type BillManager struct {
     // ...
 }
 
-// CreateBill creates a new bill record with idempotency check.
-// Returns ErrBillAlreadyExists if the bill with same BizOrderNo exists.
+// CreateBill 创建新的账单记录，包含幂等性检查。
+// 若相同 BizOrderNo 的账单已存在，返回 ErrBillAlreadyExists。
 func (m *BillManager) CreateBill(ctx context.Context, bill *Bill) error {
     // ...
 }
 ```
 
-- 包注释：每个包必须有 `doc.go` 或在其中一个文件头部有包注释，说明包用途。
+- 包注释：每个包必须有 `doc.go` 或在其中一个文件头部有包注释，说明包用途（中文）。
 - 注释为完整句子，以句号结尾。
 
 ### 17.3 注释内容（SHOULD）
@@ -1873,8 +1876,8 @@ import (
 
 ### 19.9 注释反模式
 
-- 西语注释
-- 同一文件中英西混排
+- 全英文注释（项目规约要求中文）
+- 同一文件中英文混排
 - 注释描述"做了什么"而不是"为什么"
 - 无意义的 `// TODO` 不附 issue 编号
 - 注释掉的代码
@@ -2032,9 +2035,9 @@ import (
 
 | 编号 | 文件 | 问题 | 应收敛为 |
 |---|---|---|---|
-| TD-23 | [common/message/errors.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/errors.go) | 西语注释 | 英文注释 |
-| TD-24 | [common/message/types.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/types.go) | 中文分节注释 | 英文 |
-| TD-25 | [settlement/](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/) | 混合中英文注释 | 新代码用英文 |
+| TD-23 | [common/message/errors.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/errors.go) | 西语注释 | 中文注释 |
+| TD-24 | [common/message/types.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/types.go) | 西语注释 | 中文 |
+| TD-25 | [settlement/](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/settlement/) | 混合中英文注释 | 统一为中文 |
 | TD-26 | [common/message/broadcast.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/broadcast.go) vs [common/message/request.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/message/request.go) | `Marshal()` 与 `ToJSON()` 并存 | 统一 `ToJSON()` |
 | TD-27 | [gateway/health/health.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/gateway/health/health.go) | `HealthStatus.Uptime` 字段未赋值 | 赋值或删除 |
 | TD-28 | [stats/config/config.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/stats/config/config.go) | 默认端口 8081 与 gateway 冲突 | 改为 8082 |
@@ -2053,4 +2056,5 @@ import (
 | 2026-07-04 | 新增 §18 分布式锁与事务规约（DL-1~DL-12、TX-1~TX-12）；附录 A 补充分布式锁框架与锁释放 Lua 脚本参考实现 |
 | 2026-07-04 | 新增 §19 Lua 脚本规约（分层）（L-1~L-8 通用层、L-B1~L-B2 业务层、L-G1~L-G2 通用脚本层） |
 | 2026-07-05 | 新增 §21 TraceID 传播规约（TP-1~TP-12） |
+| 2026-07-05 | 调整 §17.1/§17.2/§19.9 注释语言规约：注释统一用**中文**（原为英文），godoc 示例同步更新为中文；附录 C TD-23/TD-24/TD-25 收敛目标更新为中文 |
 | 2026-07-05 | **重大重构**：基于业界最佳实践全面重组文档结构，提升至高级开发工程师水准。主要变更：<br>1. 新增 §0 前言、§1 总则与核心原则，明确设计目标与质量红线<br>2. 新增 §13 测试规范（表驱动、Mock、覆盖率、并发测试、基准测试）<br>3. 新增 §14 安全规范（输入验证、SQL 注入、敏感数据、加密随机数、凭证管理、CORS、签名校验）<br>4. 新增 §15 性能与资源管理（内存、连接池、超时、缓存、N+1、异步化）<br>5. 新增 §18 格式化与工具链（golangci-lint、pre-commit、依赖管理、死代码）<br>6. 合并原 §17/§18/§19/§20/§21 到 §10 分布式系统统一编排<br>7. 附录 B 新增业界规范参考（Google Go Style Guide、Effective Go、Clean Architecture、Twelve-Factor App 等）<br>8. 附录 C 将原散落各处的"必须收敛"项集中为项目技术债务清单，按优先级分级<br>9. 反模式章节扩充（命名、错误处理、并发、数据库、Redis、HTTP、配置、重复、注释、序列化、测试、安全）<br>10. 引用业界权威规范作为兜底（Google Go Style Guide、Go Code Review Comments、OWASP 等） |

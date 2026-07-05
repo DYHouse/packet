@@ -3,6 +3,8 @@ package limiter
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"sync"
 	"time"
 
 	limiterScripts "github.com/cashparty/backend/common/limiter/scripts"
@@ -11,126 +13,110 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 )
 
+// RateLimiter 通用限流器,基于 Redis 滑动窗口实现
 type RateLimiter struct {
-	redis  *cRedis.Client
-	prefix string
+	redis    *cRedis.Client
+	failOpen bool
+	metrics  *Metrics
 }
 
-func NewRateLimiter(redis *cRedis.Client, prefix string) *RateLimiter {
-	return &RateLimiter{
-		redis: redis,
-		// 加上 cashparty: 命名空间前缀，避免被清理脚本漏掉（规约 SC-5 / P1-4 修复）
-		prefix: rediskeys.KeyPrefix + ":" + prefix,
+// Option RateLimiter 配置选项
+type Option func(*RateLimiter)
+
+// WithFailOpen 设置 Redis 故障时的 fail-open 策略
+func WithFailOpen(failOpen bool) Option {
+	return func(rl *RateLimiter) {
+		rl.failOpen = failOpen
 	}
 }
 
+// NewRateLimiter 创建限流器
+func NewRateLimiter(redis *cRedis.Client, opts ...Option) *RateLimiter {
+	rl := &RateLimiter{
+		redis:    redis,
+		failOpen: true, // 默认 fail-open
+		metrics:  &Metrics{},
+	}
+	for _, opt := range opts {
+		opt(rl)
+	}
+	return rl
+}
+
+// LimitConfig 限流配置
 type LimitConfig struct {
 	Key    string
 	Limit  int64
 	Window time.Duration
 }
 
+// Allow 判断请求是否放行
 func (l *RateLimiter) Allow(ctx context.Context, cfg *LimitConfig) (bool, error) {
-	key := fmt.Sprintf("%s:%s", l.prefix, cfg.Key)
+	// cfg.Key 已由调用方使用 rediskeys 工厂函数构造完整 Redis key
+	key := cfg.Key
 	now := time.Now().UnixNano()
+	// 唯一 member,避免同纳秒请求被 ZADD 去重
+	member := fmt.Sprintf("%d-%d", now, rand.Int63())
 
-	result, err := limiterScripts.SlidingWindowScript.Run(ctx, l.redis, []string{key}, cfg.Limit, int64(cfg.Window), now).Int64()
+	result, err := limiterScripts.SlidingWindowScript.Run(
+		ctx, l.redis, []string{key}, cfg.Limit, int64(cfg.Window), now, member,
+	).Int64()
 	if err != nil {
-		logger.Error("rate limiter error", "key", key, "error", err)
-		return true, nil
+		l.metrics.IncError()
+		logger.Error("rate limiter redis error",
+			"key", key, "error", err, "fail_open", l.failOpen)
+		return l.failOpen, err
 	}
 
+	if result == 1 {
+		l.metrics.IncAllow()
+	} else {
+		l.metrics.IncReject()
+	}
 	return result == 1, nil
 }
 
-func (l *RateLimiter) AllowN(ctx context.Context, key string, limit int64, window time.Duration) (bool, error) {
-	return l.Allow(ctx, &LimitConfig{
-		Key:    key,
-		Limit:  limit,
-		Window: window,
-	})
+// UserLimiter 用户级限流器,按命令维度限流
+type UserLimiter struct {
+	limiter *RateLimiter
+	configs map[string]LimitConfig
+	mu      sync.RWMutex
 }
 
-func (l *RateLimiter) FixedWindow(ctx context.Context, key string, limit int64, window time.Duration) (bool, error) {
-	fullKey := fmt.Sprintf("%s:fixed:%s:%d", l.prefix, key, time.Now().Unix()/int64(window.Seconds()))
+// NewUserLimiter 创建用户限流器
+func NewUserLimiter(redis *cRedis.Client, configs map[string]LimitConfig) *UserLimiter {
+	return &UserLimiter{
+		limiter: NewRateLimiter(redis),
+		configs: configs,
+	}
+}
 
-	count, err := l.redis.Incr(ctx, fullKey).Result()
-	if err != nil {
-		logger.Error("fixed window error", "key", fullKey, "error", err)
+// UpdateConfigs 热更新限流配置
+func (ul *UserLimiter) UpdateConfigs(configs map[string]LimitConfig) {
+	ul.mu.Lock()
+	defer ul.mu.Unlock()
+	ul.configs = configs
+}
+
+// Allow 统一限流入口,按命令维度限流
+// userID: 用户 ID
+// cmd: 命令名(如 "grab"),对应配置中的 key
+func (ul *UserLimiter) Allow(ctx context.Context, userID, cmd string) (bool, error) {
+	ul.mu.RLock()
+	cfg, ok := ul.configs[cmd]
+	ul.mu.RUnlock()
+	if !ok {
+		// 未配置限流的命令,默认放行
 		return true, nil
 	}
 
-	if count == 1 {
-		l.redis.Expire(ctx, fullKey, window)
-	}
+	// 构造完整 Redis key
+	key := rediskeys.RateLimitCmdKey(cmd, userID)
 
-	return count <= limit, nil
-}
-
-type UserLimiter struct {
-	limiter *RateLimiter
-	configs map[string]*LimitConfig
-}
-
-func NewUserLimiter(redis *cRedis.Client) *UserLimiter {
-	return &UserLimiter{
-		limiter: NewRateLimiter(redis, "user"),
-		configs: map[string]*LimitConfig{
-			"grab": {
-				Key:    "grab",
-				Limit:  10,
-				Window: time.Second,
-			},
-			"join": {
-				Key:    "join",
-				Limit:  5,
-				Window: time.Minute,
-			},
-			"create": {
-				Key:    "create",
-				Limit:  3,
-				Window: time.Minute,
-			},
-		},
-	}
-}
-
-func (ul *UserLimiter) AllowGrab(ctx context.Context, userID string) (bool, error) {
-	cfg := ul.configs["grab"]
-	cfg.Key = fmt.Sprintf("grab:%s", userID)
-	return ul.limiter.Allow(ctx, cfg)
-}
-
-func (ul *UserLimiter) AllowJoin(ctx context.Context, userID string) (bool, error) {
-	cfg := ul.configs["join"]
-	cfg.Key = fmt.Sprintf("join:%s", userID)
-	return ul.limiter.Allow(ctx, cfg)
-}
-
-func (ul *UserLimiter) AllowCreate(ctx context.Context, userID string) (bool, error) {
-	cfg := ul.configs["create"]
-	cfg.Key = fmt.Sprintf("create:%s", userID)
-	return ul.limiter.Allow(ctx, cfg)
-}
-
-type IPLimiter struct {
-	limiter *RateLimiter
-}
-
-func NewIPLimiter(redis *cRedis.Client) *IPLimiter {
-	return &IPLimiter{
-		limiter: NewRateLimiter(redis, "ip"),
-	}
-}
-
-func (il *IPLimiter) Allow(ctx context.Context, ip string, limit int64, window time.Duration) (bool, error) {
-	return il.limiter.AllowN(ctx, ip, limit, window)
-}
-
-func (il *IPLimiter) AllowConnection(ctx context.Context, ip string) (bool, error) {
-	return il.Allow(ctx, ip, 100, time.Minute)
-}
-
-func (il *IPLimiter) AllowRequest(ctx context.Context, ip string) (bool, error) {
-	return il.Allow(ctx, ip, 1000, time.Minute)
+	// 创建新 LimitConfig,不修改共享配置
+	return ul.limiter.Allow(ctx, &LimitConfig{
+		Key:    key,
+		Limit:  cfg.Limit,
+		Window: cfg.Window,
+	})
 }
