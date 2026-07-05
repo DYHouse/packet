@@ -5,7 +5,7 @@ import "time"
 type BillRecord struct {
 	ID               int64      `gorm:"primaryKey;autoIncrement" json:"id"`
 	RoundTraceID     string     `gorm:"size:64;uniqueIndex:idx_round_trace_bill_user,priority:1" json:"round_trace_id"`
-	BizOrderNo       string     `gorm:"uniqueIndex;size:64" json:"biz_order_no"`
+	BizOrderNo       string     `gorm:"uniqueIndex;size:128" json:"biz_order_no"`
 	PlatformTransID  string     `gorm:"index;size:64" json:"platform_trans_id"`
 	BillType         int        `gorm:"not null;uniqueIndex:idx_round_trace_bill_user,priority:2" json:"bill_type"`
 	DeductScene      int        `gorm:"default:0" json:"deduct_scene"`
@@ -21,7 +21,7 @@ type BillRecord struct {
 	Status           int        `gorm:"default:0;index" json:"status"`
 	ReconcileStatus  int        `gorm:"default:0;index" json:"reconcile_status"`
 	RefundStatus     int        `gorm:"default:0;index" json:"refund_status"`
-	RefundOrderNo    string     `gorm:"size:64" json:"refund_order_no"`
+	RefundOrderNo    string     `gorm:"size:128" json:"refund_order_no"`
 	RefundAmount     int64      `gorm:"default:0" json:"refund_amount"`
 	RefundReason     string     `gorm:"size:256" json:"refund_reason"`
 	RefundAppliedAt  *time.Time `json:"refund_applied_at"`

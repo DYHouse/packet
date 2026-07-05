@@ -231,7 +231,7 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	conn.IP = utils.GetClientIP(c.Request)
 	conn.UserAgent = c.Request.UserAgent()
 
-	ctx := c.Request.Context()
+	ctx := context.Background()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
