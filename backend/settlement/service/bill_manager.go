@@ -343,6 +343,27 @@ func (m *BillManager) UpdateRefundAuditError(ctx context.Context, refundID int64
 	return nil
 }
 
+// UpdateRefundAuditToPendingForRetry 原子地将 refund_audit 的 status 从 fromStatus 回退到 Pending，
+// 同时更新 error_message。用于 executeRefund 失败后使退款单能被 RefundProcessScheduler 重新查到并重试。
+// 乐观锁：只允许从 fromStatus 状态转换，防止并发覆盖。
+// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
+func (m *BillManager) UpdateRefundAuditToPendingForRetry(ctx context.Context, refundID int64, fromStatus int, errMsg string) error {
+	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
+		Where("id = ? AND status = ?", refundID, fromStatus).
+		Updates(map[string]interface{}{
+			"status":        dto.RefundStatusPending,
+			"error_message": errMsg,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update refund audit to pending for retry failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+	return nil
+}
+
 func (m *BillManager) UpdateRefundSuccessInTransaction(ctx context.Context, refundID int64, refundFromStatus, billFromStatus int, platformTransID string, refundedAt time.Time) error {
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Refunded。
@@ -414,6 +435,15 @@ func (m *BillManager) CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ct
 	return nil
 }
 
+// CreateRefundAuditAndUpdateBillRefundStatus 是 CreateRefundAuditAndUpdateBillRefundStatusInTransaction 的自管理事务版本，
+// 内部用 m.db.Transaction 开事务并委托给 InTransaction 方法。
+// 用于 service 层调用，避免 service 层直接持有 *gorm.DB 开事务。
+func (m *BillManager) CreateRefundAuditAndUpdateBillRefundStatus(ctx context.Context, refundAudit *model.RefundAudit, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
+	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return m.CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ctx, tx, refundAudit, billID, fromRefundStatus, toRefundStatus, refundOrderNo)
+	})
+}
+
 // RejectRefundInTransaction 在传入的 tx 内原子地拒绝 refund_audit 并更新 bill 的 refund_status，
 // 防止只更新 refund_audit 但未更新 bill refund_status 造成数据不一致。
 func (m *BillManager) RejectRefundInTransaction(ctx context.Context, tx *gorm.DB, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
@@ -449,6 +479,15 @@ func (m *BillManager) RejectRefundInTransaction(ctx context.Context, tx *gorm.DB
 		return nil
 	}
 	return nil
+}
+
+// RejectRefund 是 RejectRefundInTransaction 的自管理事务版本，
+// 内部用 m.db.Transaction 开事务并委托给 InTransaction 方法。
+// 用于 service 层调用，避免 service 层直接持有 *gorm.DB 开事务。
+func (m *BillManager) RejectRefund(ctx context.Context, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
+	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return m.RejectRefundInTransaction(ctx, tx, refundID, refundFromStatus, billID, billFromRefundStatus, billToRefundStatus, errMsg)
+	})
 }
 
 func (m *BillManager) UpdateRoundSettlementDeductSuccess(ctx context.Context, roundTraceID string, successCount int, deductedAt time.Time) error {

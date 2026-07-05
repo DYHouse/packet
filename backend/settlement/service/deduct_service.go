@@ -16,7 +16,6 @@ import (
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
-	"gorm.io/gorm"
 )
 
 const defaultMaxConcurrentDeduct = 20
@@ -26,7 +25,6 @@ type DeductService struct {
 	billMgr             *BillManager
 	redis               *cRedis.Client
 	traceIDGen          *TraceIDGenerator
-	db                  *gorm.DB
 	cfg                 *config.PlatformConfig
 	lockCfg             *config.LockConfig
 	creditRetrySvc      *CreditRetryService
@@ -42,7 +40,6 @@ func NewDeductService(
 	billMgr *BillManager,
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
-	db *gorm.DB,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
 	creditRetrySvc *CreditRetryService,
@@ -62,7 +59,6 @@ func NewDeductService(
 		billMgr:             billMgr,
 		redis:               redis,
 		traceIDGen:          traceIDGen,
-		db:                  db,
 		cfg:                 cfg,
 		lockCfg:             lockCfg,
 		creditRetrySvc:      creditRetrySvc,
@@ -360,9 +356,7 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 				AppliedBy:     0,
 			}
 
-			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				return s.billMgr.CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ctx, tx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
-			}); err != nil {
+			if err := s.billMgr.CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo); err != nil {
 				logger.Error("create refund audit and update bill refund status failed", "user_id", userID, "batch_id", batchID, "error", err)
 				continue
 			}

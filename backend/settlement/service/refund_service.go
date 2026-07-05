@@ -13,7 +13,6 @@ import (
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
-	"gorm.io/gorm"
 )
 
 type RefundService struct {
@@ -21,7 +20,6 @@ type RefundService struct {
 	billMgr       *BillManager
 	redis         *cRedis.Client
 	traceIDGen    *TraceIDGenerator
-	db            *gorm.DB
 	cfg           *config.PlatformConfig
 	lockCfg       *config.LockConfig
 	userIDConvert *UserIDConvertService
@@ -33,7 +31,6 @@ func NewRefundService(
 	billMgr *BillManager,
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
-	db *gorm.DB,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
 	userIDConvert *UserIDConvertService,
@@ -50,7 +47,6 @@ func NewRefundService(
 		billMgr:       billMgr,
 		redis:         redis,
 		traceIDGen:    traceIDGen,
-		db:            db,
 		cfg:           cfg,
 		lockCfg:       lockCfg,
 		userIDConvert: userIDConvert,
@@ -109,20 +105,7 @@ func (s *RefundService) applyForRefundLocked(ctx context.Context, req *dto.Refun
 		AppliedBy:     req.AppliedBy,
 	}
 
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(refundAudit).Error; err != nil {
-			return fmt.Errorf("create refund audit failed: %w", err)
-		}
-		if err := tx.Model(&model.BillRecord{}).
-			Where("id = ?", bill.ID).
-			Updates(map[string]interface{}{
-				"refund_status":   dto.RefundStatusPending,
-				"refund_order_no": refundOrderNo,
-			}).Error; err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
+	if err := s.billMgr.CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo); err != nil {
 		return "", err
 	}
 
@@ -179,7 +162,9 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, refund.UserID)
 	if err != nil {
-		s.billMgr.UpdateRefundAuditError(ctx, refund.ID, dto.RefundStatusProcessing, err.Error())
+		if retryErr := s.billMgr.UpdateRefundAuditToPendingForRetry(ctx, refund.ID, dto.RefundStatusProcessing, err.Error()); retryErr != nil {
+			logger.Warn("update refund audit to pending for retry failed", "refund_id", refund.ID, "error", retryErr)
+		}
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -206,7 +191,9 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 
 	creditResult, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		s.billMgr.UpdateRefundAuditError(ctx, refund.ID, dto.RefundStatusProcessing, err.Error())
+		if retryErr := s.billMgr.UpdateRefundAuditToPendingForRetry(ctx, refund.ID, dto.RefundStatusProcessing, err.Error()); retryErr != nil {
+			logger.Warn("update refund audit to pending for retry failed", "refund_id", refund.ID, "error", retryErr)
+		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
 				ID:           callLog.ID,
@@ -251,9 +238,7 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 			return fmt.Errorf("refund status is not pending")
 		}
 
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return s.billMgr.RejectRefundInTransaction(ctx, tx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
-		})
+		return s.billMgr.RejectRefund(ctx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
 	})
 }
 
