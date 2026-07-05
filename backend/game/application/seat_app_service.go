@@ -10,6 +10,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
@@ -110,7 +111,13 @@ func (s *SeatAppService) SelectSeat(ctx context.Context, req *SelectSeatRequest)
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar)); err != nil {
+			logger.Warn("publish seat_select event failed",
+				"room_id", req.RoomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
@@ -172,7 +179,13 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname)); err != nil {
+			logger.Warn("publish seat_cancel event failed",
+				"room_id", req.RoomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	var roomState *RoomState
@@ -280,8 +293,14 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		}
 		json.Unmarshal([]byte(playerDataStr), &player)
 
-		s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
-			req.RoomID, req.UserID, player.SeatNo, player.Nickname, player.Avatar))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
+			req.RoomID, req.UserID, player.SeatNo, player.Nickname, player.Avatar)); err != nil {
+			logger.Warn("publish player_ready event failed",
+				"room_id", req.RoomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	var roomState *RoomState
@@ -387,7 +406,13 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout)); err != nil {
+			logger.Warn("publish spectator_kick event failed",
+				"room_id", roomID,
+				"user_id", userID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	if s.broadcaster != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/scheduler"
 	"github.com/cashparty/backend/settlement/dto"
@@ -128,7 +129,13 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 	roomNo := result.RoomNo
 
 	if s.publisher != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorJoinEvent(roomID, req.UserID, userInfo.Nickname, userInfo.Avatar))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorJoinEvent(roomID, req.UserID, userInfo.Nickname, userInfo.Avatar)); err != nil {
+			logger.Warn("publish spectator_join event failed",
+				"room_id", roomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	stateData, _ := s.repo.GetRoomStateData(ctx, roomID)
@@ -207,9 +214,15 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 	}
 
 	if s.publisher != nil && autoResult.Player != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
 			joinResult.RoomID, req.UserID, autoResult.SeatNo,
-			autoResult.Player.Nickname, autoResult.Player.Avatar))
+			autoResult.Player.Nickname, autoResult.Player.Avatar)); err != nil {
+			logger.Warn("publish player_ready event failed",
+				"room_id", joinResult.RoomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	var roomState *RoomState
@@ -336,9 +349,15 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	if s.publisher != nil && subResult.Player != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewSubstituteEvent(
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSubstituteEvent(
 			roomID, subResult.SubstituteUserID, subResult.SeatNo,
-			subResult.Player.Nickname, subResult.Player.Avatar))
+			subResult.Player.Nickname, subResult.Player.Avatar)); err != nil {
+			logger.Warn("publish substitute event failed",
+				"room_id", roomID,
+				"user_id", subResult.SubstituteUserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	if s.broadcaster != nil {
@@ -395,7 +414,13 @@ func (s *RoomAppService) Enqueue(ctx context.Context, req *EnqueueRequest) (*Enq
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar)); err != nil {
+			logger.Warn("publish queue_join event failed",
+				"room_id", req.RoomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	var roomState *RoomState
@@ -437,7 +462,13 @@ func (s *RoomAppService) Dequeue(ctx context.Context, req *DequeueRequest) (*Deq
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishRoomEvent(ctx, domain.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel"))
+		if err := s.publisher.PublishRoomEvent(ctx, domain.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel")); err != nil {
+			logger.Warn("publish queue_leave event failed",
+				"room_id", req.RoomID,
+				"user_id", req.UserID,
+				"trace_id", trace.FromContext(ctx),
+				"error", err)
+		}
 	}
 
 	var roomState *RoomState
@@ -519,7 +550,13 @@ func (s *RoomAppService) LeaveRoom(ctx context.Context, req *LeaveRoomRequest) (
 
 	if spectator != nil {
 		if s.publisher != nil {
-			s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorLeaveEvent(req.RoomID, req.UserID, req.Reason))
+			if err := s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorLeaveEvent(req.RoomID, req.UserID, req.Reason)); err != nil {
+				logger.Warn("publish spectator_leave event failed",
+					"room_id", req.RoomID,
+					"user_id", req.UserID,
+					"trace_id", trace.FromContext(ctx),
+					"error", err)
+			}
 		}
 	}
 
@@ -593,7 +630,13 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 		nickname = player.Nickname
 		seatNo = player.SeatNo
 		if s.publisher != nil {
-			s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo))
+			if err := s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo)); err != nil {
+				logger.Warn("publish player_reconnect event failed",
+					"room_id", req.RoomID,
+					"user_id", req.UserID,
+					"trace_id", trace.FromContext(ctx),
+					"error", err)
+			}
 		}
 	} else if spectator != nil {
 		nickname = spectator.Nickname

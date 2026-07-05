@@ -15,12 +15,14 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/application"
 	commonPb "github.com/cashparty/backend/proto/common"
 	settlementService "github.com/cashparty/backend/settlement/service"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -67,10 +69,14 @@ func NewGenericServiceServer(
 }
 
 func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	// 从 gRPC metadata 提取 TraceID（Gateway 透传），无则生成，注入 context
+	ctx = trace.WithTraceID(ctx, extractTraceIDFromMetadata(ctx))
+
 	logger.Info("[Game<-Gateway] received request",
 		"user_id", req.UserId,
 		"cmd", req.Cmd,
 		"request_id", req.RequestId,
+		"trace_id", trace.FromContext(ctx),
 		"data", string(req.Data))
 
 	var resp *commonPb.ForwardResponse
@@ -141,6 +147,21 @@ func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.Forwar
 		"data", string(resp.Data))
 
 	return resp, nil
+}
+
+// extractTraceIDFromMetadata 从 gRPC metadata 提取 TraceID。
+// Gateway 在 forwardToService 时通过 metadata header "x-trace-id" 注入。
+// 无则返回空字符串，由调用方通过 trace.WithTraceID 自动生成。
+func extractTraceIDFromMetadata(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	values := md.Get("x-trace-id")
+	if len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }
 
 func (s *GenericServiceServer) handleJoinRoom(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {

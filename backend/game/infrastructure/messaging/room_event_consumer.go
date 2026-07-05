@@ -10,6 +10,7 @@ import (
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
 	redisKeys "github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/google/uuid"
@@ -54,6 +55,11 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		return fmt.Errorf("parse room event failed: %w", err)
 	}
 
+	// 从 event 恢复 TraceID 到 context，使下游日志/DB 操作可关联
+	if event.TraceID != "" {
+		ctx = trace.WithTraceID(ctx, event.TraceID)
+	}
+
 	acquired, token, acquireErr := c.tryAcquire(ctx, event.EventID)
 	if acquireErr != nil {
 		// Redis 不可用（fail-closed），返回 error 让 Kafka 重试
@@ -63,7 +69,8 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		logger.Debug("event already processed, skipping",
 			"event_type", event.EventType,
 			"room_id", event.RoomID,
-			"user_id", event.UserID)
+			"user_id", event.UserID,
+			"trace_id", event.TraceID)
 		return nil
 	}
 
@@ -93,11 +100,14 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		handleErr = c.handleSeatCancel(ctx, event)
 	case domain.RoomEventSpectatorKick:
 		handleErr = c.handleSpectatorKick(ctx, event)
+	case domain.RoomEventSubstitute:
+		handleErr = c.handleSubstitute(ctx, event)
 	default:
 		// fail-closed: unknown event type returns error to trigger retry + DLQ.
 		logger.Warn("unknown event type",
 			"event_type", event.EventType,
-			"room_id", event.RoomID)
+			"room_id", event.RoomID,
+			"trace_id", event.TraceID)
 		return fmt.Errorf("unknown event type: %s", event.EventType)
 	}
 
@@ -107,14 +117,16 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 			"event_type", event.EventType,
 			"room_id", event.RoomID,
 			"user_id", event.UserID,
-			"error", handleErr)
+			"error", handleErr,
+			"trace_id", event.TraceID)
 		return handleErr
 	}
 
 	logger.Info("room event processed",
 		"event_type", event.EventType,
 		"room_id", event.RoomID,
-		"user_id", event.UserID)
+		"user_id", event.UserID,
+		"trace_id", event.TraceID)
 
 	return nil
 }
@@ -153,6 +165,11 @@ func (c *RoomEventConsumer) handleSeatCancel(ctx context.Context, event *domain.
 }
 
 func (c *RoomEventConsumer) handleSpectatorKick(ctx context.Context, event *domain.RoomEvent) error {
+	return c.syncRoomCounts(ctx, event)
+}
+
+func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *domain.RoomEvent) error {
+	// 替补上座：spectator → player，两个计数都变化，需同步
 	return c.syncRoomCounts(ctx, event)
 }
 

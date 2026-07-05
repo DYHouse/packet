@@ -10,9 +10,11 @@ import (
 	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/gateway/connection"
 	commonPb "github.com/cashparty/backend/proto/common"
 	"github.com/google/uuid"
+	"google.golang.org/grpc/metadata"
 )
 
 type RouteConfig struct {
@@ -87,16 +89,21 @@ func (r *MessageRouter) Route(ctx context.Context, conn *connection.Connection, 
 		req.RequestID = generateRequestID()
 	}
 
+	// 生成请求级 TraceID，贯穿 Gateway → gRPC → Application → Kafka 全链路
+	ctx = trace.WithTraceID(ctx, trace.Generate())
+
 	if conn != nil {
 		logger.Debug("routing message",
 			"conn_id", conn.ConnID,
 			"user_id", conn.UserID,
 			"cmd", req.Cmd,
-			"request_id", req.RequestID)
+			"request_id", req.RequestID,
+			"trace_id", trace.FromContext(ctx))
 	} else {
 		logger.Debug("routing server-initiated message",
 			"cmd", req.Cmd,
-			"request_id", req.RequestID)
+			"request_id", req.RequestID,
+			"trace_id", trace.FromContext(ctx))
 	}
 
 	serviceName := r.getServiceName(req.Cmd)
@@ -155,6 +162,9 @@ func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string
 		Data:      req.Data,
 		Timestamp: req.Timestamp,
 	}
+
+	// 通过 gRPC metadata 透传 TraceID 给 Game Service
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-trace-id", trace.FromContext(ctx))
 
 	logger.Debug("[Gateway->Server] sending request",
 		"service", serviceName,

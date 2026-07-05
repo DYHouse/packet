@@ -12,6 +12,7 @@ import (
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
 	redisKeys "github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/model"
@@ -81,6 +82,11 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		logger.Error("unmarshal game event failed", "error", err)
 		return fmt.Errorf("unmarshal event failed: %w", err)
+	}
+
+	// 从 event 恢复 TraceID 到 context，使下游日志/DB 操作可关联
+	if event.TraceID != "" {
+		ctx = trace.WithTraceID(ctx, event.TraceID)
 	}
 
 	acquired, token, acquireErr := c.tryAcquire(ctx, event.TraceID)

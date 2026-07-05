@@ -8,6 +8,7 @@ import (
 
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
 )
 
@@ -39,8 +40,18 @@ func (p *RoomEventPublisher) Publish(ctx context.Context, event *domain.RoomEven
 }
 
 func (p *RoomEventPublisher) publish(ctx context.Context, event *domain.RoomEvent) error {
+	// 优先使用 event 已有的 TraceID（向后兼容调用方显式设置）；
+	// 其次从 context 提取 TraceID（实现端到端追踪）；
+	// 两者都为空时自动生成（兜底，保证消息一定能发出）。
 	if event.TraceID == "" {
-		return fmt.Errorf("event TraceID must be set by caller")
+		event.TraceID = trace.FromContext(ctx)
+	}
+	if event.TraceID == "" {
+		event.TraceID = trace.Generate()
+		logger.Warn("event TraceID not in ctx, auto-generated",
+			"event_type", event.EventType,
+			"room_id", event.RoomID,
+			"trace_id", event.TraceID)
 	}
 	if event.EventID == "" {
 		event.EventID = generateEventID()
@@ -73,7 +84,8 @@ func (p *RoomEventPublisher) publish(ctx context.Context, event *domain.RoomEven
 		"event_type", event.EventType,
 		"room_id", event.RoomID,
 		"user_id", event.UserID,
-		"event_id", event.EventID)
+		"event_id", event.EventID,
+		"trace_id", event.TraceID)
 
 	return nil
 }
