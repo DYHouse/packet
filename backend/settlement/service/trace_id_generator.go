@@ -1,7 +1,9 @@
 package service
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -9,36 +11,54 @@ import (
 	"github.com/cashparty/backend/common/idgen"
 )
 
+// TraceIDGenerator 业务订单号/TraceID 生成器。
+// 依赖 IDGenerator 接口（非具体类型），便于 mock 测试（规约 SID-10）。
 type TraceIDGenerator struct {
-	idGen *idgen.SnowflakeGenerator
+	idGen idgen.IDGenerator
 }
 
-func NewTraceIDGenerator(idGen *idgen.SnowflakeGenerator) *TraceIDGenerator {
+// NewTraceIDGenerator 创建 TraceIDGenerator。
+// idGen 必须非 nil，调用方负责在 bootstrap 层注入已初始化的 IDGenerator。
+func NewTraceIDGenerator(idGen idgen.IDGenerator) *TraceIDGenerator {
 	return &TraceIDGenerator{idGen: idGen}
 }
 
+// GenerateRoundTraceID 基于 sessionID+roundNo 确定性生成 roundTraceID。
+// 重试时可复现，作为 BizOrderNo 的基础。
 func (g *TraceIDGenerator) GenerateRoundTraceID(sessionID int64, roundNo int) string {
 	return fmt.Sprintf("RT_%d_%d", sessionID, roundNo)
 }
 
-// GenerateBizOrderNo 基于业务语义确定性生成，重试时可复现，便于平台基于 BizID 做幂等去重
+// GenerateBizOrderNo 基于业务语义确定性生成，重试时可复现，便于平台基于 BizID 做幂等去重。
 func (g *TraceIDGenerator) GenerateBizOrderNo(roundTraceID string, billType int, userID int64) string {
 	return fmt.Sprintf("%s_%d_%d", roundTraceID, billType, userID)
 }
 
-func (g *TraceIDGenerator) GenerateBatchID() string {
-	return fmt.Sprintf("BATCH_%d", g.idGen.GenerateInt64())
+// GenerateBatchID 生成扣款批次 ID。
+// 非确定性，使用雪花 ID。返回 (string, error)，调用方 MUST 检查 error（规约 SID-C4）。
+func (g *TraceIDGenerator) GenerateBatchID() (string, error) {
+	id, err := g.idGen.GenerateInt64()
+	if err != nil {
+		return "", fmt.Errorf("generate batch id: %w", err)
+	}
+	return fmt.Sprintf("BATCH_%d", id), nil
 }
 
-// GenerateRefundOrderNo 退款订单号基于 billID 确定性生成，重试时可复现
+// GenerateRefundOrderNo 退款订单号基于 billID 确定性生成，重试时可复现。
 func (g *TraceIDGenerator) GenerateRefundOrderNo(billID int64) string {
 	return fmt.Sprintf("REFUND_%d", billID)
 }
 
-func (g *TraceIDGenerator) GenerateReconcileNo() string {
+// GenerateReconcileNo 生成对账单号。
+// 使用 crypto/rand 生成 4 位随机数，避免雪花 ID 低位 sequence 碰撞（规约 SID-12）。
+// 返回 (string, error)，调用方 MUST 检查 error。
+func (g *TraceIDGenerator) GenerateReconcileNo() (string, error) {
 	timestamp := time.Now().Format("20060102150405")
-	random := g.idGen.GenerateInt64() % 10000
-	return fmt.Sprintf("REC_%s_%04d", timestamp, random)
+	random, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
+		return "", fmt.Errorf("generate reconcile no: %w", err)
+	}
+	return fmt.Sprintf("REC_%s_%04d", timestamp, random.Int64()), nil
 }
 
 // GenerateExceptionNo 基于 billID + exceptionType 确定性生成异常单号。
@@ -57,12 +77,12 @@ func (g *TraceIDGenerator) GeneratePenaltyDistTraceID(roomID, sessionID int64) s
 	return fmt.Sprintf("PENALTY_DIST_%d_%d", roomID, sessionID)
 }
 
-// GenerateGameSettleTraceID 游戏结算 traceID（基于 sessionID 确定性生成，重试时可复现）
+// GenerateGameSettleTraceID 游戏结算 traceID（基于 sessionID 确定性生成，重试时可复现）。
 func (g *TraceIDGenerator) GenerateGameSettleTraceID(sessionID int64) string {
 	return fmt.Sprintf("GAME_SETTLE_%d", sessionID)
 }
 
-// GenerateSessionCreditTraceID 会话级入账 traceID（基于 sessionID+userID 确定性生成，重试时可复现）
+// GenerateSessionCreditTraceID 会话级入账 traceID（基于 sessionID+userID 确定性生成，重试时可复现）。
 func (g *TraceIDGenerator) GenerateSessionCreditTraceID(sessionID int64, userID int64) string {
 	return fmt.Sprintf("SESSION_CREDIT_%d_%d", sessionID, userID)
 }

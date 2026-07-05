@@ -50,6 +50,7 @@ type GameAppService struct {
 	gameEndCallback   GameEndCallback
 	roomAppService    *RoomAppService
 	taskRunner        *async.TaskRunner
+	idGen             idgen.IDGenerator
 }
 
 // SetRoomAppService 注入 RoomAppService（用于踢人后触发自动替补）
@@ -88,6 +89,7 @@ func NewGameAppService(
 	lockCfg *config.LockConfig,
 	redisTTL config.RedisTTLConfig,
 	taskRunner *async.TaskRunner,
+	idGen idgen.IDGenerator,
 ) *GameAppService {
 	if lockCfg == nil {
 		lockCfg = &config.LockConfig{}
@@ -114,6 +116,7 @@ func NewGameAppService(
 		lockCfg:           lockCfg,
 		redisTTL:          redisTTL,
 		taskRunner:        taskRunner,
+		idGen:             idGen,
 	}
 }
 
@@ -472,7 +475,14 @@ func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, us
 }
 
 func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta *domain.RoomMeta) string {
-	sessionID := idgen.GenerateString()
+	sessionID, err := s.idGen.GenerateString()
+	if err != nil {
+		logger.Error("generate session id failed",
+			"room_id", roomID,
+			"error", err,
+		)
+		return ""
+	}
 
 	if err := s.repo.UpdateRoomSessionID(ctx, roomID, sessionID); err != nil {
 		logger.Error("failed to update session_id", "room_id", roomID, "error", err)
@@ -507,12 +517,19 @@ func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta 
 			})
 		}
 
+		traceID, err := s.idGen.GenerateString()
+		if err != nil {
+			logger.Warn("generate trace id failed for session start event",
+				"room_id", roomID,
+				"error", err,
+			)
+		}
 		event := &domain.GameEvent{
 			RoomID:    roomID,
 			SessionID: sessionID,
 			EventType: domain.GameEventSessionStart,
 			Timestamp: time.Now().UnixMilli(),
-			TraceID:   idgen.GenerateString(),
+			TraceID:   traceID,
 		}
 		_ = event.SetPayload(&domain.SessionStartData{
 			RoomNo:     meta.RoomNo,
@@ -1037,13 +1054,21 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 				roomFeePerPlayer = meta.RoomFee / int64(len(results))
 			}
 
+			roundSettleTraceID, err := s.idGen.GenerateString()
+			if err != nil {
+				logger.Warn("generate trace id failed for round settle event",
+					"room_id", roomID,
+					"round_id", roundID,
+					"error", err,
+				)
+			}
 			event := &domain.GameEvent{
 				RoomID:    roomID,
 				SessionID: meta.CurrentSessionID,
 				RoundID:   roundID,
 				EventType: domain.GameEventRoundSettle,
 				Timestamp: time.Now().UnixMilli(),
-				TraceID:   idgen.GenerateString(),
+				TraceID:   roundSettleTraceID,
 			}
 			_ = event.SetPayload(&domain.RoundSettleData{
 				RoundNo:          roundNo,
@@ -1212,12 +1237,19 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 
 	// 统一发布 SessionEnd 事件（所有游戏结束路径都经过这里）
 	if s.eventPublisher != nil && opts.SessionID != "" {
+		sessionEndTraceID, err := s.idGen.GenerateString()
+		if err != nil {
+			logger.Warn("generate trace id failed for session end event",
+				"room_id", roomID,
+				"error", err,
+			)
+		}
 		sessionEndEvent := &domain.GameEvent{
 			RoomID:    roomID,
 			SessionID: opts.SessionID,
 			EventType: domain.GameEventSessionEnd,
 			Timestamp: time.Now().UnixMilli(),
-			TraceID:   idgen.GenerateString(),
+			TraceID:   sessionEndTraceID,
 		}
 		_ = sessionEndEvent.SetPayload(&domain.SessionEndData{
 			ActualRounds: opts.ActualRounds,
@@ -1495,13 +1527,21 @@ func (s *GameAppService) publishPacketCreatedEvent(ctx context.Context, roomID, 
 		senderType = "system"
 	}
 
+	packetCreatedTraceID, err := s.idGen.GenerateString()
+	if err != nil {
+		logger.Warn("generate trace id failed for packet created event",
+			"room_id", roomID,
+			"round_id", roundID,
+			"error", err,
+		)
+	}
 	event := &domain.GameEvent{
 		RoomID:    roomID,
 		SessionID: meta.CurrentSessionID,
 		RoundID:   roundID,
 		EventType: domain.GameEventPacketCreated,
 		Timestamp: time.Now().UnixMilli(),
-		TraceID:   idgen.GenerateString(),
+		TraceID:   packetCreatedTraceID,
 	}
 	_ = event.SetPayload(&domain.PacketCreatedData{
 		RoomID:      roomID,
@@ -1539,7 +1579,10 @@ type initRoundResult struct {
 }
 
 func (s *GameAppService) createRoundRecord(ctx context.Context, roomID, sessionID int64, roundNo int) (*model.Round, error) {
-	roundID := idgen.GenerateInt64()
+	roundID, err := s.idGen.GenerateInt64()
+	if err != nil {
+		return nil, fmt.Errorf("generate round id: %w", err)
+	}
 	round := &model.Round{
 		RoundID:   roundID,
 		SessionID: sessionID,

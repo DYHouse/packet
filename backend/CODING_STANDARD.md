@@ -27,6 +27,7 @@
 17. [调度器（Scheduler）](#17-调度器scheduler)
 18. [分布式锁与事务规约](#18-分布式锁与事务规约)
 19. [Lua 脚本规约（分层）](#19-lua-脚本规约分层)
+20. [雪花 ID 规约](#20-雪花-id-规约)
 
 ---
 
@@ -1278,6 +1279,81 @@ Lua 内禁止使用 `KEYS` 命令。
 
 ---
 
+## 20. 雪花 ID 规约
+
+### 20.1 适用范围
+
+本规约适用于所有需要生成全局唯一标识的业务场景。基于 [SNOWFLAKE_REFACTOR_PLAN.md](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/SNOWFLAKE_REFACTOR_PLAN.md) v2.1 重构方案。
+
+雪花 ID 实现位于 [common/idgen/](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/)，基于 [bwmarrin/snowflake](https://github.com/bwmarrin/snowflake) 封装，自定义纪元 `2026-01-01 00:00:00 UTC`（`1735689600000`），位分配 `timestamp(41) + nodeID(10) + sequence(12)`。
+
+### 20.2 通用规约
+
+| 编号 | 规约 | 级别 |
+|---|---|---|
+| SID-1 | 所有业务实体唯一标识（用户 ID、房间 ID、回合 ID、sessionID）MUST 使用雪花 ID，禁止使用 UUID 或数据库自增 | MUST |
+| SID-2 | 雪花 ID 生成 MUST 通过 `idgen.IDGenerator` 接口调用，禁止业务代码直接实例化 `SnowflakeGenerator` 或直接 import `bwmarrin/snowflake`（仅 `common/idgen/` 与 `settlement/service/trace_id_generator_test.go` 测试桩件允许） | MUST |
+| SID-3 | `GenerateInt64()` / `GenerateString()` / `GenerateID()` 返回 `(T, error)`，调用方 MUST 检查 error，禁止忽略 | MUST |
+| SID-4 | 时钟回拨时返回 `ErrClockMovedBackwards`（大幅回拨 >5ms）或等待追上（小幅回拨 ≤5ms），调用方遇 error MUST 记录 Warn 日志并 retry 或返回错误给上游 | MUST |
+| SID-5 | nodeID MUST 从 yaml 配置读取（`IDGeneratorConfig.NodeID`），禁止仅依赖环境变量 `NODE_ID` | MUST |
+| SID-6 | nodeID MUST 在 [0, 1023] 范围内。多实例部署时每个实例 MUST 唯一，禁止多实例共用同一 nodeID | MUST |
+| SID-7 | `idgen.Init` / `InitWithAutoAlloc` MUST 在 `bootstrap` 层启动时显式调用，禁止在业务代码中懒加载。`GetGenerator()` 未初始化时返回 `ErrGeneratorNotInitialized`（fail-fast） | MUST |
+| SID-8 | 业务订单号（BizOrderNo、RefundOrderNo、ExceptionNo 等幂等键）MUST 确定性生成（基于业务语义拼接），禁止使用雪花 ID。详见 §9 幂等性 | MUST |
+| SID-9 | 事件 TraceID 允许使用雪花 ID（非确定性），但 MUST 与幂等键区分，禁止将雪花 ID 作为幂等键 | SHOULD |
+| SID-10 | `TraceIDGenerator` MUST 依赖 `IDGenerator` 接口，禁止依赖 `*SnowflakeGenerator` 具体类型 | MUST |
+| SID-11 | 雪花 ID 生成器 MUST 有单元测试，覆盖并发唯一性、时钟回拨、序列号溢出、nodeID 边界值、时间戳单调递增 | MUST |
+| SID-12 | 需要随机数的场景（如 `GenerateReconcileNo`）MUST 使用 `crypto/rand`，禁止用雪花 ID 取模（低 12 位是 sequence，碰撞概率高） | MUST |
+| SID-13 | 雪花 ID 框架 MUST 使用 `bwmarrin/snowflake`，禁止自研或替换为其他库（sonyflake 等） | MUST |
+| SID-14 | 自定义纪元 MUST 设置为 `1735689600000`（2026-01-01 00:00:00 UTC），禁止使用默认 Twitter 纪元或 2024-01-01 旧纪元 | MUST |
+
+### 20.3 调用方规约
+
+| 编号 | 规约 | 级别 |
+|---|---|---|
+| SID-C1 | `GameAppService`、`UserService`、`GrabService` 等业务服务 SHOULD 在构造函数注入 `IDGenerator` 接口，禁止在方法内部调用 `idgen.GetGenerator()` | SHOULD |
+| SID-C2 | 禁止在 `game/application/`、`settlement/service/`、`gateway/` 业务代码中调用 `idgen.GetGenerator()`（应在构造函数注入） | MUST |
+| SID-C3 | `scripts/` 下的脚本工具可直接调用 `idgen.Init()` + `idgen.GetGenerator()`，但 MUST 检查 error | MUST |
+| SID-C4 | `TraceIDGenerator` 的非确定性方法（`GenerateBatchID`、`GenerateReconcileNo`）返回 `(string, error)`，调用方 MUST 检查 error | MUST |
+| SID-C5 | 需要暴露 ID 给前端或日志分析时，SHOULD 使用 `GenerateID()` 返回 `snowflake.ID` 类型，支持 JSON Marshal 和 Base32/58/64 编码 | SHOULD |
+
+### 20.4 配置规约
+
+| 编号 | 规约 | 级别 |
+|---|---|---|
+| SID-CFG1 | `IDGeneratorConfig.Enabled=true` 时，`NodeID` MUST 在 [0, 1023] 范围内 | MUST |
+| SID-CFG2 | `common/config.SetIDGeneratorDefaults` MUST 校验 `NodeID` 范围，超出 [0, 1023] 时 panic（fail-fast） | MUST |
+| SID-CFG3 | 多实例部署时，每个实例的 `node_id` MUST 唯一。生产环境推荐配置 `node_id: 0` 触发 Redis 自动分配 | MUST |
+| SID-CFG4 | nacos 配置 `node_id: 0` 表示 Redis 自动分配（INCR + SET NX + 心跳续约 + Lua 安全释放），适用于多实例读同一份配置的场景 | MUST |
+| SID-CFG5 | 环境变量 `NODE_ID` 仅作为历史兼容，新代码 MUST 从配置文件读取 | SHOULD |
+
+### 20.5 测试规约
+
+| 编号 | 规约 | 级别 |
+|---|---|---|
+| SID-T1 | [common/idgen/snowflake_test.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/snowflake_test.go) MUST 覆盖：单线程唯一性、多线程并发唯一性（≥100 goroutine × ≥1000 ID） | MUST |
+| SID-T2 | MUST 覆盖时钟回拨场景：小幅回拨（≤5ms）等待追上、大幅回拨（>5ms）返回 `ErrClockMovedBackwards` | MUST |
+| SID-T3 | MUST 覆盖序列号溢出：同毫秒生成 > 4096 个 ID 时阻塞等待下一毫秒（由 bwmarrin 库处理） | MUST |
+| SID-T4 | MUST 覆盖 nodeID 边界值：0、1023（合法）、-1、1024（非法，返回 `ErrNodeIDInvalid`） | MUST |
+| SID-T5 | MUST 验证时间戳单调递增（无回拨时） | MUST |
+| SID-T6 | `TraceIDGenerator` 测试 MUST 覆盖确定性方法的幂等性（相同输入相同输出）与非确定性方法返回 error | MUST |
+| SID-T7 | SHOULD 验证 `snowflake.ID` 的 JSON Marshal/Unmarshal 正确性 | SHOULD |
+
+### 20.6 nodeID 自动分配规约（多实例生产环境）
+
+当 `node_id: 0` 时通过 [common/idgen/node_allocator.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/node_allocator.go) 自动分配：
+
+| 编号 | 规约 | 级别 |
+|---|---|---|
+| SID-NA1 | 自动分配 MUST 使用 Redis `INCR` 获取递增序列 + `SET NX` 抢占，禁止仅用 `INCR`（无法保证独占） | MUST |
+| SID-NA2 | 抢占记录 MUST 带 TTL（默认 3600 秒），实例宕机后自动回收 nodeID | MUST |
+| SID-NA3 | 心跳续约 MUST 每 5 分钟 `EXPIRE`，禁止使用 `SET` 覆盖（会重置 value） | MUST |
+| SID-NA4 | 释放 nodeID MUST 通过 Lua 脚本校验 `value == instanceID` 后 `DEL`，禁止直接 `DEL`（可能误删他人锁） | MUST |
+| SID-NA5 | 释放脚本 MUST 通过 `cRedis.NewScript` 注册，禁止内联 `redis.Eval`（与 §19 L-1 一致） | MUST |
+| SID-NA6 | instanceID MUST 使用 `google/uuid` 生成，禁止使用 nodeID 或时间戳作为 token | MUST |
+| SID-NA7 | 心跳续约 goroutine MUST 使用 appCtx 派生的 context，禁止 `context.Background()`（与 §6 一致） | MUST |
+
+---
+
 ## 附录 A：参考实现索引
 
 | 主题 | 参考文件 |
@@ -1300,7 +1376,12 @@ Lua 内禁止使用 `KEYS` 命令。
 | 健康检查三端点 | [gateway/health/health.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/gateway/health/health.go) |
 | Lua 脚本框架（cRedis.NewScript） | [game/infrastructure/persistence/redis/scripts/registry.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/infrastructure/persistence/redis/scripts/registry.go) |
 | Lua 错误码常量表 | [game/domain/lua_codes.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/game/domain/lua_codes.go) |
+| 雪花 ID 生成器（bwmarrin 封装 + 时钟回拨检测） | [common/idgen/snowflake.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/snowflake.go) |
+| nodeID Redis 自动分配 | [common/idgen/node_allocator.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/node_allocator.go) |
+| nodeID 释放 Lua 脚本 | [common/idgen/release_node.lua.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/release_node.lua.go) |
+| 全局 IDGenerator 注册 | [common/idgen/registry.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/idgen/registry.go) |
 | 分层规约（§19） | [CODING_STANDARD.md §19](#19-lua-脚本规约分层) |
+| 分层规约（§20） | [CODING_STANDARD.md §20](#20-雪花-id-规约) |
 
 ---
 

@@ -33,8 +33,6 @@ func main() {
 
 	logger.Init(&logger.LogConfig{Level: cfg.Log.Level})
 
-	idgen.InitFromEnv()
-
 	ctx := context.Background()
 
 	// 1. Connect to MySQL
@@ -54,6 +52,20 @@ func main() {
 	}
 	defer redisClient.Close()
 
+	// 2.5 初始化雪花 ID 生成器（脚本场景使用显式 node_id，规约 SID-7）
+	// 脚本为单实例运行，使用 node_id=1 即可；若 cfg.IDGenerator.NodeID > 0 则使用配置值
+	scriptNodeID := int64(1)
+	if cfg.IDGenerator.Enabled && cfg.IDGenerator.NodeID > 0 {
+		scriptNodeID = cfg.IDGenerator.NodeID
+	}
+	if err := idgen.Init(scriptNodeID); err != nil {
+		log.Fatalf("init id generator failed: %v", err)
+	}
+	idGen, err := idgen.GetGenerator()
+	if err != nil {
+		log.Fatalf("get id generator failed: %v", err)
+	}
+
 	// 3. Create RobotAccountRepository
 	robotRepo := mysqlRepo.NewRobotAccountRepository(db)
 
@@ -65,7 +77,7 @@ func main() {
 
 	// 6. Create UserService (use DBRepository so SaveUser works end-to-end)
 	dbRepo := mysqlRepo.NewDBRepository(db)
-	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar)
+	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar, idGen)
 
 	// 7. Create RobotAccountService
 	robotAccountSvc := application.NewRobotAccountService(

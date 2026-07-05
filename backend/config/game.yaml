@@ -126,6 +126,11 @@ nacos:
 
 id_generator:
   enabled: true
+  # 节点 ID，范围 [0, 1023]。
+  # 0 表示 Redis 自动分配（多实例生产环境推荐，通过 nacos 下发统一配置）
+  # >0 表示显式指定（单实例/测试环境；多实例部署时每个实例必须唯一）
+  # 多实例部署禁止使用默认值 1，否则会产生 ID 冲突
+  node_id: 1
 
 avatar:
   base_url: "https://opc.narrytech.cn/avatars"

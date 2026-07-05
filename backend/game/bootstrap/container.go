@@ -7,6 +7,7 @@ import (
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/limiter"
 	cRedis "github.com/cashparty/backend/common/redis"
@@ -88,6 +89,7 @@ type Container struct {
 	gameSettleSvc            *settlementService.GameSettleService
 	robotChecker             settlementService.RobotChecker
 	settlementVirtualBalance *settlementService.VirtualBalanceService
+	idGen                    idgen.IDGenerator
 }
 
 func NewContainer(
@@ -119,6 +121,7 @@ func NewContainer(
 	taskRunner *async.TaskRunner,
 	settlementSchedulerCfg *config.SettlementSchedulerConfig,
 	redisTTL *config.RedisTTLConfig,
+	idGen idgen.IDGenerator,
 ) *Container {
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	broadcaster := broadcast.NewGameBroadcaster(broadcastCfg, kafkaProducer, redis)
@@ -178,11 +181,12 @@ func NewContainer(
 		gameSettleSvc:            gameSettleSvc,
 		robotChecker:             robotChecker,
 		settlementVirtualBalance: settlementVirtualBalance,
+		idGen:                    idGen,
 	}
 }
 
 func (c *Container) InitAppServices() {
-	c.UserService = application.NewUserService(c.DBRepo, c.Redis, c.AvatarCfg)
+	c.UserService = application.NewUserService(c.DBRepo, c.Redis, c.AvatarCfg, c.idGen)
 
 	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert, c.settlementVirtualBalance, c.robotChecker)
 
@@ -220,6 +224,7 @@ func (c *Container) InitAppServices() {
 		c.LockCfg,
 		*c.RedisTTL,
 		c.TaskRunner,
+		c.idGen,
 	)
 
 	c.SeatAppService = application.NewSeatAppService(

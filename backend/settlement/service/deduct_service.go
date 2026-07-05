@@ -99,7 +99,10 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 		}
 
 		roundTraceID := s.traceIDGen.GenerateRoundTraceID(req.SessionID, req.RoundNo)
-		batchID := s.traceIDGen.GenerateBatchID()
+		batchID, err := s.traceIDGen.GenerateBatchID()
+		if err != nil {
+			return fmt.Errorf("generate batch id: %w", err)
+		}
 
 		settlement := &model.RoundSettlement{
 			RoundTraceID:       roundTraceID,

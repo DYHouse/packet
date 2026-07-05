@@ -8,16 +8,17 @@ import (
 )
 
 type Config struct {
-	Server      ServerConfig                 `mapstructure:"server" yaml:"server"`
-	Gateway     GatewayConfig                `mapstructure:"gateway" yaml:"gateway"`
-	Redis       RedisConfig                  `mapstructure:"redis" yaml:"redis"`
-	Nacos       GatewayNacosConfig           `mapstructure:"nacos" yaml:"nacos"`
-	Kafka       commonconfig.KafkaConfig     `mapstructure:"kafka" yaml:"kafka"`
-	Broadcast   commonconfig.BroadcastConfig `mapstructure:"broadcast" yaml:"broadcast"`
-	Merchant    MerchantConfig               `mapstructure:"merchant" yaml:"merchant"`
-	Token       TokenConfig                  `mapstructure:"token" yaml:"token"`
-	Log         LogConfig                    `mapstructure:"log" yaml:"log"`
-	RateLimiter RateLimiterConfig            `mapstructure:"rate_limiter" yaml:"rate_limiter"`
+	Server      ServerConfig                   `mapstructure:"server" yaml:"server"`
+	Gateway     GatewayConfig                  `mapstructure:"gateway" yaml:"gateway"`
+	Redis       RedisConfig                    `mapstructure:"redis" yaml:"redis"`
+	Nacos       GatewayNacosConfig             `mapstructure:"nacos" yaml:"nacos"`
+	Kafka       commonconfig.KafkaConfig       `mapstructure:"kafka" yaml:"kafka"`
+	Broadcast   commonconfig.BroadcastConfig   `mapstructure:"broadcast" yaml:"broadcast"`
+	Merchant    MerchantConfig                 `mapstructure:"merchant" yaml:"merchant"`
+	Token       TokenConfig                    `mapstructure:"token" yaml:"token"`
+	Log         LogConfig                      `mapstructure:"log" yaml:"log"`
+	RateLimiter RateLimiterConfig              `mapstructure:"rate_limiter" yaml:"rate_limiter"`
+	IDGenerator commonconfig.IDGeneratorConfig `mapstructure:"id_generator" yaml:"id_generator"`
 }
 
 type ServerConfig struct {

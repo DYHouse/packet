@@ -67,4 +67,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Token.Issuer == "" {
 		cfg.Token.Issuer = "gateway-service"
 	}
+
+	// 雪花 ID 生成器默认值与范围校验（规约 SID-CFG1、SID-CFG2）
+	commonconfig.SetIDGeneratorDefaults(&cfg.IDGenerator)
 }

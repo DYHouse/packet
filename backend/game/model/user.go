@@ -26,13 +26,19 @@ func (u *User) GetUserID() string {
 	return u.UserID
 }
 
-func NewUser(userID, nickname, avatar, ip, deviceID string) *User {
+// NewUser 创建新用户。idGen 必须非 nil。
+// 返回 (*User, error)，调用方 MUST 检查 error（规约 SID-3）。
+func NewUser(idGen idgen.IDGenerator, userID, nickname, avatar, ip, deviceID string) (*User, error) {
+	id, err := idGen.GenerateInt64()
+	if err != nil {
+		return nil, err
+	}
 	return &User{
-		ID:       idgen.GenerateInt64(),
+		ID:       id,
 		UserID:   userID,
 		Nickname: nickname,
 		Avatar:   avatar,
 		IP:       ip,
 		DeviceID: deviceID,
-	}
+	}, nil
 }

@@ -67,6 +67,34 @@ func NewApplicationWithConfig(cfg *gatewayConfig.Config, routerPath string) (*Ap
 		return nil, fmt.Errorf("start task runner failed: %w", err)
 	}
 
+	redisClient, err := initRedis(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// 初始化雪花 ID 生成器（规约 SID-7：bootstrap 层显式初始化）。
+	// gateway 仅使用 nodeID 作为 Kafka 消费者 group 后缀和节点标识，
+	// node_id > 0：显式指定（单实例/测试环境）
+	// node_id = 0：Redis 自动分配（多实例生产环境）
+	if cfg.IDGenerator.Enabled {
+		if cfg.IDGenerator.NodeID > 0 {
+			if err := idgen.Init(cfg.IDGenerator.NodeID); err != nil {
+				cancel()
+				redisClient.Close()
+				return nil, fmt.Errorf("failed to init id generator: %w", err)
+			}
+			logger.Info("id generator initialized with explicit node_id", "node_id", cfg.IDGenerator.NodeID)
+		} else {
+			allocator, err := idgen.InitWithAutoAlloc(appCtx, redisClient)
+			if err != nil {
+				cancel()
+				redisClient.Close()
+				return nil, fmt.Errorf("failed to init id generator with auto alloc: %w", err)
+			}
+			logger.Info("id generator initialized with auto-allocated node_id", "node_id", allocator.GetNodeID())
+		}
+	}
+
 	nodeID := idgen.GetNodeIDString()
 
 	logger.Info("gateway service starting",
@@ -77,11 +105,6 @@ func NewApplicationWithConfig(cfg *gatewayConfig.Config, routerPath string) (*Ap
 		"cpu_cores", runtime.NumCPU(),
 		"node_id", nodeID,
 	)
-
-	redisClient, err := initRedis(cfg)
-	if err != nil {
-		return nil, err
-	}
 
 	if nacosClient != nil && cfg.Nacos.RateLimiterDataID != "" {
 		rlCfg, err := loadRateLimiterConfigFromNacos(nacosClient, cfg)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/utils"
@@ -20,13 +21,15 @@ type UserService struct {
 	dbRepo    domain.DBRepository
 	redis     *cRedis.Client
 	avatarCfg *config.AvatarConfig
+	idGen     idgen.IDGenerator
 }
 
-func NewUserService(dbRepo domain.DBRepository, redis *cRedis.Client, avatarCfg *config.AvatarConfig) *UserService {
+func NewUserService(dbRepo domain.DBRepository, redis *cRedis.Client, avatarCfg *config.AvatarConfig, idGen idgen.IDGenerator) *UserService {
 	return &UserService{
 		dbRepo:    dbRepo,
 		redis:     redis,
 		avatarCfg: avatarCfg,
+		idGen:     idGen,
 	}
 }
 
@@ -54,7 +57,11 @@ func (s *UserService) SaveUser(ctx context.Context, userID, nickname, avatar, ip
 		avatar = utils.GetRandomAvatar(s.avatarCfg.BaseURL, s.avatarCfg.DefaultCount)
 	}
 
-	newUser := model.NewUser(userID, nickname, avatar, ip, deviceID)
+	newUser, err := model.NewUser(s.idGen, userID, nickname, avatar, ip, deviceID)
+	if err != nil {
+		logger.Error("failed to generate user id", "error", err, "user_id", userID)
+		return "", "", err
+	}
 	if err := s.dbRepo.UserDBRepo().CreateOrUpdateUser(ctx, newUser); err != nil {
 		logger.Error("failed to create user", "error", err, "user_id", userID)
 		return "", "", err

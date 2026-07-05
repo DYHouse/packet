@@ -74,14 +74,38 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 
 	logger.Info("game service starting", "port", cfg.Server.GRPCPort)
 
-	if cfg.IDGenerator.Enabled {
-		idgen.InitFromEnv()
-		logger.Info("id generator initialized from environment")
-	}
+	appCtx, cancel := context.WithCancel(context.Background())
+	success := false
+	defer func() {
+		if !success {
+			cancel()
+		}
+	}()
 
 	redisClient, err := cRedis.NewClient(&cfg.Redis)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create redis client: %w", err)
+	}
+
+	// 初始化雪花 ID 生成器（规约 SID-7：bootstrap 层显式初始化）。
+	// node_id > 0：显式指定（单实例/测试环境）
+	// node_id = 0：Redis 自动分配（多实例生产环境）
+	if cfg.IDGenerator.Enabled {
+		if cfg.IDGenerator.NodeID > 0 {
+			if err := idgen.Init(cfg.IDGenerator.NodeID); err != nil {
+				redisClient.Close()
+				return nil, fmt.Errorf("failed to init id generator: %w", err)
+			}
+			logger.Info("id generator initialized with explicit node_id", "node_id", cfg.IDGenerator.NodeID)
+		} else {
+			// 使用 appCtx 派生的 context（规约 §6：禁止 context.Background()）
+			allocator, err := idgen.InitWithAutoAlloc(appCtx, redisClient)
+			if err != nil {
+				redisClient.Close()
+				return nil, fmt.Errorf("failed to init id generator with auto alloc: %w", err)
+			}
+			logger.Info("id generator initialized with auto-allocated node_id", "node_id", allocator.GetNodeID())
+		}
 	}
 
 	lock.InitLocker(redisClient)
@@ -105,11 +129,18 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	}
 	settlementRecorder := settlementService.NewBillManager(db)
 
-	traceIDGen := settlementService.NewTraceIDGenerator(idgen.GetDefaultGenerator())
+	// 获取已初始化的 IDGenerator（规约 SID-7：禁止懒加载，GetGenerator 返回 error 时 fail-fast）
+	idGen, err := idgen.GetGenerator()
+	if err != nil {
+		redisClient.Close()
+		return nil, fmt.Errorf("id generator not initialized: %w", err)
+	}
+
+	traceIDGen := settlementService.NewTraceIDGenerator(idGen)
 	platformCfg := settlementConfig.FromCommonConfig(&cfg.Platform)
 
 	dbRepo := mysqlRepo.NewDBRepository(db)
-	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar)
+	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar, idGen)
 	userIDConvert := settlementService.NewUserIDConvertService(userSvc)
 	exceptionMgr := settlementService.NewExceptionManager(db)
 
@@ -136,18 +167,17 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	// Validate robot configuration before assembling robot services.
 	application.ValidateRobotConfig(&cfg.Robot)
 
-	appCtx, cancel := context.WithCancel(context.Background())
 	taskRunner := async.NewTaskRunner(appCtx, 10*time.Second)
 	if err := taskRunner.Start(); err != nil {
-		cancel()
 		return nil, fmt.Errorf("start task runner failed: %w", err)
 	}
 
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
-		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL)
+		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, idGen)
 	container.LockCfg = &cfg.Lock
 	container.InitAppServices()
 
+	success = true
 	return &Application{
 		Container:  container,
 		config:     cfg,

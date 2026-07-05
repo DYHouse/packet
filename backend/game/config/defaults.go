@@ -17,6 +17,7 @@ func setDefaults(cfg *Config) {
 	commonconfig.SetLockDefaults(&cfg.Lock)
 	commonconfig.SetRedisTTLDefaults(&cfg.RedisTTL)
 	commonconfig.SetNacosDefaults(&cfg.Nacos.NacosConfig)
+	commonconfig.SetIDGeneratorDefaults(&cfg.IDGenerator)
 
 	// game 独有
 	if cfg.Nacos.AlgorithmGroup == "" {

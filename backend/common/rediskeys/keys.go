@@ -261,6 +261,21 @@ const (
 )
 
 // ============================================================================
+// 雪花 ID 生成器 nodeID 分配相关 key
+// ============================================================================
+
+const (
+	// KeyIDGenNodeIDSeq nodeID 分配序列号（INCR 递增）。
+	// 用途：NodeAllocator 通过 INCR 获取候选 nodeID。
+	KeyIDGenNodeIDSeq = KeyPrefix + ":idgen:node_id_seq"
+
+	// KeyIDGenNodeIDAllocPrefix nodeID 分配记录前缀（带尾随冒号）。
+	// 完整 key = KeyIDGenNodeIDAllocPrefix + <nodeID>，value = instanceID。
+	// 用途：SET NX 抢占 nodeID，TTL 1 小时，实例宕机后自动回收。
+	KeyIDGenNodeIDAllocPrefix = KeyPrefix + ":idgen:node_id:alloc:"
+)
+
+// ============================================================================
 // Scheduler 锁相关 key（settlement/scheduler 与 game/scheduler 层，P1-3 修复：补齐 cashparty: 前缀）
 // ============================================================================
 
@@ -683,4 +698,15 @@ func RateLimitCmdKey(cmd, userID string) string {
 // GatewayLockedIPKey 网关锁定 IP 集合 key
 func GatewayLockedIPKey(ip string) string {
 	return fmt.Sprintf(KeyGatewayLockedIP, ip)
+}
+
+// ============================================================================
+// 雪花 ID 生成器 nodeID 分配相关 key 工厂函数
+// ============================================================================
+
+// IDGenNodeIDAllocKey 生成 nodeID 分配记录 key。
+// 用途：NodeAllocator 通过 SET NX 抢占 nodeID，TTL 1 小时。
+// 完整 key 形如 cashparty:idgen:node_id:alloc:5
+func IDGenNodeIDAllocKey(nodeID int64) string {
+	return fmt.Sprintf("%s%d", KeyIDGenNodeIDAllocPrefix, nodeID)
 }

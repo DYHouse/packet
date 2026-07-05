@@ -11,6 +11,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// initIDGenerator 初始化雪花 ID 生成器（脚本场景使用显式 node_id=1）。
+// 规约 SID-7：bootstrap 层显式初始化；SID-C3：脚本可直接调用 GetGenerator，但 MUST 检查 error。
+func initIDGenerator() idgen.IDGenerator {
+	if err := idgen.Init(1); err != nil {
+		log.Fatalf("init id generator failed: %v", err)
+	}
+	idGen, err := idgen.GetGenerator()
+	if err != nil {
+		log.Fatalf("get id generator failed: %v", err)
+	}
+	return idGen
+}
+
 var roomConfigs = []model.RoomConfig{
 	{Name: "Sala de 1", RoomFee: 100, MaxPlayers: 5, MaxRounds: 10, SortOrder: 1, Status: 1},
 	{Name: "Sala de 5", RoomFee: 500, MaxPlayers: 5, MaxRounds: 10, SortOrder: 2, Status: 1},
@@ -117,6 +130,7 @@ func initRoomConfigs(db *gorm.DB) error {
 }
 
 func initRooms(db *gorm.DB) error {
+	idGen := initIDGenerator()
 	for _, cfg := range roomConfigs {
 		var existingCount int64
 		db.Model(&model.Room{}).Where("config_id = ?", cfg.ID).Count(&existingCount)
@@ -140,7 +154,10 @@ func initRooms(db *gorm.DB) error {
 		for i := 0; i < needCreate; i++ {
 			roomIndex := startIndex + i
 			roomNo := fmt.Sprintf("R%04d%04d", cfg.SortOrder, roomIndex)
-			roomID := idgen.GenerateInt64()
+			roomID, err := idGen.GenerateInt64()
+			if err != nil {
+				return fmt.Errorf("generate room id failed: %w", err)
+			}
 
 			room := model.Room{
 				RoomID:        roomID,
