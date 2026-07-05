@@ -16,6 +16,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
@@ -915,7 +916,7 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 		args := []interface{}{
 			roundID,
 			time.Now().Unix(),
-			"cashparty",
+			rediskeys.KeyPacketInfoPrefix,
 		}
 
 		res, err := scripts.SettleRound.Run(ctx, s.redis, keys, args...).Slice()

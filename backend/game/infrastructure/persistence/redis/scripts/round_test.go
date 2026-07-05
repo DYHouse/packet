@@ -7,6 +7,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/redis/go-redis/v9"
 )
@@ -197,7 +198,7 @@ func TestSettleRoundSuccess(t *testing.T) {
 	rdb.HSet(ctx, roundStateKey, "phase", "GRABBING", "round_no", 1, "sender_id", "user1", "total_amount", 100)
 
 	keys := []string{roundStateKey, grabbersKey, playersKey, roomHashKey, availablePacketsKey, ""}
-	args := []interface{}{roundID, int64(1000000), "cashparty"}
+	args := []interface{}{roundID, int64(1000000), rediskeys.KeyPacketInfoPrefix}
 
 	res, err := SettleRound.Run(ctx, client, keys, args...).Slice()
 	if err != nil {
@@ -235,7 +236,7 @@ func TestSettleRoundIdempotent(t *testing.T) {
 		"cashparty:round:available_packets:" + roundID,
 		"",
 	}
-	args := []interface{}{roundID, int64(1000000), "cashparty"}
+	args := []interface{}{roundID, int64(1000000), rediskeys.KeyPacketInfoPrefix}
 
 	res, err := SettleRound.Run(ctx, client, keys, args...).Slice()
 	if err != nil {

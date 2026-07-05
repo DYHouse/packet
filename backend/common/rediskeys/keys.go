@@ -88,8 +88,11 @@ const (
 	// KeyUserGrabbed 用户抢过红包标记。
 	KeyUserGrabbed = KeyPrefix + ":round:grabbed:%s:%s"
 	// KeyRoundGrabbed 玩家本轮已抢标记(Lua 脚本使用)
-	// 对应 Lua 中的 keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID
+	// 对应 Lua 中的 roundGrabbedPrefix .. roundID .. ':' .. userID
 	KeyRoundGrabbed = KeyPrefix + ":round:grabbed:%s:%s"
+	// KeyRoundGrabbedPrefix 玩家本轮已抢标记 key 前缀(Lua 脚本循环内动态拼接使用)
+	// 对应 Lua 中的 roundGrabbedPrefix .. roundID .. ':' .. userID
+	KeyRoundGrabbedPrefix = KeyPrefix + ":round:grabbed:"
 	// KeyPacketInfo 红包详情。
 	KeyPacketInfo = KeyPrefix + ":packet:info:%s"
 	// KeyPacketInfoPrefix 红包信息 key 前缀(Lua 脚本循环内动态拼接使用)

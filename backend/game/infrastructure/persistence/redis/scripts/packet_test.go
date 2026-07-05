@@ -23,13 +23,12 @@ const (
 	testPacketDataTTL = 300
 	testGrabTimeout   = 30
 	testNow           = int64(1000000)
-	testKeyPrefix     = rediskeys.KeyPrefix
 )
 
 // =============================================================================
 // luaGrabPacket 测试
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey, packetInfoKey, packetAvailableKey]
-// ARGV: [userID, now, grabTimeout, roomID, keyPrefix, packetID, packetDataTTL]
+// ARGV: [userID, now, grabTimeout, roomID, packetID, packetDataTTL]
 // =============================================================================
 
 func runGrabPacket(t *testing.T, ctx context.Context, c *cRedis.Client, userID string) []interface{} {
@@ -48,7 +47,6 @@ func runGrabPacket(t *testing.T, ctx context.Context, c *cRedis.Client, userID s
 		testNow,
 		testGrabTimeout,
 		testRoomID,
-		testKeyPrefix,
 		testPacketID,
 		testPacketDataTTL,
 	}
@@ -163,8 +161,9 @@ func TestGrabPacketInfoNotFound(t *testing.T) {
 // luaSendPacket 测试
 // KEYS: [roomHashKey, playersKey, roundStateKey, availablePacketsKey, grabbersKey]
 // ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now,
-//        grabTimeout, keyPrefix, packetAmountsJson, roundID, roomID, scenario,
-//        rewardType, rewardAmount, packetDataTTL, roundStateTTL]
+//        grabTimeout, packetInfoPrefix, packetAvailablePrefix, globalPacketIDKey,
+//        packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount,
+//        packetDataTTL, roundStateTTL]
 // =============================================================================
 
 func runSendPacket(t *testing.T, ctx context.Context, c *cRedis.Client, scenario, roundNo int) []interface{} {
@@ -177,23 +176,25 @@ func runSendPacket(t *testing.T, ctx context.Context, c *cRedis.Client, scenario
 		rediskeys.RoundGrabbersKey(testRoundID),
 	}
 	args := []interface{}{
-		testUserID,              // senderID
-		1,                       // senderType
-		500,                     // totalAmount
-		50,                      // commission
-		450,                     // actualAmount
-		roundNo,                 // roundNo
-		testNow,                 // now
-		testGrabTimeout,         // grabTimeout
-		testKeyPrefix,           // keyPrefix
-		`[100,100,100,100,100]`, // packetAmountsJson
-		testRoundID,             // roundID
-		testRoomID,              // roomID
-		scenario,                // scenario
-		0,                       // rewardType
-		0,                       // rewardAmount
-		testPacketDataTTL,       // packetDataTTL
-		600,                     // roundStateTTL
+		testUserID,                         // senderID
+		1,                                  // senderType
+		500,                                // totalAmount
+		50,                                 // commission
+		450,                                // actualAmount
+		roundNo,                            // roundNo
+		testNow,                            // now
+		testGrabTimeout,                    // grabTimeout
+		rediskeys.KeyPacketInfoPrefix,      // packetInfoPrefix
+		rediskeys.KeyPacketAvailablePrefix, // packetAvailablePrefix
+		rediskeys.KeyGlobalPacketID,        // globalPacketIDKey
+		`[100,100,100,100,100]`,            // packetAmountsJson
+		testRoundID,                        // roundID
+		testRoomID,                         // roomID
+		scenario,                           // scenario
+		0,                                  // rewardType
+		0,                                  // rewardAmount
+		testPacketDataTTL,                  // packetDataTTL
+		600,                                // roundStateTTL
 	}
 	return resultArr(t, SendPacket.Run(ctx, c, keys, args...))
 }
@@ -264,7 +265,7 @@ func TestSendPacketPacketsAlreadyExist(t *testing.T) {
 // =============================================================================
 // luaRobotGrabPacket 测试
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey]
-// ARGV: [userID, now, grabTimeout, roomID, keyPrefix, randOffset, packetDataTTL]
+// ARGV: [userID, now, grabTimeout, roomID, packetInfoPrefix, packetAvailablePrefix, randOffset, packetDataTTL]
 // =============================================================================
 
 func TestRobotGrabPacketSuccess(t *testing.T) {
@@ -280,9 +281,9 @@ func TestRobotGrabPacketSuccess(t *testing.T) {
 	availablePacketsKey := rediskeys.RoundAvailablePacketsKey(testRoundID)
 	must(t, c.RPush(ctx, availablePacketsKey, testPacketID).Err())
 
-	// luaRobotGrabPacket 在 Lua 内拼接 keyPrefix:packet:available:<pid> / keyPrefix:packet:info:<pid>
-	packetInfoKey := testKeyPrefix + ":packet:info:" + testPacketID
-	packetAvailableKey := testKeyPrefix + ":packet:available:" + testPacketID
+	// luaRobotGrabPacket 在 Lua 内拼接 packetAvailablePrefix..<pid> / packetInfoPrefix..<pid>
+	packetInfoKey := rediskeys.PacketInfoKey(testPacketID)
+	packetAvailableKey := rediskeys.PacketAvailableKey(testPacketID)
 	must(t, c.Set(ctx, packetAvailableKey, "1", 0).Err())
 	must(t, c.Set(ctx, packetInfoKey, `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
 
@@ -298,7 +299,8 @@ func TestRobotGrabPacketSuccess(t *testing.T) {
 		testNow,
 		testGrabTimeout,
 		testRoomID,
-		testKeyPrefix,
+		rediskeys.KeyPacketInfoPrefix,
+		rediskeys.KeyPacketAvailablePrefix,
 		0, // randOffset
 		testPacketDataTTL,
 	}
@@ -316,7 +318,7 @@ func TestRobotGrabPacketSuccess(t *testing.T) {
 // =============================================================================
 // luaAutoDistributePackets 测试
 // KEYS: [availablePacketsKey, grabbersKey, roundStateKey, playersKey, roomHashKey]
-// ARGV: [now, keyPrefix, roundID, packetDataTTL]
+// ARGV: [now, packetInfoPrefix, packetAvailablePrefix, roundGrabbedPrefix, roundID, packetDataTTL]
 // =============================================================================
 
 func TestAutoDistributePacketsSuccess(t *testing.T) {
@@ -333,9 +335,9 @@ func TestAutoDistributePacketsSuccess(t *testing.T) {
 	availablePacketsKey := rediskeys.RoundAvailablePacketsKey(testRoundID)
 	must(t, c.RPush(ctx, availablePacketsKey, testPacketID).Err())
 
-	// Lua 内拼接 keyPrefix:packet:available:<pid> / keyPrefix:packet:info:<pid>
-	packetInfoKey := testKeyPrefix + ":packet:info:" + testPacketID
-	packetAvailableKey := testKeyPrefix + ":packet:available:" + testPacketID
+	// Lua 内拼接 packetAvailablePrefix..<pid> / packetInfoPrefix..<pid>
+	packetInfoKey := rediskeys.PacketInfoKey(testPacketID)
+	packetAvailableKey := rediskeys.PacketAvailableKey(testPacketID)
 	must(t, c.Set(ctx, packetAvailableKey, "1", 0).Err())
 	must(t, c.Set(ctx, packetInfoKey, `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
 
@@ -348,7 +350,9 @@ func TestAutoDistributePacketsSuccess(t *testing.T) {
 	}
 	args := []interface{}{
 		testNow,
-		testKeyPrefix,
+		rediskeys.KeyPacketInfoPrefix,
+		rediskeys.KeyPacketAvailablePrefix,
+		rediskeys.KeyRoundGrabbedPrefix,
 		testRoundID,
 		testPacketDataTTL,
 	}

@@ -4,24 +4,25 @@ package scripts
 // common/rediskeys/keys.go。新增/修改 Lua key 时 MUST 同步更新 Go 常量，避免出现孤儿 key。
 //
 // Lua 拼接的 key 与 Go 常量映射：
-//   - keyPrefix .. ':packet:available:' .. packetID  → rediskeys.KeyPacketAvailablePrefix + packetID
+//   - packetAvailablePrefix .. packetID              → rediskeys.KeyPacketAvailablePrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketAvailableKey(packetID)）
-//   - keyPrefix .. ':global:packet_id'               → rediskeys.KeyGlobalPacketID
-//   - keyPrefix .. ':packet:info:' .. packetID       → rediskeys.KeyPacketInfoPrefix + packetID
+//   - globalPacketIDKey                              → rediskeys.KeyGlobalPacketID
+//   - packetInfoPrefix .. packetID                   → rediskeys.KeyPacketInfoPrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketInfoKey(packetID)）
-//   - keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID → rediskeys.KeyRoundGrabbed
+//   - roundGrabbedPrefix .. roundID .. ':' .. userID → rediskeys.KeyRoundGrabbed
 //                                                  （工厂函数 rediskeys.RoundGrabbedKey(roundID, userID)）
 //
 // 注意：
-//   - keyPrefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPrefix（"cashparty"）。
+//   - 具体 prefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPacketInfoPrefix/KeyPacketAvailablePrefix/KeyGlobalPacketID 等常量。
 //   - luaGrabPacket 为单 packetID 场景，packet info / available key 已改为通过 KEYS[6]/KEYS[7]
-//     由 Go 侧直接传入（rediskeys.PacketInfoKey / PacketAvailableKey），不再在 Lua 内拼接 keyPrefix。
+//     由 Go 侧直接传入（rediskeys.PacketInfoKey / PacketAvailableKey），不再在 Lua 内拼接 prefix。
 //   - luaRobotGrabPacket / luaAutoDistributePackets / luaSendPacket 为循环内动态 packetID 场景，
-//     保留 keyPrefix 拼接，对应 KeyPacketInfoPrefix / KeyPacketAvailablePrefix。
+//     通过 ARGV 接收具体 prefix（packetInfoPrefix / packetAvailablePrefix / globalPacketIDKey / roundGrabbedPrefix），
+//     对应 KeyPacketInfoPrefix / KeyPacketAvailablePrefix / KeyGlobalPacketID。
 
 // LuaGrabPacket 抢红包脚本
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey, packetInfoKey, packetAvailableKey]
-// ARGV: [userID, now, grabTimeout, roomID, keyPrefix, packetID, packetDataTTL]
+// ARGV: [userID, now, grabTimeout, roomID, packetID, packetDataTTL]
 // 返回: {code, packetID, amount, position, errMsg, isLast}
 // 错误码: LuaErrOnlyPlayerCanGrab(60), LuaErrNotInGrabbingPhase(40), LuaErrGrabTimeout(41), LuaErrAlreadyGrabbed(21), LuaErrPacketNotAvailable(22), LuaErrPacketInfoNotFound(23)
 const luaGrabPacket = `
@@ -35,9 +36,8 @@ local userID = ARGV[1]
 local now = tonumber(ARGV[2])
 local grabTimeout = tonumber(ARGV[3])
 local roomID = ARGV[4]
-local keyPrefix = ARGV[5]
-local packetID = ARGV[6]
-local packetDataTTL = tonumber(ARGV[7])
+local packetID = ARGV[5]
+local packetDataTTL = tonumber(ARGV[6])
 
 local playerData = redis.call('HGET', playersKey, userID)
 if not playerData then
@@ -97,7 +97,7 @@ return {0, tonumber(packetID), amount, position, '', isLast}  -- LuaErrSuccess
 
 // LuaRobotGrabPacket 机器人抢红包脚本（原子操作：从可用列表随机选+抢）
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey]
-// ARGV: [userID, now, grabTimeout, roomID, keyPrefix, randOffset, packetDataTTL]
+// ARGV: [userID, now, grabTimeout, roomID, packetInfoPrefix, packetAvailablePrefix, randOffset, packetDataTTL]
 // randOffset: Go 侧预生成的随机起始偏移（0 ~ packetCount-1），避免在 Lua 内调用随机函数导致主从复制不一致
 // 返回: {code, packetID, amount, position, errMsg, isLast}
 // 错误码: LuaErrOnlyPlayerCanGrab(60), LuaErrNotInGrabbingPhase(40), LuaErrGrabTimeout(41), LuaErrAlreadyGrabbed(21), LuaErrPacketNotAvailable(22), LuaErrPacketInfoNotFound(23)
@@ -112,9 +112,10 @@ local userID = ARGV[1]
 local now = tonumber(ARGV[2])
 local grabTimeout = tonumber(ARGV[3])
 local roomID = ARGV[4]
-local keyPrefix = ARGV[5]
-local randOffset = tonumber(ARGV[6]) or 0
-local packetDataTTL = tonumber(ARGV[7])
+local packetInfoPrefix = ARGV[5]
+local packetAvailablePrefix = ARGV[6]
+local randOffset = tonumber(ARGV[7]) or 0
+local packetDataTTL = tonumber(ARGV[8])
 
 local playerData = redis.call('HGET', playersKey, userID)
 if not playerData then
@@ -151,7 +152,7 @@ local count = #packetIDs
 for i = 0, count - 1 do
 	local idx = (randOffset + i) % count + 1
 	local pid = packetIDs[idx]
-	availableKey = keyPrefix .. ':packet:available:' .. pid
+	availableKey = packetAvailablePrefix .. pid
 	available = redis.call('GET', availableKey)
 	if available and available == '1' then
 		chosenPacketID = pid
@@ -163,7 +164,7 @@ if not chosenPacketID then
 	return {22, 0, 0, 0, 'packet not available', 0}  -- LuaErrPacketNotAvailable
 end
 
-local packetKey = keyPrefix .. ':packet:info:' .. chosenPacketID
+local packetKey = packetInfoPrefix .. chosenPacketID
 local packetData = redis.call('GET', packetKey)
 if not packetData then
 	return {23, 0, 0, 0, 'packet info not found', 0}  -- LuaErrPacketInfoNotFound
@@ -195,7 +196,7 @@ return {0, tonumber(chosenPacketID), amount, position, '', isLast}  -- LuaErrSuc
 
 // LuaAutoDistributePackets 自动分配未抢红包
 // KEYS: [availablePacketsKey, grabbersKey, roundStateKey, playersKey, roomHashKey]
-// ARGV: [now, keyPrefix, roundID, packetDataTTL]
+// ARGV: [now, packetInfoPrefix, packetAvailablePrefix, roundGrabbedPrefix, roundID, packetDataTTL]
 // 返回: {code, distributedCount, results}
 // 错误码: LuaErrSuccess(0,本脚本始终返回 0)
 const luaAutoDistributePackets = `
@@ -206,9 +207,11 @@ local playersKey = KEYS[4]
 local roomHashKey = KEYS[5]
 
 local now = tonumber(ARGV[1])
-local keyPrefix = ARGV[2]
-local roundID = ARGV[3]
-local packetDataTTL = tonumber(ARGV[4])
+local packetInfoPrefix = ARGV[2]
+local packetAvailablePrefix = ARGV[3]
+local roundGrabbedPrefix = ARGV[4]
+local roundID = ARGV[5]
+local packetDataTTL = tonumber(ARGV[6])
 
 local allPlayers = redis.call('HKEYS', playersKey)
 if not allPlayers or #allPlayers == 0 then
@@ -241,13 +244,13 @@ local results = {}
 local playerIdx = 1
 
 for i, packetIDStr in ipairs(packets) do
-    local availableKey = keyPrefix .. ':packet:available:' .. packetIDStr
+    local availableKey = packetAvailablePrefix .. packetIDStr
     local isAvailable = redis.call('GET', availableKey)
 
     if isAvailable and playerIdx <= #ungrabbedPlayers then
         local userID = ungrabbedPlayers[playerIdx]
 
-        local packetKey = keyPrefix .. ':packet:info:' .. packetIDStr
+        local packetKey = packetInfoPrefix .. packetIDStr
         local packetData = redis.call('GET', packetKey)
 
         if packetData then
@@ -262,7 +265,7 @@ for i, packetIDStr in ipairs(packets) do
             redis.call('DEL', availableKey)
             redis.call('SADD', grabbersKey, userID)
 
-            local userGrabKey = keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID
+            local userGrabKey = roundGrabbedPrefix .. roundID .. ':' .. userID
             redis.call('SET', userGrabKey, '1', 'EX', packetDataTTL)
 
             table.insert(results, {userID, packet.amount, packet.position})
@@ -278,7 +281,7 @@ return {0, #results, results}  -- LuaErrSuccess
 
 // LuaSendPacket 统一发红包脚本
 // KEYS: [roomHashKey, playersKey, roundStateKey, availablePacketsKey, grabbersKey]
-// ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now, grabTimeout, keyPrefix, packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount, packetDataTTL, roundStateTTL]
+// ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now, grabTimeout, packetInfoPrefix, packetAvailablePrefix, globalPacketIDKey, packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount, packetDataTTL, roundStateTTL]
 // scenario: 1=first_round, 2=player_manual, 3=timeout_forced, 4=resume_interrupt
 // 返回: {code, roundID, packetIDs}
 // 错误码: LuaErrGameNotInPlaying(6), LuaErrNotFirstRound(50), LuaErrNoPlayers(52), LuaErrNotYourTurn(51), LuaErrPacketsAlreadyExist(20)
@@ -297,15 +300,17 @@ local actualAmount = tonumber(ARGV[5])
 local roundNo = tonumber(ARGV[6])
 local now = tonumber(ARGV[7])
 local grabTimeout = tonumber(ARGV[8])
-local keyPrefix = ARGV[9]
-local packetAmountsJson = ARGV[10]
-local roundID = ARGV[11]
-local roomID = ARGV[12]
-local scenario = tonumber(ARGV[13])
-local rewardType = tonumber(ARGV[14]) or 0
-local rewardAmount = tonumber(ARGV[15]) or 0
-local packetDataTTL = tonumber(ARGV[16])
-local roundStateTTL = tonumber(ARGV[17])
+local packetInfoPrefix = ARGV[9]
+local packetAvailablePrefix = ARGV[10]
+local globalPacketIDKey = ARGV[11]
+local packetAmountsJson = ARGV[12]
+local roundID = ARGV[13]
+local roomID = ARGV[14]
+local scenario = tonumber(ARGV[15])
+local rewardType = tonumber(ARGV[16]) or 0
+local rewardAmount = tonumber(ARGV[17]) or 0
+local packetDataTTL = tonumber(ARGV[18])
+local roundStateTTL = tonumber(ARGV[19])
 
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status ~= 2 then
@@ -355,9 +360,9 @@ local packetCount = #amounts
 local packetIDs = {}
 
 for i, amount in ipairs(amounts) do
-    local packetID = redis.call('INCR', keyPrefix .. ':global:packet_id')
-    local packetKey = keyPrefix .. ':packet:info:' .. packetID
-    local availableKey = keyPrefix .. ':packet:available:' .. packetID
+    local packetID = redis.call('INCR', globalPacketIDKey)
+    local packetKey = packetInfoPrefix .. packetID
+    local availableKey = packetAvailablePrefix .. packetID
 
     local packet = {
         packet_id = packetID,

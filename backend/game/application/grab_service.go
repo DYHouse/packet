@@ -11,6 +11,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
@@ -48,7 +49,6 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 		time.Now().Unix(),
 		s.grabTimeout,
 		roomID,
-		"cashparty",
 		packetID,
 		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
@@ -115,7 +115,8 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		time.Now().Unix(),
 		s.grabTimeout,
 		roomID,
-		"cashparty",
+		rediskeys.KeyPacketInfoPrefix,
+		rediskeys.KeyPacketAvailablePrefix,
 		// 预生成随机起始偏移，Lua 侧用 % packetCount 取模，避免在 Lua 内调用 math.random
 		// （Redis Lua 禁用 math.random，会导致主从复制不一致）
 		// 1000 取 packetCount 上限 100 的 10 倍冗余，模偏差 < 1% 对机器人选包场景可接受
@@ -166,7 +167,9 @@ func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string
 
 	args := []interface{}{
 		time.Now().Unix(),
-		"cashparty",
+		rediskeys.KeyPacketInfoPrefix,
+		rediskeys.KeyPacketAvailablePrefix,
+		rediskeys.KeyRoundGrabbedPrefix,
 		roundID,
 		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
@@ -232,7 +235,9 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 		roundNo,
 		time.Now().Unix(),
 		s.grabTimeout,
-		"cashparty",
+		rediskeys.KeyPacketInfoPrefix,
+		rediskeys.KeyPacketAvailablePrefix,
+		rediskeys.KeyGlobalPacketID,
 		string(amountsJSON),
 		roundID,
 		roomID,

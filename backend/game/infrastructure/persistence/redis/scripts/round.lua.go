@@ -4,12 +4,10 @@ package scripts
 // common/rediskeys/keys.go。新增/修改 Lua key 时 MUST 同步更新 Go 常量，避免出现孤儿 key。
 //
 // Lua 拼接的 key 与 Go 常量映射：
-//   - keyPrefix .. ':packet:info:' .. packetIDStr → rediskeys.KeyPacketInfoPrefix + packetID
+//   - packetInfoPrefix .. packetIDStr → rediskeys.KeyPacketInfoPrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketInfoKey(packetID)）
-//   - keyPrefix .. ':round:grabbed:' .. roundID .. ':' .. userID → rediskeys.KeyRoundGrabbed
-//                                                  （工厂函数 rediskeys.RoundGrabbedKey(roundID, userID)）
 //
-// 注意：keyPrefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPrefix（"cashparty"）。
+// 注意：packetInfoPrefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPacketInfoPrefix。
 
 // LuaEndGame 游戏结束脚本
 // KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey]
@@ -98,7 +96,7 @@ return {0, results, status}  -- LuaErrSuccess
 
 // LuaSettleRound 结算回合（优化版）
 // KEYS: [roundStateKey, grabbersKey, playersKey, roomHashKey, availablePacketsKey, sessionPlayerTotalsKey]
-// ARGV: [roundID, now, keyPrefix]
+// ARGV: [roundID, now, packetInfoPrefix]
 // 返回: {code, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount, finalResults}
 // results 格式: {userID, grabAmount, nickname, position, avatar, isAutoAssigned, packetID}
 // finalResults 格式: {userID, nickname, avatar, totalAmount, rank}
@@ -113,7 +111,7 @@ local sessionPlayerTotalsKey = KEYS[6]
 
 local roundID = ARGV[1]
 local now = tonumber(ARGV[2])
-local keyPrefix = ARGV[3]
+local packetInfoPrefix = ARGV[3]
 
 -- 幂等性检查：检查回合状态
 local phase = redis.call('HGET', roundStateKey, 'phase')
@@ -162,7 +160,7 @@ local packetIDs = redis.call('LRANGE', availablePacketsKey, 0, -1)
 -- 构建用户红包映射
 local userPackets = {}
 for _, packetIDStr in ipairs(packetIDs) do
-    local packetKey = keyPrefix .. ':packet:info:' .. packetIDStr
+    local packetKey = packetInfoPrefix .. packetIDStr
     local packetData = redis.call('GET', packetKey)
     if packetData then
         local packet = cjson.decode(packetData)
