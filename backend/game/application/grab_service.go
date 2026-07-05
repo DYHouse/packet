@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"math/rand"
 	"time"
 
 	"github.com/cashparty/backend/common/config"
@@ -12,6 +11,7 @@ import (
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
+	"github.com/cashparty/backend/common/utils"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
@@ -95,7 +95,7 @@ func (s *GrabService) GetAvailablePacketID(ctx context.Context, roomID, roundID 
 	if len(packetIDs) == 0 {
 		return "", message.NewError(message.CodeNoPacket)
 	}
-	return packetIDs[rand.Intn(len(packetIDs))], nil
+	return packetIDs[utils.RandomInt64(int64(len(packetIDs)))], nil
 }
 
 // RobotGrabPacket atomically picks a random available packet and grabs it
@@ -120,7 +120,7 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		// 预生成随机起始偏移，Lua 侧用 % packetCount 取模，避免在 Lua 内调用 math.random
 		// （Redis Lua 禁用 math.random，会导致主从复制不一致）
 		// 1000 取 packetCount 上限 100 的 10 倍冗余，模偏差 < 1% 对机器人选包场景可接受
-		rand.Intn(1000),
+		utils.RandomInt64(1000),
 		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
 

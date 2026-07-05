@@ -128,3 +128,25 @@ func ShuffleInt64(slice []int64) {
 		slice[i], slice[j] = slice[j], slice[i]
 	}
 }
+
+// CryptoRandPerm 返回 [0, n) 的随机置换切片，使用 crypto/rand 实现 Fisher-Yates 洗牌。
+// 用于红包金额索引随机化等安全敏感场景（规约 §6.4）。
+// 与 math/rand 的 rand.Perm 等价，但使用加密安全的随机源。
+func CryptoRandPerm(n int) ([]int, error) {
+	if n <= 0 {
+		return nil, fmt.Errorf("n must be positive")
+	}
+	perm := make([]int, n)
+	for i := 0; i < n; i++ {
+		perm[i] = i
+	}
+	// Fisher-Yates shuffle with crypto/rand
+	for i := n - 1; i > 0; i-- {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return nil, fmt.Errorf("crypto rand perm failed: %w", err)
+		}
+		perm[i], perm[j.Int64()] = perm[j.Int64()], perm[i]
+	}
+	return perm, nil
+}

@@ -2,9 +2,10 @@ package algorithm
 
 import (
 	"context"
-	"math/rand"
+	"fmt"
 	"sort"
-	"time"
+
+	"github.com/cashparty/backend/common/utils"
 )
 
 type StraightGenerator struct {
@@ -45,9 +46,11 @@ func (g *StraightGenerator) Generate(ctx context.Context, req *GenerateRequest, 
 	extraDecimal := remainingAmount % n
 
 	amounts := make([]int64, req.PacketCount)
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	indices := r.Perm(int(n))
+	indices, err := utils.CryptoRandPerm(int(n))
+	if err != nil {
+		return nil, fmt.Errorf("generate random perm failed: %w", err)
+	}
 
 	for i := 0; i < req.PacketCount; i++ {
 		intPart := (startInt + int64(i)) * 100
