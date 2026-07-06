@@ -20,26 +20,6 @@ func (r *gormRoundRepository) CreateRound(ctx context.Context, round *model.Roun
 	return r.db.WithContext(ctx).Create(round).Error
 }
 
-func (r *gormRoundRepository) GetRound(ctx context.Context, roundID int64) (*model.Round, error) {
-	var round model.Round
-	err := r.db.WithContext(ctx).First(&round, roundID).Error
-	if err != nil {
-		return nil, err
-	}
-	return &round, nil
-}
-
-func (r *gormRoundRepository) GetRoundBySessionAndNo(ctx context.Context, sessionID int64, roundNo int) (*model.Round, error) {
-	var round model.Round
-	err := r.db.WithContext(ctx).
-		Where("session_id = ? AND round_no = ?", sessionID, roundNo).
-		First(&round).Error
-	if err != nil {
-		return nil, err
-	}
-	return &round, nil
-}
-
 func (r *gormRoundRepository) UpdateRoundStatus(ctx context.Context, roundID int64, status model.RoundStatus) error {
 	return r.db.WithContext(ctx).Model(&model.Round{}).
 		Where("round_id = ?", roundID).

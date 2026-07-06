@@ -18,10 +18,6 @@ func NewGormRoomRepository(db *gorm.DB) domain.RoomDBRepository {
 	return &gormRoomRepository{db: db}
 }
 
-func (r *gormRoomRepository) CreateRoom(ctx context.Context, room *model.Room) error {
-	return r.db.WithContext(ctx).Create(room).Error
-}
-
 func (r *gormRoomRepository) GetRoom(ctx context.Context, roomID string) (*model.Room, error) {
 	id, err := strconv.ParseInt(roomID, 10, 64)
 	if err != nil {
@@ -35,43 +31,12 @@ func (r *gormRoomRepository) GetRoom(ctx context.Context, roomID string) (*model
 	return &room, nil
 }
 
-func (r *gormRoomRepository) GetRoomByRoomNo(ctx context.Context, roomNo string) (*model.Room, error) {
-	var room model.Room
-	err := r.db.WithContext(ctx).Where("room_no = ?", roomNo).First(&room).Error
-	if err != nil {
-		return nil, err
-	}
-	return &room, nil
-}
-
 func (r *gormRoomRepository) UpdateRoom(ctx context.Context, roomID string, updates map[string]interface{}) error {
 	id, err := strconv.ParseInt(roomID, 10, 64)
 	if err != nil {
 		return err
 	}
 	return r.db.WithContext(ctx).Model(&model.Room{}).Where("room_id = ?", id).Updates(updates).Error
-}
-
-func (r *gormRoomRepository) UpdateRoomStatus(ctx context.Context, roomID string, status model.RoomStatus, startedAt *int64) error {
-	id, err := strconv.ParseInt(roomID, 10, 64)
-	if err != nil {
-		return err
-	}
-	updates := map[string]interface{}{
-		"status": status,
-	}
-	if startedAt != nil {
-		updates["started_at"] = *startedAt
-	}
-	return r.db.WithContext(ctx).Model(&model.Room{}).Where("room_id = ?", id).Updates(updates).Error
-}
-
-func (r *gormRoomRepository) DeleteRoom(ctx context.Context, roomID string) error {
-	id, err := strconv.ParseInt(roomID, 10, 64)
-	if err != nil {
-		return err
-	}
-	return r.db.WithContext(ctx).Delete(&model.Room{}, id).Error
 }
 
 func (r *gormRoomRepository) GetRoomList(ctx context.Context, configID, status, page, pageSize int) ([]*model.Room, error) {
@@ -115,14 +80,6 @@ func (r *gormRoomRepository) GetRoomCount(ctx context.Context, configID, status 
 	}
 
 	return count, nil
-}
-
-func (r *gormRoomRepository) GetAllRooms(ctx context.Context) ([]*model.Room, error) {
-	var rooms []*model.Room
-	if err := r.db.WithContext(ctx).Model(&model.Room{}).Find(&rooms).Error; err != nil {
-		return nil, err
-	}
-	return rooms, nil
 }
 
 func (r *gormRoomRepository) MatchRoomByBalance(ctx context.Context, balance int64) (string, error) {

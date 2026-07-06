@@ -8,30 +8,16 @@ import (
 )
 
 type RoomDBRepository interface {
-	CreateRoom(ctx context.Context, room *model.Room) error
 	GetRoom(ctx context.Context, roomID string) (*model.Room, error)
-	GetRoomByRoomNo(ctx context.Context, roomNo string) (*model.Room, error)
 	UpdateRoom(ctx context.Context, roomID string, updates map[string]interface{}) error
-	UpdateRoomStatus(ctx context.Context, roomID string, status model.RoomStatus, startedAt *int64) error
-	DeleteRoom(ctx context.Context, roomID string) error
 
 	GetRoomList(ctx context.Context, configID, status, page, pageSize int) ([]*model.Room, error)
 	GetRoomCount(ctx context.Context, configID, status int) (int64, error)
-	GetAllRooms(ctx context.Context) ([]*model.Room, error)
 	MatchRoomByBalance(ctx context.Context, balance int64) (string, error)
 }
 
 type SessionDBRepository interface {
-	CreateSession(ctx context.Context, session *model.GameSession) error
 	GetSession(ctx context.Context, sessionID string) (*model.GameSession, error)
-	GetActiveSessionByRoom(ctx context.Context, roomID string) (*model.GameSession, error)
-	UpdateSession(ctx context.Context, sessionID string, updates map[string]interface{}) error
-	EndSession(ctx context.Context, sessionID string, actualRounds int, reason string) error
-
-	CreateSessionPlayer(ctx context.Context, player *model.SessionPlayer) error
-	GetSessionPlayers(ctx context.Context, sessionID string) ([]*model.SessionPlayer, error)
-	UpdateSessionPlayer(ctx context.Context, sessionID string, userID string, updates map[string]interface{}) error
-	BatchUpdateSessionPlayerStats(ctx context.Context, sessionID string, playerStats map[string]*PlayerStatsUpdate) error
 }
 
 type UserDBRepository interface {
@@ -43,8 +29,6 @@ type UserDBRepository interface {
 
 type RoundDBRepository interface {
 	CreateRound(ctx context.Context, round *model.Round) error
-	GetRound(ctx context.Context, roundID int64) (*model.Round, error)
-	GetRoundBySessionAndNo(ctx context.Context, sessionID int64, roundNo int) (*model.Round, error)
 	UpdateRoundStatus(ctx context.Context, roundID int64, status model.RoundStatus) error
 	UpdateRoundDeductInfo(ctx context.Context, roundID int64, deductScene, deductStatus int, deductAmount int64, batchID string) error
 	UpdateRoundFailed(ctx context.Context, roundID int64, reason string) error
@@ -157,10 +141,8 @@ type PlayerStatsBillAggregate struct {
 
 // HistoryDBRepository 玩家历史记录查询仓储
 type HistoryDBRepository interface {
-	ListPlayerSessions(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]PlayerSessionRow, int64, error)
 	GetSessionRounds(sessionID int64) ([]model.Round, error)
 	ListPlayerGrabRecords(sessionID, userID int64) ([]model.RoundGrabRecord, error)
-	AggregatePlayerStats(userID int64) (*PlayerStatsAggregate, error)
 	GetPlayerSession(userID, sessionID int64) (*model.SessionPlayer, error)
 	GetSession(sessionID int64) (*model.GameSession, error)
 	// 基于 bill_record 聚合的对账查询

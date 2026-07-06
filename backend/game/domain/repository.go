@@ -6,14 +6,11 @@ import (
 
 type RoomRepository interface {
 	GetRoomMeta(ctx context.Context, roomID string) (*RoomMeta, error)
-	UpdateRoomStatus(ctx context.Context, roomID string, status RoomStatus) error
 	UpdateRoomSessionID(ctx context.Context, roomID string, sessionID string) error
 	InitRoom(ctx context.Context, room *RoomMeta) error
 
 	GetPlayers(ctx context.Context, roomID string) (map[string]*Player, error)
 	GetPlayer(ctx context.Context, roomID, userID string) (*Player, error)
-	SavePlayer(ctx context.Context, roomID string, player *Player) error
-	SetAllPlayersOnline(ctx context.Context, roomID string, isOnline bool) error
 
 	GetSpectator(ctx context.Context, roomID, userID string) (*Spectator, error)
 
@@ -22,10 +19,7 @@ type RoomRepository interface {
 
 	JoinAsSpectator(ctx context.Context, roomID string, spectator *Spectator) (*JoinResult, error)
 	LeaveRoom(ctx context.Context, roomID, userID string) error
-	KickPlayer(ctx context.Context, roomID, userID string, reason string) error
 	KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*KickPlayerResult, error)
-
-	ResetRoomForNextGame(ctx context.Context, roomID string) error
 
 	GetRoomStateData(ctx context.Context, roomID string) (*RoomStateData, error)
 	GetRoomSeatsBatch(ctx context.Context, roomIDs []string) (map[string]*RoomStateData, error)

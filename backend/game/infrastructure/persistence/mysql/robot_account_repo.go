@@ -62,14 +62,6 @@ func (r *RobotAccountRepository) GetAvailableRobots(ctx context.Context, minRoom
 	return accounts, nil
 }
 
-// BatchCreate 批量创建机器人账户
-func (r *RobotAccountRepository) BatchCreate(ctx context.Context, accounts []*model.RobotAccount) error {
-	if len(accounts) == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).CreateInBatches(accounts, len(accounts)).Error
-}
-
 // Count 统计总机器人数量
 func (r *RobotAccountRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
@@ -85,18 +77,4 @@ func (r *RobotAccountRepository) UpdateLastActiveAt(ctx context.Context, userID 
 	return r.db.WithContext(ctx).Model(&model.RobotAccount{}).
 		Where("user_id = ?", userID).
 		Update("last_active_at", time.Now()).Error
-}
-
-// IncrementGames 递增总参与局数
-func (r *RobotAccountRepository) IncrementGames(ctx context.Context, userID int64) error {
-	return r.db.WithContext(ctx).Model(&model.RobotAccount{}).
-		Where("user_id = ?", userID).
-		Update("total_games", gorm.Expr("total_games + ?", 1)).Error
-}
-
-// UpdateProfit 更新总盈亏（累加 profit 到 total_profit）
-func (r *RobotAccountRepository) UpdateProfit(ctx context.Context, userID int64, profit int64) error {
-	return r.db.WithContext(ctx).Model(&model.RobotAccount{}).
-		Where("user_id = ?", userID).
-		Update("total_profit", gorm.Expr("total_profit + ?", profit)).Error
 }

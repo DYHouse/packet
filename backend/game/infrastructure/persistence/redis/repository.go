@@ -148,15 +148,6 @@ func (r *RoomRepository) GetPlayer(ctx context.Context, roomID, userID string) (
 	return &player, nil
 }
 
-func (r *RoomRepository) SavePlayer(ctx context.Context, roomID string, player *domain.Player) error {
-	key := RoomPlayersKey(roomID)
-	data, err := json.Marshal(player)
-	if err != nil {
-		return err
-	}
-	return r.client.HSet(ctx, key, player.UserID, data).Err()
-}
-
 func (r *RoomRepository) GetSpectator(ctx context.Context, roomID, userID string) (*domain.Spectator, error) {
 	key := RoomSpectatorsKey(roomID)
 	data, err := r.client.HGet(ctx, key, userID).Result()
@@ -296,10 +287,6 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 	}
 
 	return nil
-}
-
-func (r *RoomRepository) KickPlayer(ctx context.Context, roomID, userID string, reason string) error {
-	return r.LeaveRoom(ctx, roomID, userID)
 }
 
 func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*domain.KickPlayerResult, error) {
@@ -543,75 +530,9 @@ func parseLuaInt64(val interface{}) int64 {
 	return 0
 }
 
-func (r *RoomRepository) UpdateRoomStatus(ctx context.Context, roomID string, status domain.RoomStatus) error {
-	key := RoomHashKey(roomID)
-	return r.client.HSet(ctx, key, "status", int(status)).Err()
-}
-
 func (r *RoomRepository) UpdateRoomSessionID(ctx context.Context, roomID string, sessionID string) error {
 	key := RoomHashKey(roomID)
 	return r.client.HSet(ctx, key, "current_session_id", sessionID).Err()
-}
-
-func (r *RoomRepository) SetAllPlayersOnline(ctx context.Context, roomID string, isOnline bool) error {
-	players, err := r.GetPlayers(ctx, roomID)
-	if err != nil {
-		return err
-	}
-
-	for _, player := range players {
-		if !isOnline {
-			now := time.Now().Unix()
-			player.DisconnectedAt = &now
-		} else {
-			player.DisconnectedAt = nil
-		}
-		if err := r.SavePlayer(ctx, roomID, player); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *RoomRepository) ResetRoomForNextGame(ctx context.Context, roomID string) error {
-	key := RoomHashKey(roomID)
-	pipe := r.client.Pipeline()
-	pipe.HSet(ctx, key, "status", int(domain.RoomStatusWaiting))
-	pipe.HSet(ctx, key, "current_round", 0)
-	pipe.HDel(ctx, key, "current_round_id")
-	pipe.HSet(ctx, key, "started_at", 0)
-	pipe.HSet(ctx, key, "current_session_id", "")
-	pipe.HSet(ctx, key, "next_sender_id", 0)
-
-	playersKey := RoomPlayersKey(roomID)
-	playerDataMap, err := r.client.HGetAll(ctx, playersKey).Result()
-	if err != nil {
-		return err
-	}
-
-	for userID, playerData := range playerDataMap {
-		var player struct {
-			UserID         string `json:"user_id"`
-			Nickname       string `json:"nickname"`
-			Avatar         string `json:"avatar"`
-			SeatNo         int    `json:"seat_no"`
-			Status         int    `json:"status"`
-			JoinedAt       int64  `json:"joined_at"`
-			LastActiveAt   int64  `json:"last_active_at"`
-			DisconnectedAt *int64 `json:"disconnected_at"`
-			IsRobot        bool   `json:"is_robot"`
-		}
-		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
-			continue
-		}
-		player.DisconnectedAt = nil
-
-		updatedData, _ := json.Marshal(player)
-		pipe.HSet(ctx, playersKey, userID, string(updatedData))
-	}
-
-	_, err = pipe.Exec(ctx)
-	return err
 }
 
 func (r *RoomRepository) InitRoom(ctx context.Context, room *domain.RoomMeta) error {

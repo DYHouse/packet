@@ -242,33 +242,6 @@ func (m *BillManager) GetBillsByBatchID(ctx context.Context, batchID string) ([]
 	return bills, err
 }
 
-func (m *BillManager) UpdateBillRefundStatus(ctx context.Context, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
-	updates := map[string]interface{}{
-		"refund_status":   toRefundStatus,
-		"refund_order_no": refundOrderNo,
-	}
-	// 乐观锁：只允许从 fromRefundStatus 转换，防止并发覆盖。
-	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
-	result := m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("id = ? AND refund_status = ?", billID, fromRefundStatus).
-		Updates(updates)
-	if result.Error != nil {
-		return fmt.Errorf("update bill refund status failed: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		// 已不是 fromRefundStatus（已被其他事务处理），视为幂等成功
-		return nil
-	}
-	return nil
-}
-
-func (m *BillManager) CreateRefundAudit(ctx context.Context, refund *model.RefundAudit) error {
-	if err := m.db.WithContext(ctx).Create(refund).Error; err != nil {
-		return fmt.Errorf("create refund audit failed: %w", err)
-	}
-	return nil
-}
-
 func (m *BillManager) GetRefundAuditByOrderNo(ctx context.Context, refundOrderNo string) (*model.RefundAudit, error) {
 	var refund model.RefundAudit
 	err := m.db.WithContext(ctx).Where("refund_order_no = ?", refundOrderNo).First(&refund).Error
@@ -319,22 +292,6 @@ func (m *BillManager) UpdateRefundAuditToProcessing(ctx context.Context, refundI
 		Update("status", dto.RefundStatusProcessing)
 	if result.Error != nil {
 		return fmt.Errorf("update refund audit to processing failed: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
-		return nil
-	}
-	return nil
-}
-
-func (m *BillManager) UpdateRefundAuditError(ctx context.Context, refundID int64, fromStatus int, errMsg string) error {
-	// 乐观锁：只允许从 fromStatus 状态记录错误，防止并发覆盖。
-	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
-	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
-		Where("id = ? AND status = ?", refundID, fromStatus).
-		Update("error_message", errMsg)
-	if result.Error != nil {
-		return fmt.Errorf("update refund audit error failed: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		// 已不是 fromStatus（已被其他事务处理），视为幂等成功
@@ -551,15 +508,6 @@ func (m *BillManager) GetRetryableCredits(ctx context.Context, limit int) ([]*mo
 		Limit(limit).
 		Find(&bills).Error
 	return bills, err
-}
-
-func (m *BillManager) SetNextRetryTime(ctx context.Context, billID int64, nextRetryAt time.Time) error {
-	if err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("id = ?", billID).
-		Update("next_retry_at", nextRetryAt).Error; err != nil {
-		return fmt.Errorf("set next retry time failed: %w", err)
-	}
-	return nil
 }
 
 func (m *BillManager) IncrementRetryCountWithNextRetryTime(ctx context.Context, billID int64, nextRetryAt time.Time) error {

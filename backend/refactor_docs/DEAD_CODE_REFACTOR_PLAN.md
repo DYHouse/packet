@@ -175,8 +175,19 @@
 | `infrastructure/messaging/game_event_publisher.go:49` | `GameEventPublisher.PublishRoundSettle` | 方法 | 同上 |
 | `infrastructure/messaging/game_event_publisher.go:55` | `GameEventPublisher.PublishSessionEnd` | 方法 | 同上 |
 | `infrastructure/messaging/room_event_publisher.go:38` | `RoomEventPublisher.Publish` | 方法 | 实际走 `PublishRoomEvent` 接口 |
-| `infrastructure/persistence/mysql/robot_account_repo.go:91` | `RobotAccountRepository.IncrementGames` | 方法 | Grep `\.IncrementGames\b` 无匹配 |
-| `infrastructure/persistence/mysql/robot_account_repo.go:98` | `RobotAccountRepository.UpdateProfit` | 方法 | Grep `\.UpdateProfit\b` 无匹配 |
+| `infrastructure/persistence/mysql/robot_account_repo.go:66` | `RobotAccountRepository.BatchCreate` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/robot_account_repo.go:91` | `RobotAccountRepository.IncrementGames` | 方法 | Grep `\.IncrementGames\b` 无匹配 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/robot_account_repo.go:98` | `RobotAccountRepository.UpdateProfit` | 方法 | Grep `\.UpdateProfit\b` 无匹配 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/session_repository.go:114` | `GormSessionRepository.BatchUpdateSessionPlayerStats` | 方法 | Grep 无调用 + 嵌套事务风险 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/room_repository.go` | `RoomRepository.CreateRoom` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/room_repository.go` | `RoomRepository.GetRoomByRoomNo` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/room_repository.go` | `RoomRepository.UpdateRoomStatus` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/room_repository.go` | `RoomRepository.DeleteRoom` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/room_repository.go` | `RoomRepository.GetAllRooms` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/round_repository.go` | `RoundRepository.GetRound` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/round_repository.go` | `RoundRepository.GetRoundBySessionAndNo` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/history_repository.go` | `HistoryRepository.ListPlayerSessions` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/mysql/history_repository.go` | `HistoryRepository.AggregatePlayerStats` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
 | `infrastructure/persistence/redis/robot_pool.go:37` | `RobotPoolService.IsAvailable` | 方法 | Grep `\.IsAvailable\(` 无匹配 |
 | `infrastructure/persistence/redis/robot_pool.go:42` | `RobotPoolService.GetAvailableRobots` | 方法 | Grep `robotPool\.GetAvailableRobots` 无匹配 |
 | `infrastructure/persistence/redis/robot_scheduler.go:53` | `RobotSchedulerRedis.ClearRoomRobots` | 方法 | Grep `\.ClearRoomRobots\(` 无匹配 |
@@ -184,6 +195,11 @@
 | `infrastructure/persistence/redis/robot_scheduler.go:118` | `RobotSchedulerRedis.IsActiveRobot` | 方法 | Grep `\.IsActiveRobot\(` 无匹配 |
 | `infrastructure/persistence/redis/robot_scheduler.go:123` | `RobotSchedulerRedis.GetActiveCount` | 方法 | Grep `\.GetActiveCount\(` 无匹配 |
 | `infrastructure/persistence/redis/virtual_balance.go:111` | `VirtualBalanceService.IsRobot` | 方法 | settlement 使用 `robotChecker.IsRobot` 接口,非此方法 |
+| `infrastructure/persistence/redis/repository.go` | `RoomRepository.UpdateRoomStatus` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/redis/repository.go` | `RoomRepository.SavePlayer` | 方法 | 仅被 SetAllPlayersOnline 调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/redis/repository.go` | `RoomRepository.SetAllPlayersOnline` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `infrastructure/persistence/redis/repository.go` | `RoomRepository.KickPlayer` | 方法 | 被 KickPlayerAndInterrupt 替代 **已删除（2026-07-07）** |
+| `infrastructure/persistence/redis/repository.go` | `RoomRepository.ResetRoomForNextGame` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
 
 ### 3.6 model/ + scheduler/ + server/ 子目录
 
@@ -311,10 +327,10 @@
 | `service/settlement_service.go` | `SettlementService.GetUserBalance` | 方法 | 同上 |
 | `service/refund_service.go` | `RefundService.GetRefundAuditByOrderNo` | 方法 | 包装方法,无调用 |
 | `service/refund_service.go` | `RefundService.GetRefundsByStatus` | 方法 | 同上 |
-| `service/bill_manager.go` | `BillManager.UpdateBillRefundStatus` | 方法 | Grep 无调用 |
-| `service/bill_manager.go` | `BillManager.CreateRefundAudit` | 方法 | Grep 无调用 |
-| `service/bill_manager.go` | `BillManager.UpdateRefundAuditError` | 方法 | Grep 无调用 |
-| `service/bill_manager.go` | `BillManager.SetNextRetryTime` | 方法 | Grep 无调用 |
+| `service/bill_manager.go` | `BillManager.UpdateBillRefundStatus` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `service/bill_manager.go` | `BillManager.CreateRefundAudit` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `service/bill_manager.go` | `BillManager.UpdateRefundAuditError` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
+| `service/bill_manager.go` | `BillManager.SetNextRetryTime` | 方法 | Grep 无调用 **已删除（2026-07-07）** |
 | `service/exception_manager.go` | `ExceptionManager.GetByID` | 方法 | Grep 无调用 |
 | `service/exception_manager.go` | `ExceptionManager.GetPendingExceptions` | 方法 | Grep 无调用 |
 | `service/exception_manager.go` | `ExceptionManager.UpdateStatus` | 方法 | Grep 无调用 |
