@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/google/uuid"
 )
 
 type GameEventPublisher struct {
@@ -71,15 +69,7 @@ func (p *GameEventPublisher) publish(ctx context.Context, event *domain.GameEven
 			"room_id", event.RoomID,
 			"trace_id", event.TraceID)
 	}
-	if event.EventID == "" {
-		event.EventID = generateEventID()
-	}
-	if event.Timestamp == 0 {
-		event.Timestamp = time.Now().UnixMilli() // 毫秒
-	}
-	if event.Version == 0 {
-		event.Version = domain.GameEventVersion
-	}
+	event.EventHeader.FillIfEmpty()
 
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -105,9 +95,4 @@ func (p *GameEventPublisher) publish(ctx context.Context, event *domain.GameEven
 		"trace_id", event.TraceID)
 
 	return nil
-}
-
-// generateEventID 生成 UUID 事件 ID。
-func generateEventID() string {
-	return uuid.New().String()
 }

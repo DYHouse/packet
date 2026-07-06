@@ -2,9 +2,8 @@ package domain
 
 import (
 	"encoding/json"
-	"time"
 
-	"github.com/google/uuid"
+	"github.com/cashparty/backend/common/message"
 )
 
 // RoomEventType 房间事件类型，统一使用字符串字面量（动词原形）。
@@ -23,17 +22,11 @@ const (
 	RoomEventSubstitute      RoomEventType = "substitute"
 )
 
-// RoomEventVersion 是当前 RoomEvent 的 schema 版本。
-const RoomEventVersion = 1
-
 type RoomEvent struct {
-	EventID   string          `json:"event_id"`
+	message.EventHeader
 	EventType RoomEventType   `json:"event_type"`
 	RoomID    string          `json:"room_id"`
 	UserID    string          `json:"user_id,omitempty"`
-	TraceID   string          `json:"trace_id,omitempty"`
-	Version   int             `json:"version"`
-	Timestamp int64           `json:"timestamp"` // Unix 毫秒
 	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
@@ -112,34 +105,28 @@ const (
 	GameEventSessionEnd    GameEventType = "session_end"
 )
 
-// GameEventVersion 是当前 GameEvent 的 schema 版本。
-const GameEventVersion = 1
-
 type GameEvent struct {
-	EventID   string          `json:"event_id"`
+	message.EventHeader
 	EventType GameEventType   `json:"event_type"`
 	RoomID    string          `json:"room_id"`
 	SessionID string          `json:"session_id"`
 	RoundID   string          `json:"round_id,omitempty"`
-	TraceID   string          `json:"trace_id"`
-	Version   int             `json:"version"`
-	Timestamp int64           `json:"timestamp"` // Unix 毫秒
-	Data      json.RawMessage `json:"data"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
-// SetPayload 序列化 v 并设置到 Data。
+// SetPayload 序列化 v 并设置到 Payload。
 func (e *GameEvent) SetPayload(v interface{}) error {
 	bytes, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	e.Data = bytes
+	e.Payload = bytes
 	return nil
 }
 
-// GetPayload 将 Data 反序列化到 v。
+// GetPayload 将 Payload 反序列化到 v。
 func (e *GameEvent) GetPayload(v interface{}) error {
-	return json.Unmarshal(e.Data, v)
+	return json.Unmarshal(e.Payload, v)
 }
 
 type SessionStartData struct {
@@ -215,10 +202,6 @@ type FinalResult struct {
 	Rank        int    `json:"rank"`
 }
 
-func generateEventID() string {
-	return uuid.New().String()
-}
-
 func (e *RoomEvent) ToJSON() ([]byte, error) {
 	return json.Marshal(e)
 }
@@ -230,20 +213,16 @@ func ParseRoomEvent(data []byte) (*RoomEvent, error) {
 	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, err
 	}
-	if event.EventID == "" {
-		event.EventID = generateEventID()
-	}
+	event.EventHeader.FillIfEmpty()
 	return &event, nil
 }
 
 func NewSpectatorJoinEvent(roomID, userID string, nickname, avatar string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventSpectatorJoin,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventSpectatorJoin,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(SpectatorJoinPayload{
 		Nickname: nickname,
@@ -254,12 +233,10 @@ func NewSpectatorJoinEvent(roomID, userID string, nickname, avatar string) *Room
 
 func NewSpectatorLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventSpectatorLeave,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventSpectatorLeave,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(SpectatorLeavePayload{
 		Reason: reason,
@@ -269,12 +246,10 @@ func NewSpectatorLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 
 func NewSeatSelectEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventSeatSelect,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventSeatSelect,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(SeatSelectPayload{
 		SeatNo:   seatNo,
@@ -286,12 +261,10 @@ func NewSeatSelectEvent(roomID, userID string, seatNo int, nickname, avatar stri
 
 func NewSeatCancelEvent(roomID, userID string, seatNo int, nickname string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventSeatCancel,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventSeatCancel,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(SeatCancelPayload{
 		SeatNo:   seatNo,
@@ -302,12 +275,10 @@ func NewSeatCancelEvent(roomID, userID string, seatNo int, nickname string) *Roo
 
 func NewPlayerReadyEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventPlayerReady,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventPlayerReady,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(PlayerReadyPayload{
 		SeatNo:   seatNo,
@@ -319,12 +290,10 @@ func NewPlayerReadyEvent(roomID, userID string, seatNo int, nickname, avatar str
 
 func NewSpectatorKickEvent(roomID, userID string, seatNo int, reason string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventSpectatorKick,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventSpectatorKick,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(SpectatorKickPayload{
 		SeatNo: seatNo,
@@ -335,12 +304,10 @@ func NewSpectatorKickEvent(roomID, userID string, seatNo int, reason string) *Ro
 
 func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventPlayerReconnect,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventPlayerReconnect,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(PlayerReconnectPayload{
 		SeatNo: seatNo,
@@ -350,12 +317,10 @@ func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
 
 func NewQueueJoinEvent(roomID, userID string, queuePosition int, nickname, avatar string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventQueueJoin,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventQueueJoin,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(QueueJoinPayload{
 		QueuePosition: queuePosition,
@@ -367,12 +332,10 @@ func NewQueueJoinEvent(roomID, userID string, queuePosition int, nickname, avata
 
 func NewQueueLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventQueueLeave,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventQueueLeave,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(QueueLeavePayload{
 		Reason: reason,
@@ -382,12 +345,10 @@ func NewQueueLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 
 func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
 	event := &RoomEvent{
-		EventID:   generateEventID(),
-		EventType: RoomEventSubstitute,
-		RoomID:    roomID,
-		UserID:    userID,
-		Version:   RoomEventVersion,
-		Timestamp: time.Now().UnixMilli(),
+		EventHeader: message.NewEventHeader(""),
+		EventType:   RoomEventSubstitute,
+		RoomID:      roomID,
+		UserID:      userID,
 	}
 	_ = event.SetPayload(SubstitutePayload{
 		SeatNo:   seatNo,

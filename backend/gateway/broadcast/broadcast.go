@@ -115,6 +115,7 @@ func (s *BroadcastService) handleBroadcastMessage(ctx context.Context, msg *mess
 	}()
 
 	pushMsg := message.NewPushMessage(msg.Event, msg.Data)
+	pushMsg.TraceID = msg.TraceID // 透传 BroadcastMessage 的 TraceID,保持调用链路连续
 	msgBytes, err := pushMsg.ToJSON()
 	if err != nil {
 		logger.Error("failed to marshal push message", "error", err)

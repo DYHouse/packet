@@ -34,8 +34,8 @@ const (
 	CodeUserBlacklisted      = 1019
 	CodeLeavePenaltyApplied  = 1021
 	CodePlayerAlreadyReady   = 1022
-	CodePlayerCannotLeave   = 1023
-	CodeNotPlayer          = 1024
+	CodePlayerCannotLeave    = 1023
+	CodeNotPlayer            = 1024
 )
 
 // ==================== Códigos de error de conexión (2000-2999) ====================
@@ -85,7 +85,7 @@ const (
 	CodePlayerAlreadySent    = 3032
 
 	CodeAlreadyQueued    = 3040
-	CodeNotQueued         = 3041
+	CodeNotQueued        = 3041
 	CodeRobotNotAllowed  = 3042
 	CodeSubstituteFailed = 3043
 )
@@ -129,13 +129,13 @@ const (
 
 // ==================== Razones de interrupción de juego ====================
 const (
-	ReasonNormalEnd               = "normal"
-	ReasonFirstRoundDeductFailed  = "first_round_deduct_failed"
-	ReasonLaterRoundDeductFailed  = "later_round_deduct_failed"
-	ReasonPartialDeductFailed     = "partial_deduct_failed"
-	ReasonReplacementTimeout      = "replacement_timeout"
-	ReasonSystemError             = "system_error"
-	ReasonPenaltyDeductFailed     = "penalty_deduct_failed"
+	ReasonNormalEnd              = "normal"
+	ReasonFirstRoundDeductFailed = "first_round_deduct_failed"
+	ReasonLaterRoundDeductFailed = "later_round_deduct_failed"
+	ReasonPartialDeductFailed    = "partial_deduct_failed"
+	ReasonReplacementTimeout     = "replacement_timeout"
+	ReasonSystemError            = "system_error"
+	ReasonPenaltyDeductFailed    = "penalty_deduct_failed"
 )
 
 // ==================== Mapeo de mensajes unificado ====================
@@ -185,8 +185,8 @@ var codeMessages = map[int]string{
 	CodeSeatOccupied:         "El asiento ya está ocupado",
 	CodePlayerNotInRoom:      "El jugador no está en la sala",
 	CodePlayerAlreadyReady:   "El jugador está listo",
-	CodePlayerCannotLeave:   "El jugador no puede salir de la sala",
-	CodeNotPlayer:          "Solo los jugadores pueden operar",
+	CodePlayerCannotLeave:    "El jugador no puede salir de la sala",
+	CodeNotPlayer:            "Solo los jugadores pueden operar",
 	CodeAlreadyPlayer:        "Ya es jugador",
 	CodeAlreadySeated:        "Ya ha seleccionado asiento",
 	CodeNotSeated:            "No ha seleccionado asiento",
@@ -208,8 +208,8 @@ var codeMessages = map[int]string{
 	CodePlayerAlreadySent:    "El jugador ya envió un sobre rojo, no se puede expulsar",
 	CodeAlreadyQueued:        "Ya está en la cola de espera",
 	CodeNotQueued:            "No está en la cola de espera",
-	CodeRobotNotAllowed:     "Los robots no pueden entrar en la cola",
-	CodeSubstituteFailed:    "Fallo en la sustitución automática",
+	CodeRobotNotAllowed:      "Los robots no pueden entrar en la cola",
+	CodeSubstituteFailed:     "Fallo en la sustitución automática",
 	CodeRedisError:           "Operación Redis fallida",
 	CodeMySQLError:           "Operación de base de datos fallida",
 	CodeKafkaError:           "Error de cola de mensajes",

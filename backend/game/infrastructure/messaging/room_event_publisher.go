@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
@@ -53,15 +52,7 @@ func (p *RoomEventPublisher) publish(ctx context.Context, event *domain.RoomEven
 			"room_id", event.RoomID,
 			"trace_id", event.TraceID)
 	}
-	if event.EventID == "" {
-		event.EventID = generateEventID()
-	}
-	if event.Version == 0 {
-		event.Version = domain.RoomEventVersion
-	}
-	if event.Timestamp == 0 {
-		event.Timestamp = time.Now().UnixMilli()
-	}
+	event.EventHeader.FillIfEmpty()
 
 	data, err := json.Marshal(event)
 	if err != nil {

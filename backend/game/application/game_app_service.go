@@ -525,11 +525,10 @@ func (s *GameAppService) startGameCore(ctx context.Context, roomID string, meta 
 			)
 		}
 		event := &domain.GameEvent{
-			RoomID:    roomID,
-			SessionID: sessionID,
-			EventType: domain.GameEventSessionStart,
-			Timestamp: time.Now().UnixMilli(),
-			TraceID:   traceID,
+			EventHeader: message.NewEventHeader(traceID),
+			RoomID:      roomID,
+			SessionID:   sessionID,
+			EventType:   domain.GameEventSessionStart,
 		}
 		_ = event.SetPayload(&domain.SessionStartData{
 			RoomNo:     meta.RoomNo,
@@ -1063,12 +1062,11 @@ func (s *GameAppService) settleRound(ctx context.Context, roomID, roundID string
 				)
 			}
 			event := &domain.GameEvent{
-				RoomID:    roomID,
-				SessionID: meta.CurrentSessionID,
-				RoundID:   roundID,
-				EventType: domain.GameEventRoundSettle,
-				Timestamp: time.Now().UnixMilli(),
-				TraceID:   roundSettleTraceID,
+				EventHeader: message.NewEventHeader(roundSettleTraceID),
+				RoomID:      roomID,
+				SessionID:   meta.CurrentSessionID,
+				RoundID:     roundID,
+				EventType:   domain.GameEventRoundSettle,
 			}
 			_ = event.SetPayload(&domain.RoundSettleData{
 				RoundNo:          roundNo,
@@ -1245,11 +1243,10 @@ func (s *GameAppService) endGameWithOptions(ctx context.Context, roomID string, 
 			)
 		}
 		sessionEndEvent := &domain.GameEvent{
-			RoomID:    roomID,
-			SessionID: opts.SessionID,
-			EventType: domain.GameEventSessionEnd,
-			Timestamp: time.Now().UnixMilli(),
-			TraceID:   sessionEndTraceID,
+			EventHeader: message.NewEventHeader(sessionEndTraceID),
+			RoomID:      roomID,
+			SessionID:   opts.SessionID,
+			EventType:   domain.GameEventSessionEnd,
 		}
 		_ = sessionEndEvent.SetPayload(&domain.SessionEndData{
 			ActualRounds: opts.ActualRounds,
@@ -1536,12 +1533,11 @@ func (s *GameAppService) publishPacketCreatedEvent(ctx context.Context, roomID, 
 		)
 	}
 	event := &domain.GameEvent{
-		RoomID:    roomID,
-		SessionID: meta.CurrentSessionID,
-		RoundID:   roundID,
-		EventType: domain.GameEventPacketCreated,
-		Timestamp: time.Now().UnixMilli(),
-		TraceID:   packetCreatedTraceID,
+		EventHeader: message.NewEventHeader(packetCreatedTraceID),
+		RoomID:      roomID,
+		SessionID:   meta.CurrentSessionID,
+		RoundID:     roundID,
+		EventType:   domain.GameEventPacketCreated,
 	}
 	_ = event.SetPayload(&domain.PacketCreatedData{
 		RoomID:      roomID,

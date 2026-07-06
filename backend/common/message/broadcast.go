@@ -2,19 +2,12 @@ package message
 
 import (
 	"encoding/json"
-	"time"
 
 	"github.com/google/uuid"
 )
 
-// BroadcastMessageVersion 是当前 BroadcastMessage 的 schema 版本。
-const BroadcastMessageVersion = 1
-
 type BroadcastMessage struct {
-	EventID    string          `json:"event_id"`
-	TraceID    string          `json:"trace_id"`
-	Timestamp  int64           `json:"timestamp"` // Unix 毫秒
-	Version    int             `json:"version"`
+	EventHeader
 	TargetType string          `json:"target_type"`
 	TargetID   string          `json:"target_id,omitempty"`
 	UserIDs    []string        `json:"user_ids,omitempty"`
@@ -31,15 +24,12 @@ func NewBroadcastMessage(event string, data interface{}, targetType, targetID st
 		return nil, err
 	}
 	return &BroadcastMessage{
-		EventID:    uuid.New().String(),
-		TraceID:    uuid.New().String(), // 调用方未传 traceID 时自动生成
-		Timestamp:  time.Now().UnixMilli(),
-		Version:    BroadcastMessageVersion,
-		TargetType: targetType,
-		TargetID:   targetID,
-		ExcludeID:  excludeID,
-		Event:      event,
-		Data:       dataBytes,
+		EventHeader: NewEventHeader(uuid.New().String()), // 调用方未传 traceID 时自动生成
+		TargetType:  targetType,
+		TargetID:    targetID,
+		ExcludeID:   excludeID,
+		Event:       event,
+		Data:        dataBytes,
 	}, nil
 }
 
