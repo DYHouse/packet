@@ -141,6 +141,7 @@ redis.call('HSET', seatOwnerKey, tostring(seatNo), userID)
 
 redis.call('EXPIRE', seatsKey, roomDataTTL)
 redis.call('EXPIRE', seatOwnerKey, roomDataTTL)
+redis.call('EXPIRE', spectatorsKey, roomDataTTL)
 
 local playerCount = redis.call('HLEN', playersKey)
 local spectatorCount = redis.call('HLEN', spectatorsKey)
@@ -594,6 +595,8 @@ redis.call('HSET', playersKey, userID, cjson.encode(player))
 
 redis.call('EXPIRE', seatsKey, roomDataTTL)
 redis.call('EXPIRE', seatOwnerKey, roomDataTTL)
+redis.call('EXPIRE', playersKey, roomDataTTL)
+redis.call('EXPIRE', spectatorsKey, roomDataTTL)
 
 local playerCount = redis.call('HLEN', playersKey)
 

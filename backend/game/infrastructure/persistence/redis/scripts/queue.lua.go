@@ -157,6 +157,8 @@ redis.call('ZREM', queueKey, substituteUserID)
 
 redis.call('EXPIRE', seatsKey, roomDataTTL)
 redis.call('EXPIRE', seatOwnerKey, roomDataTTL)
+redis.call('EXPIRE', playersKey, roomDataTTL)
+redis.call('EXPIRE', spectatorsKey, roomDataTTL)
 
 local playerCount = redis.call('HLEN', playersKey)
 
