@@ -18,6 +18,14 @@ type RoomDBRepository interface {
 
 type SessionDBRepository interface {
 	GetSession(ctx context.Context, sessionID string) (*model.GameSession, error)
+	GetSessionByID(ctx context.Context, sessionID int64) (*model.GameSession, error)
+	CreateSession(ctx context.Context, session *model.GameSession) error
+	UpdateSessionEnded(ctx context.Context, sessionID int64, actualRounds int, endedAt time.Time, endReason string) error
+	UpdateSessionCurrentRound(ctx context.Context, sessionID int64, currentRound int) error
+	CreateOrUpdateSessionPlayer(ctx context.Context, player *model.SessionPlayer) error
+	IncrementSessionPlayerGrab(ctx context.Context, sessionID, userID int64, amount int64) error
+	IncrementSessionPlayerSend(ctx context.Context, sessionID, userID int64, amount int64) error
+	UpdateSessionPlayerProfit(ctx context.Context, sessionID, userID int64, totalProfit int64) error
 }
 
 type UserDBRepository interface {
@@ -34,6 +42,25 @@ type RoundDBRepository interface {
 	UpdateRoundFailed(ctx context.Context, roundID int64, reason string) error
 	UpdateRoundSender(ctx context.Context, roundID int64, senderID int64, senderType string) error
 	UpdateRoundAmount(ctx context.Context, roundID int64, totalAmount, commission int64) error
+	GetRoundByRoundID(ctx context.Context, roundID int64) (*model.Round, error)
+	UpdateRoundSending(ctx context.Context, roundID, senderID int64, senderType string, startedAt time.Time) error
+	UpdateRoundEnded(ctx context.Context, roundID, settleTraceID int64, endedAt time.Time) error
+}
+
+// PacketDBRepository 红包数据库仓储接口
+type PacketDBRepository interface {
+	CreatePacket(ctx context.Context, packet *model.Packet) error
+	CountPacketsByRoundID(ctx context.Context, roundID int64) (int64, error)
+}
+
+// GrabRecordRepository 抢包记录数据库仓储接口
+type GrabRecordRepository interface {
+	FirstOrCreateGrabRecord(ctx context.Context, record *model.RoundGrabRecord) error
+}
+
+// SpecialRewardRepository 特殊奖励数据库仓储接口
+type SpecialRewardRepository interface {
+	CreateSpecialReward(ctx context.Context, reward *model.SpecialReward) error
 }
 
 type Transaction interface {
@@ -41,6 +68,9 @@ type Transaction interface {
 	SessionDBRepo() SessionDBRepository
 	UserDBRepo() UserDBRepository
 	RoundDBRepo() RoundDBRepository
+	PacketDBRepo() PacketDBRepository
+	GrabRecordRepo() GrabRecordRepository
+	SpecialRewardRepo() SpecialRewardRepository
 }
 
 type PlayerStatsUpdate struct {
@@ -159,6 +189,9 @@ type DBRepository interface {
 	RoomConfigDBRepo() RoomConfigDBRepository
 	RoundDBRepo() RoundDBRepository
 	HistoryDBRepo() HistoryDBRepository
+	PacketDBRepo() PacketDBRepository
+	GrabRecordRepo() GrabRecordRepository
+	SpecialRewardRepo() SpecialRewardRepository
 	WithTransaction(ctx context.Context, fn func(tx Transaction) error) error
 }
 

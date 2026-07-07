@@ -226,7 +226,6 @@ func (c *Container) InitAppServices() {
 	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert, c.settlementVirtualBalance, c.robotChecker)
 
 	// Phase 3.5：创建 settlement Application 层 facade，作为外部调用方访问 settlement 用例的统一入口。
-	// 事务边界暂保留在各 Repository 方法内，后续优化时再上移到 Application 层。
 	c.SettleAppSvc = settlementApplication.NewSettleAppService(
 		c.RoundSettleSvc,
 		c.PenaltySettlementSvc,

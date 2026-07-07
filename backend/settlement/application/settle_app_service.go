@@ -8,18 +8,12 @@ import (
 )
 
 // SettleAppService 是 settlement 模块的 Application 层入口，作为编排 settlement
-// 各子 Service 的 facade。
+// 各子 Service 的 facade。外部调用方（如 game 模块的 GameEventHandler）应通过本
+// facade 调用 settlement 用例，不直接依赖 settlement/service 下的具体 Service。
 //
-// Phase 3.5 引入：将事务边界从 Repository 层上移到 Application 层是长期目标，
-// 但当前 settlement 模块的事务均自管理在 Repository 方法内（如 CreateBillsInTransaction、
+// settlement 模块的事务自管理在各 Repository 方法内（如 CreateBillsInTransaction、
 // CreateRoundSettlementAndBills、UpdateRefundSuccessInTransaction 等），属于自包含的
-// 单仓储事务，不跨多个 Repository。将这些事务迁移到 Application 层需要先在
-// settlement/domain 定义 Transaction/DBRepository 接口并拆分 Repository 方法，
-// 改动范围与风险较高，故当前阶段仅创建 thin application layer，保留现有事务位置，
-// 事务边界迁移标记为后续优化。
-//
-// 外部调用方（如 game 模块的 GameEventConsumer）应通过本 facade 调用 settlement
-// 用例，不再直接依赖 settlement/service 下的具体 Service。
+// 单仓储事务，不跨多个 Repository。
 type SettleAppService struct {
 	roundSettleService       *service.RoundSettleService
 	penaltySettlementService *service.PenaltySettlementService

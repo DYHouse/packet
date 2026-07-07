@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"time"
 
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/model"
@@ -61,5 +62,33 @@ func (r *gormRoundRepository) UpdateRoundAmount(ctx context.Context, roundID int
 		Updates(map[string]interface{}{
 			"total_amount": totalAmount,
 			"commission":   commission,
+		}).Error
+}
+
+func (r *gormRoundRepository) GetRoundByRoundID(ctx context.Context, roundID int64) (*model.Round, error) {
+	var round model.Round
+	if err := r.db.WithContext(ctx).Where("round_id = ?", roundID).First(&round).Error; err != nil {
+		return nil, err
+	}
+	return &round, nil
+}
+
+func (r *gormRoundRepository) UpdateRoundSending(ctx context.Context, roundID, senderID int64, senderType string, startedAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&model.Round{}).
+		Where("round_id = ?", roundID).
+		Updates(map[string]interface{}{
+			"status":     model.RoundStatusSending,
+			"sender_id":  senderID,
+			"started_at": &startedAt,
+		}).Error
+}
+
+func (r *gormRoundRepository) UpdateRoundEnded(ctx context.Context, roundID, settleTraceID int64, endedAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&model.Round{}).
+		Where("round_id = ?", roundID).
+		Updates(map[string]interface{}{
+			"status":          model.RoundStatusEnded,
+			"ended_at":        &endedAt,
+			"settle_trace_id": settleTraceID,
 		}).Error
 }
