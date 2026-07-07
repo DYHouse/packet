@@ -15,9 +15,7 @@ type GenerateResult struct {
 }
 
 const (
-	RewardTypeNone     = 0
-	RewardTypeStraight = 1
-	RewardTypeLeopard  = 2
+	RewardTypeNone = 0
 )
 
 type ValidationResult struct {

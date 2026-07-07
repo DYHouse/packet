@@ -20,11 +20,11 @@ import (
 type PenaltyService struct {
 	redis             *cRedis.Client
 	policy            *domain.PenaltyPolicy
-	settlementService *settlementService.SettlementService
+	settlementService *settlementService.PenaltySettlementService
 	redisTTL          config.RedisTTLConfig
 }
 
-func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settlementService *settlementService.SettlementService, redisTTL config.RedisTTLConfig) *PenaltyService {
+func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settlementService *settlementService.PenaltySettlementService, redisTTL config.RedisTTLConfig) *PenaltyService {
 	if policy == nil {
 		policy = domain.DefaultPenaltyPolicy()
 	}

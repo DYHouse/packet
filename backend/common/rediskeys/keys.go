@@ -260,6 +260,8 @@ const (
 	KeyGatewayLockedIP = KeyPrefix + ":gateway:locked_ip:%s"
 	// KeyGatewayAuthFail Auth 失败计数 key
 	KeyGatewayAuthFail = KeyPrefix + ":gateway:auth_fail:%s"
+	// KeyGatewayNonce 网关签名防重放 nonce key
+	KeyGatewayNonce = KeyPrefix + ":gateway:nonce:%s"
 )
 
 // ============================================================================
@@ -705,6 +707,11 @@ func GatewayLockedIPKey(ip string) string {
 // GatewayAuthFailKey 生成 Auth 失败计数 key
 func GatewayAuthFailKey(ip string) string {
 	return fmt.Sprintf(KeyGatewayAuthFail, ip)
+}
+
+// GatewayNonceKey 生成网关签名防重放 nonce key
+func GatewayNonceKey(nonce string) string {
+	return fmt.Sprintf(KeyGatewayNonce, nonce)
 }
 
 // ============================================================================

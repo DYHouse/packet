@@ -96,4 +96,3 @@ func Sync() {
 		_ = log.Sync()
 	}
 }
-

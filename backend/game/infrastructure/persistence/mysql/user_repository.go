@@ -4,27 +4,28 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-type GormUserRepository struct {
+type gormUserRepository struct {
 	db *gorm.DB
 }
 
-func NewGormUserRepository(db *gorm.DB) *GormUserRepository {
-	return &GormUserRepository{db: db}
+func NewGormUserRepository(db *gorm.DB) domain.UserDBRepository {
+	return &gormUserRepository{db: db}
 }
 
-func (r *GormUserRepository) CreateOrUpdateUser(ctx context.Context, user *model.User) error {
+func (r *gormUserRepository) CreateOrUpdateUser(ctx context.Context, user *model.User) error {
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "user_id"}},
 		DoNothing: true,
 	}).Create(user).Error
 }
 
-func (r *GormUserRepository) GetUser(ctx context.Context, userID string) (*model.User, error) {
+func (r *gormUserRepository) GetUser(ctx context.Context, userID string) (*model.User, error) {
 	var user model.User
 	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&user).Error
 	if err != nil {
@@ -33,7 +34,7 @@ func (r *GormUserRepository) GetUser(ctx context.Context, userID string) (*model
 	return &user, nil
 }
 
-func (r *GormUserRepository) GetUserById(ctx context.Context, id string) (*model.User, error) {
+func (r *gormUserRepository) GetUserById(ctx context.Context, id string) (*model.User, error) {
 	idInt, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return nil, err
@@ -46,7 +47,7 @@ func (r *GormUserRepository) GetUserById(ctx context.Context, id string) (*model
 	return &user, nil
 }
 
-func (r *GormUserRepository) SetUserIsRobot(ctx context.Context, id int64) error {
+func (r *gormUserRepository) SetUserIsRobot(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Model(&model.User{}).
 		Where("id = ?", id).
 		Update("is_robot", true).Error

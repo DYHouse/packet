@@ -23,14 +23,9 @@ func NewRoomEventPublisher(producer *kafka.Producer, topic string) *RoomEventPub
 	}
 }
 
-// PublishRoomEvent 实现 domain.EventPublisher 接口。
+// PublishRoomEvent 实现 domain.RoomEventPublisher 接口。
 func (p *RoomEventPublisher) PublishRoomEvent(ctx context.Context, event *domain.RoomEvent) error {
 	return p.publish(ctx, event)
-}
-
-// PublishGameEvent 实现 domain.EventPublisher 接口，但 RoomEventPublisher 不支持发布 GameEvent。
-func (p *RoomEventPublisher) PublishGameEvent(ctx context.Context, event *domain.GameEvent) error {
-	return fmt.Errorf("RoomEventPublisher does not support PublishGameEvent")
 }
 
 // Publish 是 PublishRoomEvent 的别名，保留向后兼容。

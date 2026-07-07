@@ -123,12 +123,14 @@ func (s *Signer) SignPOST(body []byte) (ts int64, sign string) {
 
 func (s *Signer) VerifyGET(params map[string]string, ts int64, sign string) bool {
 	_, expectedSign := s.signGETWithTS(params, ts)
-	return sign == expectedSign
+	// 使用 hmac.Equal 防止时序攻击（规约 §14 安全规范）
+	return hmac.Equal([]byte(sign), []byte(expectedSign))
 }
 
 func (s *Signer) VerifyPOST(body []byte, ts int64, sign string) bool {
 	expectedSign := s.signPOSTWithTS(body, ts)
-	return sign == expectedSign
+	// 使用 hmac.Equal 防止时序攻击（规约 §14 安全规范）
+	return hmac.Equal([]byte(sign), []byte(expectedSign))
 }
 
 func (s *Signer) signGETWithTS(params map[string]string, ts int64) (int64, string) {

@@ -12,7 +12,7 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/utils"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/scheduler"
 	"github.com/google/uuid"
@@ -28,7 +28,6 @@ type RobotBehaviorEngine struct {
 	scheduler           *scheduler.TimeoutScheduler
 	accountSvc          *RobotAccountService
 	grabSvc             *GrabService
-	redis               *cRedis.Client
 	robotSchedulerRedis *redis.RobotSchedulerRedis
 }
 
@@ -39,7 +38,6 @@ func NewRobotBehaviorEngine(
 	scheduler *scheduler.TimeoutScheduler,
 	accountSvc *RobotAccountService,
 	grabSvc *GrabService,
-	redis *cRedis.Client,
 	robotSchedulerRedis *redis.RobotSchedulerRedis,
 ) *RobotBehaviorEngine {
 	return &RobotBehaviorEngine{
@@ -48,7 +46,6 @@ func NewRobotBehaviorEngine(
 		scheduler:           scheduler,
 		accountSvc:          accountSvc,
 		grabSvc:             grabSvc,
-		redis:               redis,
 		robotSchedulerRedis: robotSchedulerRedis,
 	}
 }
@@ -258,7 +255,7 @@ func (e *RobotBehaviorEngine) OnPacketCreated(ctx context.Context, roomID string
 		if e.shouldSkipGrab(e.config.Behavior.GrabSkipProb) {
 			continue
 		}
-		delay := e.randomDelay(e.config.Behavior.GrabDelayMin, e.config.Behavior.GrabDelayMax)
+		delay := utils.RandomDelay(e.config.Behavior.GrabDelayMin, e.config.Behavior.GrabDelayMax)
 		robotUserID := converter.FormatID(robotID)
 		data := fmt.Sprintf("%s:grab:%s:%s:0", robotUserID, roundID, uuid.New().String()[:12])
 		e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
@@ -293,7 +290,7 @@ func (e *RobotBehaviorEngine) OnRoundSettle(ctx context.Context, roomID string, 
 		return
 	}
 
-	delay := e.randomDelay(e.config.Behavior.SendDelayMin, e.config.Behavior.SendDelayMax)
+	delay := utils.RandomDelay(e.config.Behavior.SendDelayMin, e.config.Behavior.SendDelayMax)
 	robotUserID := converter.FormatID(minPlayerID)
 	data := fmt.Sprintf("%s:send:%s:0", robotUserID, uuid.New().String()[:12])
 	e.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeRobot, roomID, data, delay)
@@ -310,15 +307,6 @@ func (e *RobotBehaviorEngine) LeaveRoomNow(ctx context.Context, roomID string, r
 			"error", err,
 		)
 	}
-}
-
-// randomDelay returns a uniform random duration in [min, max). If max <=
-// min, min is returned unchanged.
-func (e *RobotBehaviorEngine) randomDelay(min, max time.Duration) time.Duration {
-	if max <= min {
-		return min
-	}
-	return min + time.Duration(rand.Int63n(int64(max-min)))
 }
 
 // shouldSkipGrab returns true with probability prob, used to decide whether

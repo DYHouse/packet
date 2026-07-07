@@ -4,27 +4,28 @@ import (
 	"context"
 	"time"
 
+	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
 
-// RobotAccountRepository 机器人账户数据仓库
-type RobotAccountRepository struct {
+// robotAccountRepository 机器人账户数据仓库
+type robotAccountRepository struct {
 	db *gorm.DB
 }
 
 // NewRobotAccountRepository 创建机器人账户仓库实例
-func NewRobotAccountRepository(db *gorm.DB) *RobotAccountRepository {
-	return &RobotAccountRepository{db: db}
+func NewRobotAccountRepository(db *gorm.DB) domain.RobotAccountRepository {
+	return &robotAccountRepository{db: db}
 }
 
 // Create 创建机器人账户
-func (r *RobotAccountRepository) Create(ctx context.Context, account *model.RobotAccount) error {
+func (r *robotAccountRepository) Create(ctx context.Context, account *model.RobotAccount) error {
 	return r.db.WithContext(ctx).Create(account).Error
 }
 
 // GetByUserID 根据 UserID 查询机器人账户
-func (r *RobotAccountRepository) GetByUserID(ctx context.Context, userID int64) (*model.RobotAccount, error) {
+func (r *robotAccountRepository) GetByUserID(ctx context.Context, userID int64) (*model.RobotAccount, error) {
 	var account model.RobotAccount
 	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&account).Error
 	if err != nil {
@@ -34,14 +35,14 @@ func (r *RobotAccountRepository) GetByUserID(ctx context.Context, userID int64) 
 }
 
 // UpdateStatus 更新机器人状态
-func (r *RobotAccountRepository) UpdateStatus(ctx context.Context, userID int64, status int) error {
+func (r *robotAccountRepository) UpdateStatus(ctx context.Context, userID int64, status int) error {
 	return r.db.WithContext(ctx).Model(&model.RobotAccount{}).
 		Where("user_id = ?", userID).
 		Update("status", status).Error
 }
 
 // UpdateBalance 更新虚拟余额
-func (r *RobotAccountRepository) UpdateBalance(ctx context.Context, userID int64, balance int64) error {
+func (r *robotAccountRepository) UpdateBalance(ctx context.Context, userID int64, balance int64) error {
 	return r.db.WithContext(ctx).Model(&model.RobotAccount{}).
 		Where("user_id = ?", userID).
 		Update("virtual_balance", balance).Error
@@ -50,7 +51,7 @@ func (r *RobotAccountRepository) UpdateBalance(ctx context.Context, userID int64
 // GetAvailableRobots 获取可用的机器人列表
 // 过滤条件: MinRoomFee <= maxRoomFee AND MaxRoomFee >= minRoomFee AND Status = 1
 // 按 VirtualBalance 升序排序
-func (r *RobotAccountRepository) GetAvailableRobots(ctx context.Context, minRoomFee, maxRoomFee int) ([]*model.RobotAccount, error) {
+func (r *robotAccountRepository) GetAvailableRobots(ctx context.Context, minRoomFee, maxRoomFee int) ([]*model.RobotAccount, error) {
 	var accounts []*model.RobotAccount
 	err := r.db.WithContext(ctx).
 		Where("min_room_fee <= ? AND max_room_fee >= ? AND status = ?", maxRoomFee, minRoomFee, model.RobotStatusIdle).
@@ -63,7 +64,7 @@ func (r *RobotAccountRepository) GetAvailableRobots(ctx context.Context, minRoom
 }
 
 // Count 统计总机器人数量
-func (r *RobotAccountRepository) Count(ctx context.Context) (int64, error) {
+func (r *robotAccountRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.RobotAccount{}).Count(&count).Error
 	if err != nil {
@@ -73,7 +74,7 @@ func (r *RobotAccountRepository) Count(ctx context.Context) (int64, error) {
 }
 
 // UpdateLastActiveAt 更新最后活跃时间
-func (r *RobotAccountRepository) UpdateLastActiveAt(ctx context.Context, userID int64) error {
+func (r *robotAccountRepository) UpdateLastActiveAt(ctx context.Context, userID int64) error {
 	return r.db.WithContext(ctx).Model(&model.RobotAccount{}).
 		Where("user_id = ?", userID).
 		Update("last_active_at", time.Now()).Error

@@ -5,19 +5,17 @@ import (
 	"fmt"
 
 	"github.com/cashparty/backend/common/logger"
-	gameModel "github.com/cashparty/backend/game/model"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 )
 
-type UserService interface {
-	GetUserById(ctx context.Context, id string) (*gameModel.User, error)
-}
-
+// UserIDConvertService 依赖 domain.UserService 接口（由 game 层 adapter 实现），
+// 不再直接引用 game 模型层，从而解除 settlement → game 模型层的反向依赖。
 type UserIDConvertService struct {
-	userSvc UserService
+	userSvc domain.UserService
 }
 
-func NewUserIDConvertService(userSvc UserService) *UserIDConvertService {
+func NewUserIDConvertService(userSvc domain.UserService) *UserIDConvertService {
 	return &UserIDConvertService{
 		userSvc: userSvc,
 	}

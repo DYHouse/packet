@@ -7,34 +7,30 @@ import (
 	"fmt"
 	"math/big"
 	"sync/atomic"
-	"time"
 
-	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
-	"gorm.io/gorm"
 )
 
 type PacketGenerator struct {
 	config            atomic.Pointer[Config]
-	redis             *cRedis.Client
-	db                *gorm.DB
+	packetCache       domain.PacketCacheRepository
+	rewardCache       domain.RewardCacheRepository
 	straightGenerator atomic.Pointer[StraightGenerator]
 	leopardGenerator  atomic.Pointer[LeopardGenerator]
 	rewardController  atomic.Pointer[RewardController]
 	roomRepo          domain.RoomRepository
 }
 
-func NewPacketGenerator(config *Config, redis *cRedis.Client, db *gorm.DB, roomRepo domain.RoomRepository) *PacketGenerator {
+func NewPacketGenerator(config *Config, packetCache domain.PacketCacheRepository, rewardCache domain.RewardCacheRepository, roomRepo domain.RoomRepository) *PacketGenerator {
 	g := &PacketGenerator{
-		redis:    redis,
-		db:       db,
-		roomRepo: roomRepo,
+		packetCache: packetCache,
+		rewardCache: rewardCache,
+		roomRepo:    roomRepo,
 	}
 	g.config.Store(config)
 	g.straightGenerator.Store(NewStraightGenerator(config))
 	g.leopardGenerator.Store(NewLeopardGenerator(config))
-	g.rewardController.Store(NewRewardController(config.RewardControl, redis))
+	g.rewardController.Store(NewRewardController(config.RewardControl, rewardCache))
 	return g
 }
 
@@ -55,9 +51,7 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 		return nil, err
 	}
 
-	cacheKey := redis.RoundPacketsKey(req.RoundID)
-
-	cached, err := g.redis.Get(ctx, cacheKey).Result()
+	cached, err := g.packetCache.Get(ctx, req.RoundID)
 	if err == nil {
 		var result GenerateResult
 		if err := json.Unmarshal([]byte(cached), &result); err == nil {
@@ -78,7 +72,7 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 	var genErr error
 
 	switch rewardType {
-	case RewardTypeStraight:
+	case domain.RewardTypeStraight:
 		result, genErr = straightGen.Generate(ctx, req, traceID)
 		if genErr != nil {
 			result, genErr = g.generateNormalPackets(config, req, traceID)
@@ -86,7 +80,7 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 				result.RewardType = RewardTypeNone
 			}
 		}
-	case RewardTypeLeopard:
+	case domain.RewardTypeLeopard:
 		result, genErr = leopardGen.Generate(ctx, req, traceID)
 		if genErr != nil {
 			result, genErr = g.generateNormalPackets(config, req, traceID)
@@ -103,9 +97,9 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	success, err := g.redis.SetNX(ctx, cacheKey, resultJSON, time.Hour).Result()
+	success, err := g.packetCache.SetNX(ctx, req.RoundID, string(resultJSON), config.PacketCacheTTL)
 	if err == nil && !success {
-		if cached, err = g.redis.Get(ctx, cacheKey).Result(); err == nil {
+		if cached, err = g.packetCache.Get(ctx, req.RoundID); err == nil {
 			json.Unmarshal([]byte(cached), &result)
 		}
 	}
@@ -269,5 +263,5 @@ func (g *PacketGenerator) UpdateConfig(config *Config) {
 	g.config.Store(config)
 	g.straightGenerator.Store(NewStraightGenerator(config))
 	g.leopardGenerator.Store(NewLeopardGenerator(config))
-	g.rewardController.Store(NewRewardController(config.RewardControl, g.redis))
+	g.rewardController.Store(NewRewardController(config.RewardControl, g.rewardCache))
 }

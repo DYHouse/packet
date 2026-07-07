@@ -137,7 +137,7 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 
 	maxPlayers := stateData.MaxPlayers
 	if maxPlayers <= 0 {
-		maxPlayers = 5
+		maxPlayers = domain.MaxPlayers
 	}
 
 	seats := make([]*SeatInfo, 0, maxPlayers)

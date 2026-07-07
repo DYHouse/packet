@@ -7,7 +7,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	csched "github.com/cashparty/backend/common/scheduler"
-	redisRepo "github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	settlementDomain "github.com/cashparty/backend/settlement/domain"
 )
 
 // VirtualBalanceSyncScheduler periodically flushes dirty robot virtual balance
@@ -18,7 +18,7 @@ type VirtualBalanceSyncScheduler struct {
 
 // NewVirtualBalanceSyncScheduler creates a new VirtualBalanceSyncScheduler.
 // interval <= 0 时设默认 30s，防止 time.NewTicker(0) panic。
-func NewVirtualBalanceSyncScheduler(virtualBalance *redisRepo.VirtualBalanceService, interval time.Duration, redis *cRedis.Client) *VirtualBalanceSyncScheduler {
+func NewVirtualBalanceSyncScheduler(virtualBalance settlementDomain.VirtualBalanceService, interval time.Duration, redis *cRedis.Client) *VirtualBalanceSyncScheduler {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}

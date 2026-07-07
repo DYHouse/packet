@@ -7,33 +7,37 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
 
 type SettlementCheckService struct {
-	billMgr      *BillManager
-	exceptionMgr *ExceptionManager
-	refundSvc    *RefundService
-	traceIDGen   *TraceIDGenerator
+	billRepo            domain.BillRepository
+	roundSettlementRepo domain.RoundSettlementRepository
+	exceptionMgr        *ExceptionManager
+	refundSvc           *RefundService
+	traceIDGen          *TraceIDGenerator
 }
 
 func NewSettlementCheckService(
-	billMgr *BillManager,
+	billRepo domain.BillRepository,
+	roundSettlementRepo domain.RoundSettlementRepository,
 	exceptionMgr *ExceptionManager,
 	refundSvc *RefundService,
 	traceIDGen *TraceIDGenerator,
 ) *SettlementCheckService {
 	return &SettlementCheckService{
-		billMgr:      billMgr,
-		exceptionMgr: exceptionMgr,
-		refundSvc:    refundSvc,
-		traceIDGen:   traceIDGen,
+		billRepo:            billRepo,
+		roundSettlementRepo: roundSettlementRepo,
+		exceptionMgr:        exceptionMgr,
+		refundSvc:           refundSvc,
+		traceIDGen:          traceIDGen,
 	}
 }
 
-func (s *SettlementCheckService) CheckFirstRoundDeductFailure(ctx context.Context) error {
-	settlements, err := s.billMgr.GetFailedFirstRoundSettlements(ctx, time.Now().Add(-10*time.Minute), 100)
+func (s *SettlementCheckService) CheckFirstRoundDeductFailure(ctx context.Context, since time.Time) error {
+	settlements, err := s.roundSettlementRepo.GetFailedFirstRoundSettlements(ctx, since, 100)
 	if err != nil {
 		return err
 	}
@@ -52,7 +56,7 @@ func (s *SettlementCheckService) CheckFirstRoundDeductFailure(ctx context.Contex
 // the game result event was likely lost. Instead of auto-refunding (which could incorrectly refund
 // when the game was actually played), we create exception records for manual investigation.
 func (s *SettlementCheckService) CheckDeductedButNotSettled(ctx context.Context, since time.Time) error {
-	settlements, err := s.billMgr.GetDeductedButNotSettled(ctx, since, 100)
+	settlements, err := s.roundSettlementRepo.GetDeductedButNotSettled(ctx, since, 100)
 	if err != nil {
 		return err
 	}
@@ -93,7 +97,7 @@ func (s *SettlementCheckService) handleDeductedNotSettled(ctx context.Context, s
 }
 
 func (s *SettlementCheckService) ensureRefundCreated(ctx context.Context, settlement *model.RoundSettlement) error {
-	bills, err := s.billMgr.GetBillsByTraceID(ctx, settlement.RoundTraceID)
+	bills, err := s.billRepo.GetBillsByTraceID(ctx, settlement.RoundTraceID)
 	if err != nil {
 		return err
 	}

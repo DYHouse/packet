@@ -8,6 +8,7 @@ import (
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/utils"
 	"github.com/cashparty/backend/game/domain"
 )
 
@@ -85,7 +86,7 @@ func (p *RobotPlayer) JoinAndReady(ctx context.Context, roomID string, robotUser
 		return ErrNoEmptySeat
 	}
 
-	delay := p.randomDelay(p.config.Behavior.SeatDelayMin, p.config.Behavior.SeatDelayMax)
+	delay := utils.RandomDelay(p.config.Behavior.SeatDelayMin, p.config.Behavior.SeatDelayMax)
 	p.behaviorEngine.ScheduleAction(ctx, roomID, robotUserID, "seat", delay)
 	return nil
 }
@@ -121,7 +122,7 @@ func (p *RobotPlayer) SelectSeat(ctx context.Context, roomID string, robotUserID
 			SeatNo: seatNo,
 		})
 		if err == nil {
-			delay := p.randomDelay(p.config.Behavior.ReadyDelayMin, p.config.Behavior.ReadyDelayMax)
+			delay := utils.RandomDelay(p.config.Behavior.ReadyDelayMin, p.config.Behavior.ReadyDelayMax)
 			p.behaviorEngine.ScheduleAction(ctx, roomID, robotUserID, "ready", delay)
 			return nil
 		}
@@ -208,7 +209,7 @@ func (p *RobotPlayer) hasEmptySeat(state *domain.RoomStateData) bool {
 	}
 	maxPlayers := state.MaxPlayers
 	if maxPlayers <= 0 {
-		maxPlayers = 5
+		maxPlayers = domain.MaxPlayers
 	}
 	playerSeats := make(map[int]bool, len(state.Players))
 	for _, player := range state.Players {
@@ -236,7 +237,7 @@ func (p *RobotPlayer) pickRandomEmptySeat(state *domain.RoomStateData) int {
 	}
 	maxPlayers := state.MaxPlayers
 	if maxPlayers <= 0 {
-		maxPlayers = 5
+		maxPlayers = domain.MaxPlayers
 	}
 	playerSeats := make(map[int]bool, len(state.Players))
 	for _, player := range state.Players {
@@ -258,13 +259,4 @@ func (p *RobotPlayer) pickRandomEmptySeat(state *domain.RoomStateData) int {
 		return 0
 	}
 	return emptySeats[rand.Intn(len(emptySeats))]
-}
-
-// randomDelay returns a uniform random duration in [min, max). If max <= min
-// min is returned unchanged.
-func (p *RobotPlayer) randomDelay(min, max time.Duration) time.Duration {
-	if max <= min {
-		return min
-	}
-	return min + time.Duration(rand.Int63n(int64(max-min)))
 }

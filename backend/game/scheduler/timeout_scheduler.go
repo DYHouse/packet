@@ -30,31 +30,38 @@ type TimeoutConfig struct {
 }
 
 type Config struct {
-	Seat          time.Duration
-	Ready         time.Duration
-	Grab          time.Duration
-	Send          time.Duration
-	Replace       time.Duration
-	Robot         time.Duration
-	CheckInterval time.Duration
+	Seat           time.Duration
+	Ready          time.Duration
+	Grab           time.Duration
+	Send           time.Duration
+	Replace        time.Duration
+	Robot          time.Duration
+	CheckInterval  time.Duration
+	HandlerTimeout time.Duration
 }
 
 type TimeoutHandler func(ctx context.Context, roomID string, data string)
 
 type TimeoutScheduler struct {
-	redis     *cRedis.Client
-	handlers  map[TimeoutType]TimeoutHandler
-	configs   map[TimeoutType]TimeoutConfig
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	handlerWg sync.WaitGroup // 跟踪 handler goroutine 退出，确保 Stop 时等待 handler 完成
+	redis          *cRedis.Client
+	handlers       map[TimeoutType]TimeoutHandler
+	configs        map[TimeoutType]TimeoutConfig
+	handlerTimeout time.Duration
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	handlerWg      sync.WaitGroup // 跟踪 handler goroutine 退出，确保 Stop 时等待 handler 完成
 }
 
 func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
 	checkInterval := cfg.CheckInterval
 	if checkInterval == 0 {
 		checkInterval = 1 * time.Second
+	}
+
+	handlerTimeout := cfg.HandlerTimeout
+	if handlerTimeout == 0 {
+		handlerTimeout = 30 * time.Second
 	}
 
 	configs := make(map[TimeoutType]TimeoutConfig)
@@ -96,9 +103,10 @@ func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
 	configs[TimeoutTypeRobot] = TimeoutConfig{Duration: robotDuration, CheckInterval: checkInterval}
 
 	return &TimeoutScheduler{
-		redis:    redis,
-		handlers: make(map[TimeoutType]TimeoutHandler),
-		configs:  configs,
+		redis:          redis,
+		handlers:       make(map[TimeoutType]TimeoutHandler),
+		configs:        configs,
+		handlerTimeout: handlerTimeout,
 	}
 }
 
@@ -187,12 +195,6 @@ func (s *TimeoutScheduler) ClearRoomTimeouts(ctx context.Context, timeoutType Ti
 	}
 }
 
-func (s *TimeoutScheduler) ClearAllTimeouts(ctx context.Context, roomID string) {
-	for timeoutType := range s.configs {
-		s.ClearRoomTimeouts(ctx, timeoutType, roomID)
-	}
-}
-
 func (s *TimeoutScheduler) ClearAllRoomTimeouts(ctx context.Context, roomID string) {
 	for timeoutType := range s.configs {
 		s.ClearRoomTimeouts(ctx, timeoutType, roomID)
@@ -267,7 +269,7 @@ func (s *TimeoutScheduler) checkTimeouts(timeoutType TimeoutType) {
 							"panic", r, "stack", string(debug.Stack()))
 					}
 				}()
-				handlerCtx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+				handlerCtx, cancel := context.WithTimeout(s.ctx, s.handlerTimeout)
 				defer cancel()
 				handler(handlerCtx, roomID, data)
 			}(handler, roomID, data)

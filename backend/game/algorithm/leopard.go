@@ -2,6 +2,8 @@ package algorithm
 
 import (
 	"context"
+
+	"github.com/cashparty/backend/game/domain"
 )
 
 type LeopardGenerator struct {
@@ -33,11 +35,11 @@ func (g *LeopardGenerator) Generate(ctx context.Context, req *GenerateRequest, t
 		amounts[i] = baseAmount
 	}
 
-	rewardAmount := req.TotalAmount * 10
+	rewardAmount := req.TotalAmount * g.config.RewardControl.LeopardMultiplier
 
 	return &GenerateResult{
 		PacketAmounts: amounts,
-		RewardType:    RewardTypeLeopard,
+		RewardType:    domain.RewardTypeLeopard,
 		RewardAmount:  rewardAmount,
 		TraceID:       traceID,
 	}, nil

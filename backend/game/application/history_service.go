@@ -10,20 +10,20 @@ import (
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/model"
-	settlementService "github.com/cashparty/backend/settlement/service"
+	settlementDomain "github.com/cashparty/backend/settlement/domain"
 )
 
 // HistoryService 玩家历史记录应用服务
 type HistoryService struct {
-	dbRepo  domain.DBRepository
-	billMgr *settlementService.BillManager
+	dbRepo   domain.DBRepository
+	billRepo settlementDomain.BillRepository
 }
 
 // NewHistoryService 创建 HistoryService 实例
-func NewHistoryService(dbRepo domain.DBRepository, billMgr *settlementService.BillManager) *HistoryService {
+func NewHistoryService(dbRepo domain.DBRepository, billRepo settlementDomain.BillRepository) *HistoryService {
 	return &HistoryService{
-		dbRepo:  dbRepo,
-		billMgr: billMgr,
+		dbRepo:   dbRepo,
+		billRepo: billRepo,
 	}
 }
 

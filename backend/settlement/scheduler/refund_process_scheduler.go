@@ -8,17 +8,20 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	csched "github.com/cashparty/backend/common/scheduler"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type RefundProcessScheduler struct {
-	base      *csched.BaseScheduler
-	refundSvc *service.RefundService
-	billMgr   *service.BillManager
+	base            *csched.BaseScheduler
+	refundSvc       *service.RefundService
+	refundAuditRepo domain.RefundAuditRepository
+	limit           int
+	offset          int
 }
 
-func NewRefundProcessScheduler(refundSvc *service.RefundService, billMgr *service.BillManager, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *RefundProcessScheduler {
+func NewRefundProcessScheduler(refundSvc *service.RefundService, refundAuditRepo domain.RefundAuditRepository, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *RefundProcessScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "refund_process",
 		Interval:     cfg.Interval,
@@ -28,8 +31,10 @@ func NewRefundProcessScheduler(refundSvc *service.RefundService, billMgr *servic
 	}
 
 	s := &RefundProcessScheduler{
-		refundSvc: refundSvc,
-		billMgr:   billMgr,
+		refundSvc:       refundSvc,
+		refundAuditRepo: refundAuditRepo,
+		limit:           cfg.Limit,
+		offset:          cfg.Offset,
 	}
 	s.base = csched.NewBaseScheduler(config, s.execute, redis)
 	return s
@@ -42,7 +47,7 @@ func (s *RefundProcessScheduler) Start(ctx context.Context) error {
 }
 
 func (s *RefundProcessScheduler) execute(ctx context.Context) error {
-	refunds, err := s.billMgr.GetRefundsByStatus(ctx, dto.RefundStatusPending, 100, 0)
+	refunds, err := s.refundAuditRepo.GetRefundsByStatus(ctx, dto.RefundStatusPending, s.limit, s.offset)
 	if err != nil {
 		logger.Error("get pending refunds failed", "error", err)
 		return err

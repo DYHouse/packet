@@ -23,9 +23,9 @@ type SeatAppService struct {
 	repo              domain.RoomRepository
 	dbRepo            domain.DBRepository
 	broadcaster       domain.Broadcaster
-	publisher         domain.EventPublisher
+	publisher         domain.RoomEventPublisher
 	scheduler         *scheduler.TimeoutScheduler
-	settlementService *settlementService.SettlementService
+	settlementService *settlementService.BalanceQueryService
 	gameService       *GameAppService
 	roomAppService    *RoomAppService
 	redis             *cRedis.Client
@@ -43,9 +43,9 @@ func NewSeatAppService(
 	repo domain.RoomRepository,
 	dbRepo domain.DBRepository,
 	broadcaster domain.Broadcaster,
-	publisher domain.EventPublisher,
+	publisher domain.RoomEventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
-	settlementSvc *settlementService.SettlementService,
+	settlementSvc *settlementService.BalanceQueryService,
 	gameService *GameAppService,
 	redis *cRedis.Client,
 	balanceService *settlementService.BalanceService,

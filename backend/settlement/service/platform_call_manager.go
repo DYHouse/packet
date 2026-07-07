@@ -54,7 +54,10 @@ func (m *PlatformCallManager) UpdateLog(ctx context.Context, params *CallLogUpda
 		"response_time": &now,
 		"status":        params.Status,
 		"error_message": params.ErrorMessage,
-		"retry_count":   gorm.Expr("retry_count + 1"),
+		// retry_count 语义：表示重试次数。首次调用（当前状态为 pending）保持 retry_count=0；
+		// 仅当当前状态为 failed（即本次为重试调用）时才自增 1。CASE 表达式中的 status
+		// 引用的是更新前的当前列值，故与本次 status 赋值互不影响。
+		"retry_count": gorm.Expr("CASE WHEN status = ? THEN retry_count + 1 ELSE retry_count END", model.CallLogStatusFailed),
 	}
 
 	if params.RespBody != nil {

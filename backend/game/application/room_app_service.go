@@ -22,9 +22,9 @@ type RoomAppService struct {
 	dbRepo             domain.DBRepository
 	userService        *UserService
 	broadcaster        domain.Broadcaster
-	publisher          domain.EventPublisher
+	publisher          domain.RoomEventPublisher
 	scheduler          *scheduler.TimeoutScheduler
-	settlementService  *settlementService.SettlementService
+	settlementService  *settlementService.BalanceQueryService
 	balanceService     *settlementService.BalanceService
 	resumeGameCallback ResumeGameCallback
 	taskRunner         *async.TaskRunner
@@ -43,9 +43,9 @@ func NewRoomAppService(
 	dbRepo domain.DBRepository,
 	userService *UserService,
 	broadcaster domain.Broadcaster,
-	publisher domain.EventPublisher,
+	publisher domain.RoomEventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
-	settlementSvc *settlementService.SettlementService,
+	settlementSvc *settlementService.BalanceQueryService,
 	balanceSvc *settlementService.BalanceService,
 	taskRunner *async.TaskRunner,
 ) *RoomAppService {

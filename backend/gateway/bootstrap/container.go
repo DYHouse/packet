@@ -82,6 +82,7 @@ func (c *Container) InitServices(serviceDiscovery *discovery.ServiceDiscovery, r
 	c.SignatureMiddleware = middleware.NewSignatureMiddleware(
 		c.Config.Merchant.ID,
 		c.Config.Merchant.Secret,
+		c.Redis,
 	)
 
 	c.GameStore = store.NewMemoryGameStore()

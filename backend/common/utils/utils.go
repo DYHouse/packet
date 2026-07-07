@@ -4,32 +4,12 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	mathrand "math/rand"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 )
-
-// GenerateConnID 生成连接ID
-func GenerateConnID() string {
-	timestamp := time.Now().UnixMilli()
-	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-	return fmt.Sprintf("conn_%d%06d", timestamp, n.Int64())
-}
-
-// GenerateRoomID 生成房间ID
-func GenerateRoomID(roomType int) int64 {
-	timestamp := time.Now().UnixMilli()
-	n, _ := rand.Int(rand.Reader, big.NewInt(10000))
-	return timestamp*1000000 + int64(roomType)*10000 + n.Int64()
-}
-
-// GenerateOrderNo 生成订单号
-func GenerateOrderNo(prefix string) string {
-	timestamp := time.Now().UnixMilli()
-	n, _ := rand.Int(rand.Reader, big.NewInt(100000))
-	return fmt.Sprintf("%s_%d_%05d", prefix, timestamp, n.Int64())
-}
 
 // GetClientIP 从HTTP请求中获取客户端IP
 func GetClientIP(r *http.Request) string {
@@ -57,16 +37,6 @@ func GetClientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return ip
-}
-
-// IsValidPlatform 校验平台类型
-func IsValidPlatform(platform string) bool {
-	switch platform {
-	case "web", "h5", "app":
-		return true
-	default:
-		return false
-	}
 }
 
 // NowMillis 当前时间戳（毫秒）
@@ -149,4 +119,13 @@ func CryptoRandPerm(n int) ([]int, error) {
 		perm[i], perm[j.Int64()] = perm[j.Int64()], perm[i]
 	}
 	return perm, nil
+}
+
+// RandomDelay 返回 [min, max) 范围内的随机延迟。若 max <= min，则返回 min 不变。
+// 用于机器人 AI 行为（延迟、跳过概率等），不涉及资金分配，因此使用 math/rand。
+func RandomDelay(min, max time.Duration) time.Duration {
+	if max <= min {
+		return min
+	}
+	return min + time.Duration(mathrand.Int63n(int64(max-min)))
 }

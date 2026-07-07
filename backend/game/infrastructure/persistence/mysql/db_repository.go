@@ -39,6 +39,10 @@ func (r *DBRepositoryImpl) RoomConfigDBRepo() domain.RoomConfigDBRepository { re
 func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository           { return r.roundRepo }
 func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository       { return r.historyRepo }
 
+// DB 返回底层 *gorm.DB，供尚未抽象为 repo 方法的非事务读操作使用（如幂等检查）。
+// 过渡期保留：后续 Phase 将逐步补齐 repo 方法并移除此方法。
+func (r *DBRepositoryImpl) DB() *gorm.DB { return r.db }
+
 func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx domain.Transaction) error) error {
 	return r.db.WithContext(ctx).Transaction(func(gormTx *gorm.DB) error {
 		tx := NewGormTransaction(gormTx)
@@ -70,3 +74,7 @@ func (t *GormTransactionImpl) RoomDBRepo() domain.RoomDBRepository       { retur
 func (t *GormTransactionImpl) SessionDBRepo() domain.SessionDBRepository { return t.sessionRepo }
 func (t *GormTransactionImpl) UserDBRepo() domain.UserDBRepository       { return t.userRepo }
 func (t *GormTransactionImpl) RoundDBRepo() domain.RoundDBRepository     { return t.roundRepo }
+
+// DB 返回事务内的底层 *gorm.DB，供尚未抽象为 repo 方法的原始写操作使用。
+// 过渡期保留：后续 Phase 将逐步补齐 repo 方法并移除此方法。
+func (t *GormTransactionImpl) DB() *gorm.DB { return t.db }

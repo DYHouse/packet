@@ -2,16 +2,6 @@ package model
 
 import "time"
 
-const (
-	RewardTypeStraight = 1
-	RewardTypeLeopard  = 2
-)
-
-const (
-	TriggerTypeGuarantee   = 1
-	TriggerTypeProbability = 2
-)
-
 type SpecialReward struct {
 	ID          int64     `json:"id" gorm:"primaryKey;autoIncrement"`
 	RoomID      int64     `json:"room_id" gorm:"index;not null"`

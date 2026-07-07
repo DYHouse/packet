@@ -5,10 +5,8 @@ import (
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/game/domain"
 )
-
-// MaxPlayers is the maximum number of players allowed in a single room.
-const MaxPlayers = 5
 
 // SendTimeout is the existing send packet timeout used as an upper bound for
 // robot send delay validation.
@@ -26,16 +24,16 @@ func ValidateRobotConfig(cfg *config.RobotConfig) {
 	}
 
 	// SubTask 11.2: MaxRobotsPerRoom + MinRealPlayers <= MaxPlayers(5)
-	if cfg.Scheduler.MaxRobotsPerRoom+cfg.Scheduler.MinRealPlayers > MaxPlayers {
+	if cfg.Scheduler.MaxRobotsPerRoom+cfg.Scheduler.MinRealPlayers > domain.MaxPlayers {
 		old := cfg.Scheduler.MaxRobotsPerRoom
-		cfg.Scheduler.MaxRobotsPerRoom = MaxPlayers - cfg.Scheduler.MinRealPlayers
+		cfg.Scheduler.MaxRobotsPerRoom = domain.MaxPlayers - cfg.Scheduler.MinRealPlayers
 		if cfg.Scheduler.MaxRobotsPerRoom < 0 {
 			cfg.Scheduler.MaxRobotsPerRoom = 0
 		}
 		logger.Warn("robot config: MaxRobotsPerRoom+MinRealPlayers exceeds MaxPlayers, auto-corrected",
 			"old_max_robots_per_room", old,
 			"min_real_players", cfg.Scheduler.MinRealPlayers,
-			"max_players", MaxPlayers,
+			"max_players", domain.MaxPlayers,
 			"new_max_robots_per_room", cfg.Scheduler.MaxRobotsPerRoom,
 		)
 	}

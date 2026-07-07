@@ -3,30 +3,23 @@ package algorithm
 import (
 	"context"
 	crand "crypto/rand"
-	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
-	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
-)
-
-const (
-	TriggerTypeGuarantee   = 1
-	TriggerTypeProbability = 2
+	"github.com/cashparty/backend/game/domain"
 )
 
 type RewardController struct {
-	config *RewardControlConfig
-	redis  *cRedis.Client
+	config    *RewardControlConfig
+	cacheRepo domain.RewardCacheRepository
 }
 
-func NewRewardController(config *RewardControlConfig, redis *cRedis.Client) *RewardController {
+func NewRewardController(config *RewardControlConfig, cacheRepo domain.RewardCacheRepository) *RewardController {
 	return &RewardController{
-		config: config,
-		redis:  redis,
+		config:    config,
+		cacheRepo: cacheRepo,
 	}
 }
 
@@ -50,13 +43,13 @@ func (c *RewardController) DetermineRewardType(
 			ctx, roomID, sessionID, currentRoundNo, maxRounds, roomConfig,
 		); rewardType != RewardTypeNone {
 			logger.Info("guarantee reward triggered", "room_id", roomID, "reward_type", rewardType)
-			return rewardType, TriggerTypeGuarantee
+			return rewardType, domain.TriggerTypeGuarantee
 		}
 	}
 
 	if roomConfig.ProbabilityEnabled && c.isProbabilityAllowed(ctx) {
 		if rewardType := c.checkProbability(roomConfig); rewardType != RewardTypeNone {
-			return rewardType, TriggerTypeProbability
+			return rewardType, domain.TriggerTypeProbability
 		}
 	}
 
@@ -74,31 +67,29 @@ func (c *RewardController) checkGuarantee(
 	logger.Info("checkGuarantee", "room_id", roomID, "session_id", sessionID, "remaining_rounds", remainingRounds, "guarantee_straight", config.GuaranteeStraight, "guarantee_leopard", config.GuaranteeLeopard)
 
 	if config.GuaranteeStraight {
-		straightKey := redis.RewardCycleStraightKey(roomID, sessionID)
-		straightWon, _ := c.redis.Get(ctx, straightKey).Int()
+		straightWon, _ := c.cacheRepo.GetCycleWon(ctx, roomID, sessionID, domain.RewardCycleStraight)
 
-		logger.Info("straight check", "straight_key", straightKey, "straight_won", straightWon)
+		logger.Info("straight check", "straight_won", straightWon)
 
 		if straightWon == 0 {
 			if c.shouldTriggerGuarantee(remainingRounds) {
-				c.redis.Set(ctx, straightKey, 1, 24*time.Hour)
+				c.cacheRepo.SetCycleWon(ctx, roomID, sessionID, domain.RewardCycleStraight, 24*time.Hour)
 				logger.Info("straight guarantee triggered", "room_id", roomID, "remaining_rounds", remainingRounds)
-				return RewardTypeStraight
+				return domain.RewardTypeStraight
 			}
 		}
 	}
 
 	if config.GuaranteeLeopard {
-		leopardKey := redis.RewardCycleLeopardKey(roomID, sessionID)
-		leopardWon, _ := c.redis.Get(ctx, leopardKey).Int()
+		leopardWon, _ := c.cacheRepo.GetCycleWon(ctx, roomID, sessionID, domain.RewardCycleLeopard)
 
-		logger.Info("leopard check", "leopard_key", leopardKey, "leopard_won", leopardWon)
+		logger.Info("leopard check", "leopard_won", leopardWon)
 
 		if leopardWon == 0 {
 			if c.shouldTriggerGuarantee(remainingRounds) {
-				c.redis.Set(ctx, leopardKey, 1, 24*time.Hour)
+				c.cacheRepo.SetCycleWon(ctx, roomID, sessionID, domain.RewardCycleLeopard, 24*time.Hour)
 				logger.Info("leopard guarantee triggered", "room_id", roomID, "remaining_rounds", remainingRounds)
-				return RewardTypeLeopard
+				return domain.RewardTypeLeopard
 			}
 		}
 	}
@@ -138,12 +129,12 @@ func (c *RewardController) checkProbability(config *RoomRewardConfig) int {
 	randVal := c.randomFloat()
 
 	if randVal < config.LeopardProbability {
-		return RewardTypeLeopard
+		return domain.RewardTypeLeopard
 	}
 
 	randVal -= config.LeopardProbability
 	if randVal < config.StraightProbability {
-		return RewardTypeStraight
+		return domain.RewardTypeStraight
 	}
 
 	return RewardTypeNone
@@ -151,22 +142,10 @@ func (c *RewardController) checkProbability(config *RoomRewardConfig) int {
 
 func (c *RewardController) GetCurrentProfitRatio(ctx context.Context) (float64, error) {
 	today := time.Now().Format("2006-01-02")
-	key := redis.ProfitDailyKey(today)
 
-	data, err := c.redis.HGetAll(ctx, key).Result()
+	totalBet, totalWin, totalReward, err := c.cacheRepo.GetDailyProfit(ctx, today)
 	if err != nil {
 		return 0, err
-	}
-
-	var totalBet, totalWin, totalReward int64
-	if v, ok := data["total_bet"]; ok {
-		fmt.Sscanf(v, "%d", &totalBet)
-	}
-	if v, ok := data["total_win"]; ok {
-		fmt.Sscanf(v, "%d", &totalWin)
-	}
-	if v, ok := data["total_reward"]; ok {
-		fmt.Sscanf(v, "%d", &totalReward)
 	}
 
 	if totalBet == 0 {
@@ -179,23 +158,11 @@ func (c *RewardController) GetCurrentProfitRatio(ctx context.Context) (float64, 
 
 func (c *RewardController) RecordProfit(ctx context.Context, betAmount, winAmount, rewardAmount int64) error {
 	today := time.Now().Format("2006-01-02")
-	key := redis.ProfitDailyKey(today)
-
-	pipe := c.redis.Pipeline()
-	pipe.HIncrBy(ctx, key, "total_bet", betAmount)
-	pipe.HIncrBy(ctx, key, "total_win", winAmount)
-	pipe.HIncrBy(ctx, key, "total_reward", rewardAmount)
-	pipe.Expire(ctx, key, 7*24*time.Hour)
-
-	_, err := pipe.Exec(ctx)
-	return err
+	return c.cacheRepo.RecordDailyProfit(ctx, today, betAmount, winAmount, rewardAmount, 7*24*time.Hour)
 }
 
 func (c *RewardController) OnSessionEnd(ctx context.Context, roomID, sessionID string) {
-	c.redis.Del(ctx,
-		redis.RewardCycleStraightKey(roomID, sessionID),
-		redis.RewardCycleLeopardKey(roomID, sessionID),
-	)
+	c.cacheRepo.ClearRewardCycles(ctx, roomID, sessionID)
 }
 
 func (c *RewardController) getRoomConfig(roomID string) *RoomRewardConfig {

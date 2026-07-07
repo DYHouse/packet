@@ -22,10 +22,12 @@ import (
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
 	gameconfig "github.com/cashparty/backend/game/config"
+	"github.com/cashparty/backend/game/infrastructure/adapter"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	redisRepo "github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/server"
 	settlementConfig "github.com/cashparty/backend/settlement/config"
+	settlementMysqlRepo "github.com/cashparty/backend/settlement/infrastructure/persistence/mysql"
 	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
@@ -130,7 +132,11 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 		redisClient.Close()
 		return nil, fmt.Errorf("failed to create platform client: %w", err)
 	}
-	settlementRecorder := settlementService.NewBillManager(db)
+	// 创建 settlement 层 4 个 Repository 实例（Phase 2.3：拆分 BillManager）
+	billRepo := settlementMysqlRepo.NewBillRepository(db)
+	roundSettlementRepo := settlementMysqlRepo.NewRoundSettlementRepository(db)
+	refundAuditRepo := settlementMysqlRepo.NewRefundAuditRepository(db)
+	settlementQueryRepo := settlementMysqlRepo.NewSettlementQueryRepository(db)
 
 	// 获取已初始化的 IDGenerator（规约 SID-7：禁止懒加载，GetGenerator 返回 error 时 fail-fast）
 	idGen, err := idgen.GetGenerator()
@@ -144,28 +150,43 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar, idGen)
-	userIDConvert := settlementService.NewUserIDConvertService(userSvc)
+	// 通过 UserSaverAdapter 将 game 层 *application.UserService 适配为 settlement/domain.UserService，
+	// 解除 settlement 对 game/model 的反向依赖（Phase 1.1）。
+	userSaverAdapter := adapter.NewUserSaverAdapter(userSvc)
+	userIDConvert := settlementService.NewUserIDConvertService(userSaverAdapter)
 	exceptionMgr := settlementService.NewExceptionManager(db)
 
 	callMgr := settlementService.NewPlatformCallManager(db)
-	creditRetrySvc := settlementService.NewCreditRetryService(settlementRecorder, platformClient, redisClient, traceIDGen, platformCfg, &cfg.Lock, exceptionMgr, userIDConvert, callMgr)
+	creditRetrySvc := settlementService.NewCreditRetryService(billRepo, platformClient, redisClient, traceIDGen, platformCfg, &cfg.Lock, exceptionMgr, userIDConvert, callMgr)
 
 	// Robot checker and settlement-layer virtual balance service (shared with
 	// game-layer robot services via the same Redis keys).
 	robotChecker := settlementService.NewRobotChecker(redisClient)
 	settlementVirtualBalance := settlementService.NewVirtualBalanceService(redisClient)
 
-	deductSvc := settlementService.NewDeductService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, &cfg.Lock, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
-	refundSvc := settlementService.NewRefundService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr)
-	rewardSettler := settlementService.NewRewardSettler(settlementService.DefaultRewardSettlementConfig(), settlementRecorder, traceIDGen, robotChecker)
-	gameSettleSvc := settlementService.NewGameSettleService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	deductSvc := settlementService.NewDeductService(platformClient, billRepo, roundSettlementRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	refundSvc := settlementService.NewRefundService(platformClient, billRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr)
+	rewardSettler := settlementService.NewRewardSettler(settlementService.DefaultRewardSettlementConfig(), billRepo, traceIDGen, robotChecker)
+	// Phase 2.4：拆分 GameSettleService 为 SessionPayoutService（调 platform.Credit 派奖）
+	// 与 GameSettleReportingService（调 platform.Settle 上报游戏结果）。
+	// SessionPayoutService 先创建，作为 GameSettleReportingService 的依赖注入。
+	sessionPayoutSvc := settlementService.NewSessionPayoutService(platformClient, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	gameSettleSvc := settlementService.NewGameSettleReportingService(platformClient, billRepo, roundSettlementRepo, settlementQueryRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr, robotChecker, sessionPayoutSvc)
 
-	settlementSvc := settlementService.NewSettlementService(platformClient, settlementRecorder, redisClient, traceIDGen, platformCfg, &cfg.Lock, deductSvc, rewardSettler, gameSettleSvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	// 拆分原 SettlementService 为 3 个职责单一的 Service（P0-10）：
+	// - RoundSettleService：单局结算（SettleRound/creditRound/settleCommission/SettleGame）
+	// - PenaltySettlementService：罚款扣款与分配（DeductPenaltyToPlatform/DistributePenaltyFromPlatform）
+	// - BalanceQueryService：余额与账单查询（CheckBalance/GetUserBalance/GetBill*/GetRoundSettlement）
+	roundSettleSvc := settlementService.NewRoundSettleService(billRepo, roundSettlementRepo, redisClient, traceIDGen, rewardSettler, gameSettleSvc, &cfg.Lock, robotChecker)
+	penaltySettlementSvc := settlementService.NewPenaltySettlementService(platformClient, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	balanceQuerySvc := settlementService.NewBalanceQueryService(platformClient, billRepo, roundSettlementRepo, platformCfg, userIDConvert, robotChecker, settlementVirtualBalance)
 
 	algorithmConfig := convertAlgorithmConfig(&cfg.Algorithm)
 	logger.Info("algorithm config loaded", "room_configs_count", len(algorithmConfig.RewardControl.RoomConfigs))
 	roomRepo := redisRepo.NewRoomRepository(redisClient, cfg.RedisTTL)
-	packetGenerator := algorithm.NewPacketGenerator(algorithmConfig, redisClient, db, roomRepo)
+	packetCacheRepo := redisRepo.NewPacketCacheRepository(redisClient)
+	rewardCacheRepo := redisRepo.NewRewardCacheRepository(redisClient)
+	packetGenerator := algorithm.NewPacketGenerator(algorithmConfig, packetCacheRepo, rewardCacheRepo, roomRepo)
 
 	// Validate robot configuration before assembling robot services.
 	application.ValidateRobotConfig(&cfg.Robot)
@@ -175,8 +196,8 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 		return nil, fmt.Errorf("start task runner failed: %w", err)
 	}
 
-	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, settlementSvc, packetGenerator, roomRepo,
-		platformClient, settlementRecorder, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen)
+	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, roundSettleSvc, penaltySettlementSvc, balanceQuerySvc, packetGenerator, roomRepo,
+		platformClient, billRepo, roundSettlementRepo, refundAuditRepo, settlementQueryRepo, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen)
 	container.LockCfg = &cfg.Lock
 	container.InitAppServices()
 
@@ -202,9 +223,14 @@ func (a *Application) Start(ctx context.Context) error {
 	a.Container.RoomEventConsumer = roomEventConsumer
 	a.kafkaConsumers = append(a.kafkaConsumers, roomEventConsumer)
 
+	// Phase 3.1：创建 GameEventHandler（application 层），承载从 consumer 迁移的业务编排逻辑。
+	// consumer 仅做消息解析与转发，所有 DB 操作走 dbRepo.WithTransaction。
+	// Phase 3.5：settlement 用例通过 SettleAppService facade 调用，不再直接依赖 RoundSettleService。
+	gameEventHandler := application.NewGameEventHandler(
+		a.Container.DBRepo, a.Container.SettleAppSvc, a.Container.RobotBehaviorEngine,
+	)
 	gameEventConsumer, err := createGameEventConsumer(
-		a.config, a.Container.DB, a.Container.Redis, a.Container.SettlementSvc,
-		a.Container.GetRobotBehaviorEngine(), nodeID,
+		a.config, a.Container.Redis, gameEventHandler, nodeID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create game event consumer: %w", err)
@@ -409,15 +435,22 @@ func convertAlgorithmConfig(cfg *gameconfig.AlgorithmConfig) *algorithm.Config {
 	if cfg.LeopardProbability != nil {
 		algoCfg.LeopardProbability = *cfg.LeopardProbability
 	}
+	if cfg.PacketCacheTTL != nil {
+		algoCfg.PacketCacheTTL = *cfg.PacketCacheTTL
+	}
 
 	if cfg.RewardControl != nil && len(cfg.RewardControl.RoomConfigs) > 0 {
 		algoCfg.RewardControl = &algorithm.RewardControlConfig{
 			GlobalSwitchEnabled:  cfg.RewardControl.GlobalSwitchEnabled,
 			ProfitRatioThreshold: 0.05, // default；若下方显式设置则覆盖
+			LeopardMultiplier:    10,   // default；若下方显式设置则覆盖
 			RoomConfigs:          make(map[int64]*algorithm.RoomRewardConfig),
 		}
 		if cfg.RewardControl.ProfitRatioThreshold != nil {
 			algoCfg.RewardControl.ProfitRatioThreshold = *cfg.RewardControl.ProfitRatioThreshold
+		}
+		if cfg.RewardControl.LeopardMultiplier != nil {
+			algoCfg.RewardControl.LeopardMultiplier = *cfg.RewardControl.LeopardMultiplier
 		}
 		for roomID, roomCfg := range cfg.RewardControl.RoomConfigs {
 			algoCfg.RewardControl.RoomConfigs[roomID] = &algorithm.RoomRewardConfig{

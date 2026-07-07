@@ -1,10 +1,12 @@
 min_packet_amount: 1
 straight_probability: 0.08
 leopard_probability: 0.002
+packet_cache_ttl: 1h
 
 reward_control:
   global_switch_enabled: false
   profit_ratio_threshold: 0.05
+  leopard_multiplier: 10
   room_configs:
     1776078870944425019:
       guarantee_enabled: true

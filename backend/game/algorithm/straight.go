@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/cashparty/backend/common/utils"
+	"github.com/cashparty/backend/game/domain"
 )
 
 type StraightGenerator struct {
@@ -67,7 +68,7 @@ func (g *StraightGenerator) Generate(ctx context.Context, req *GenerateRequest, 
 
 	return &GenerateResult{
 		PacketAmounts: amounts,
-		RewardType:    RewardTypeStraight,
+		RewardType:    domain.RewardTypeStraight,
 		RewardAmount:  rewardAmount,
 		TraceID:       traceID,
 	}, nil

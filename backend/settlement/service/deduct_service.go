@@ -13,6 +13,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/settlement/config"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
@@ -22,7 +23,9 @@ const defaultMaxConcurrentDeduct = 20
 
 type DeductService struct {
 	platform            platform.Client
-	billMgr             *BillManager
+	billRepo            domain.BillRepository
+	roundSettlementRepo domain.RoundSettlementRepository
+	refundAuditRepo     domain.RefundAuditRepository
 	redis               *cRedis.Client
 	traceIDGen          *TraceIDGenerator
 	cfg                 *config.PlatformConfig
@@ -37,7 +40,9 @@ type DeductService struct {
 
 func NewDeductService(
 	platformClient platform.Client,
-	billMgr *BillManager,
+	billRepo domain.BillRepository,
+	roundSettlementRepo domain.RoundSettlementRepository,
+	refundAuditRepo domain.RefundAuditRepository,
 	redis *cRedis.Client,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
@@ -56,7 +61,9 @@ func NewDeductService(
 	}
 	return &DeductService{
 		platform:            platformClient,
-		billMgr:             billMgr,
+		billRepo:            billRepo,
+		roundSettlementRepo: roundSettlementRepo,
+		refundAuditRepo:     refundAuditRepo,
 		redis:               redis,
 		traceIDGen:          traceIDGen,
 		cfg:                 cfg,
@@ -72,7 +79,7 @@ func NewDeductService(
 
 func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstRoundDeductRequest) (*dto.FirstRoundDeductResult, error) {
 	// 幂等性检查：基于 roundID 而非随机 batchID
-	exists, err := s.billMgr.ExistsRoundSettlement(ctx, req.RoundID)
+	exists, err := s.roundSettlementRepo.ExistsRoundSettlement(ctx, req.RoundID)
 	if err != nil {
 		return nil, fmt.Errorf("check exists failed: %w", err)
 	}
@@ -85,7 +92,7 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 
 	err = lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.FirstRoundDeductLockTTL.Seconds()), func() error {
 		// 锁内二次检查
-		exists, err := s.billMgr.ExistsRoundSettlement(ctx, req.RoundID)
+		exists, err := s.roundSettlementRepo.ExistsRoundSettlement(ctx, req.RoundID)
 		if err != nil {
 			return fmt.Errorf("check exists failed: %w", err)
 		}
@@ -135,7 +142,7 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 			bills = append(bills, bill)
 		}
 
-		if err := s.billMgr.CreateRoundSettlementAndBills(ctx, settlement, bills); err != nil {
+		if err := s.roundSettlementRepo.CreateRoundSettlementAndBills(ctx, settlement, bills); err != nil {
 			return fmt.Errorf("create round settlement and bills failed: %w", err)
 		}
 
@@ -211,14 +218,14 @@ func (s *DeductService) executeBatchDeduct(ctx context.Context, bills []*model.B
 
 	if result.AllSuccess {
 		now := time.Now()
-		if err := s.billMgr.UpdateRoundSettlementDeductSuccess(ctx, roundTraceID, result.SuccessCount, now); err != nil {
+		if err := s.roundSettlementRepo.UpdateRoundSettlementDeductSuccess(ctx, roundTraceID, result.SuccessCount, now); err != nil {
 			logger.Error("update round settlement deduct success failed", "round_trace_id", roundTraceID, "error", err)
 		}
-		if err := s.billMgr.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusDeducted, ""); err != nil {
+		if err := s.roundSettlementRepo.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusDeducted, ""); err != nil {
 			logger.Error("update round settlement status to deducted failed", "round_trace_id", roundTraceID, "error", err)
 		}
 	} else {
-		if err := s.billMgr.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusFailed, "部分玩家扣款失败"); err != nil {
+		if err := s.roundSettlementRepo.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusFailed, "部分玩家扣款失败"); err != nil {
 			logger.Error("update round settlement status to failed error", "round_trace_id", roundTraceID, "error", err)
 		}
 	}
@@ -232,31 +239,28 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 		return nil
 	}
 
-	// 2. 重试场景：账单已处于 Processing，应先查询平台状态
-	if bill.Status == dto.BillStatusProcessing {
-		// TODO: 待平台提供 QueryStatus 接口后，先查询平台扣款状态以避免重复扣款
-		// 当前先 fall through 重试 RPC（平台应按 BizOrderNo 保证幂等）
-	}
+	// 2. 重试场景：账单已处于 Processing，先前 RPC 可能已成功但 DB 更新失败。
+	//    平台暂未提供查询接口，当前依靠 BizOrderNo 幂等兜底，fall through 重试 RPC。
 
 	// 3. 将账单置为 Processing（乐观锁 WHERE status = currentStatus）
-	if err := s.billMgr.UpdateBillStatus(ctx, bill.ID, bill.Status, dto.BillStatusProcessing, ""); err != nil {
+	if err := s.billRepo.UpdateBillStatus(ctx, bill.ID, bill.Status, dto.BillStatusProcessing, ""); err != nil {
 		return fmt.Errorf("update bill to processing failed: %w", err)
 	}
 
 	// 机器人虚拟通道
 	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
 		if err := s.virtualBalance.Deduct(ctx, bill.UserID, amount); err != nil {
-			s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+			s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual deduct failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
-		return s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
+		return s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
 	}
 
 	// 原流程不变（真人玩家）
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
@@ -284,7 +288,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 
 	result, err := s.platform.Debit(ctx, debitReq)
 	if err != nil {
-		s.billMgr.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
@@ -298,10 +302,10 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 
 	balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
 	if err != nil {
-		logger.Error("parse balance amount failed after successful debit, mark bill as success with balance=0",
+		logger.Error("parse balance amount failed after successful debit, mark bill as failed",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
-		if updateErr := s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, 0); updateErr != nil {
-			logger.Error("update bill success failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
+		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
+			logger.Error("update bill to failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
@@ -310,9 +314,9 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 				Status:   model.CallLogStatusSuccess,
 			})
 		}
-		return nil
+		return fmt.Errorf("parse balance amount failed: %w", err)
 	}
-	if err := s.billMgr.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter); err != nil {
+	if err := s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter); err != nil {
 		logger.Error("update bill success failed", "bill_id", bill.ID, "error", err)
 		return err
 	}
@@ -330,7 +334,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 
 func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, roundTraceID string, batchID string, result *dto.FirstRoundDeductResult) {
 	for _, userID := range result.SuccessPlayers {
-		bill, err := s.billMgr.GetBillByBatchAndUser(ctx, batchID, userID)
+		bill, err := s.billRepo.GetBillByBatchAndUser(ctx, batchID, userID)
 		if err != nil {
 			logger.Error("get bill by batch and user failed", "user_id", userID, "batch_id", batchID, "error", err)
 			continue
@@ -356,7 +360,7 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 				AppliedBy:     0,
 			}
 
-			if err := s.billMgr.CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo); err != nil {
+			if err := s.refundAuditRepo.CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo); err != nil {
 				logger.Error("create refund audit and update bill refund status failed", "user_id", userID, "batch_id", batchID, "error", err)
 				continue
 			}
@@ -366,7 +370,7 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 
 // getExistingFirstRoundResult 查询已有 round 对应的扣款结果（幂等返回）
 func (s *DeductService) getExistingFirstRoundResult(ctx context.Context, roundID int64) (*dto.FirstRoundDeductResult, error) {
-	bills, err := s.billMgr.GetBillsByRoundID(ctx, roundID)
+	bills, err := s.billRepo.GetBillsByRoundID(ctx, roundID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +409,7 @@ func (s *DeductService) getExistingFirstRoundResult(ctx context.Context, roundID
 }
 
 func (s *DeductService) getBatchDeductResult(ctx context.Context, batchID string) (*dto.FirstRoundDeductResult, error) {
-	bills, err := s.billMgr.GetBillsByBatchID(ctx, batchID)
+	bills, err := s.billRepo.GetBillsByBatchID(ctx, batchID)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +458,7 @@ func (s *DeductService) DeductForLaterRound(ctx context.Context, req *dto.LaterR
 }
 
 func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.SystemPacketDeductRequest) error {
-	exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
+	exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
 	if err != nil {
 		return fmt.Errorf("check exists failed: %w", err)
 	}
@@ -464,7 +468,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 
 	lockKey := redis.SystemPacketDeductLockKey(req.RoundID)
 	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SystemPacketDeductLockTTL.Seconds()), func() error {
-		exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
+		exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
 		if err != nil {
 			return fmt.Errorf("check exists failed: %w", err)
 		}
@@ -506,7 +510,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 			Remark:       fmt.Sprintf("系统发红包,原因:%s", req.Reason),
 		}
 
-		if err := s.billMgr.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
+		if err := s.roundSettlementRepo.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
 			return fmt.Errorf("create round settlement and bill failed: %w", err)
 		}
 
@@ -515,7 +519,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 }
 
 func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDeductRequest, lockKey string) error {
-	exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
+	exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
 	if err != nil {
 		return fmt.Errorf("check exists failed: %w", err)
 	}
@@ -524,7 +528,7 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 	}
 
 	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.LaterRoundDeductLockTTL.Seconds()), func() error {
-		exists, err := s.billMgr.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
+		exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
 		if err != nil {
 			return fmt.Errorf("check exists failed: %w", err)
 		}
@@ -571,17 +575,17 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 		}
 		bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID)
 
-		if err := s.billMgr.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
+		if err := s.roundSettlementRepo.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
 			return fmt.Errorf("create round settlement and bill failed: %w", err)
 		}
 
 		if err := s.executeSingleDeduct(ctx, bill, req.Amount); err != nil {
-			s.billMgr.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusFailed, err.Error())
+			s.roundSettlementRepo.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusFailed, err.Error())
 			return err
 		}
 
 		now := time.Now()
-		s.billMgr.UpdateRoundSettlementDeductSuccess(ctx, roundTraceID, 1, now)
-		return s.billMgr.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusDeducted, "")
+		s.roundSettlementRepo.UpdateRoundSettlementDeductSuccess(ctx, roundTraceID, 1, now)
+		return s.roundSettlementRepo.UpdateRoundSettlementStatus(ctx, roundTraceID, dto.RoundStatusDeducted, "")
 	})
 }

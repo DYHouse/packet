@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"math/rand"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -210,7 +209,7 @@ func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roo
 	}
 
 	// 3. Calculate needed robots = MaxPlayers - seated count
-	maxPlayers := MaxPlayers
+	maxPlayers := domain.MaxPlayers
 	needed := maxPlayers - room.SeatedCount
 	maxAllowed := s.config.Scheduler.MaxRobotsPerRoom - len(existingRobots)
 	if needed > maxAllowed {
@@ -379,7 +378,7 @@ func (s *RobotSchedulerService) filterRoomsNeedingRobots(ctx context.Context, ro
 		return nil
 	}
 	minRealPlayers := s.config.Scheduler.MinRealPlayers
-	maxPlayers := MaxPlayers
+	maxPlayers := domain.MaxPlayers
 	result := make([]roomCandidate, 0, len(rooms))
 	for _, room := range rooms {
 		if room.ReadyPlayerCount < minRealPlayers {
@@ -520,15 +519,6 @@ func (s *RobotSchedulerService) ValidateReserveRatio(ctx context.Context) {
 			"ratio_max", ratioMax,
 		)
 	}
-}
-
-// randomDelay returns a uniform random duration in [min, max). If max <= min
-// min is returned unchanged.
-func (s *RobotSchedulerService) randomDelay(min, max time.Duration) time.Duration {
-	if max <= min {
-		return min
-	}
-	return min + time.Duration(rand.Int63n(int64(max-min)))
 }
 
 // scanRoomIDs scans Redis for keys matching the given pattern and extracts

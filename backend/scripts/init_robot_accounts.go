@@ -13,11 +13,33 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/application"
 	gameconfig "github.com/cashparty/backend/game/config"
+	"github.com/cashparty/backend/game/domain"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	settlementRedis "github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
+
+// robotAccountStoreAdapter 将 game 层的 domain.RobotAccountRepository 适配为
+// settlement/domain.RobotAccountStore 接口，避免 settlement → game 反向依赖。
+type robotAccountStoreAdapter struct {
+	repo domain.RobotAccountRepository
+}
+
+// GetVirtualBalance 根据 userID 查询机器人账户的虚拟余额。
+func (a *robotAccountStoreAdapter) GetVirtualBalance(ctx context.Context, userID int64) (int64, error) {
+	account, err := a.repo.GetByUserID(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return account.VirtualBalance, nil
+}
+
+// UpdateBalance 更新机器人账户的虚拟余额。
+func (a *robotAccountStoreAdapter) UpdateBalance(ctx context.Context, userID int64, balance int64) error {
+	return a.repo.UpdateBalance(ctx, userID, balance)
+}
 
 func main() {
 	count := flag.Int("count", 10, "Number of robot accounts to create")
@@ -69,8 +91,8 @@ func main() {
 	// 3. Create RobotAccountRepository
 	robotRepo := mysqlRepo.NewRobotAccountRepository(db)
 
-	// 4. Create VirtualBalanceService
-	virtualBalanceSvc := redis.NewVirtualBalanceService(redisClient, robotRepo)
+	// 4. Create VirtualBalanceService（settlement 层实现，通过适配器解耦）
+	virtualBalanceSvc := settlementRedis.NewVirtualBalanceRepository(redisClient, &robotAccountStoreAdapter{repo: robotRepo})
 
 	// 5. Create RobotPoolService
 	robotPoolSvc := redis.NewRobotPoolService(redisClient)

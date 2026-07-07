@@ -13,8 +13,10 @@ import (
 )
 
 type SettlementCheckScheduler struct {
-	base            *csched.BaseScheduler
-	settlementCheck *service.SettlementCheckService
+	base                       *csched.BaseScheduler
+	settlementCheck            *service.SettlementCheckService
+	deductedNotSettledLookback time.Duration
+	failedFirstRoundLookback   time.Duration
 }
 
 func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *SettlementCheckScheduler {
@@ -27,7 +29,9 @@ func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService
 	}
 
 	s := &SettlementCheckScheduler{
-		settlementCheck: settlementCheck,
+		settlementCheck:            settlementCheck,
+		deductedNotSettledLookback: cfg.DeductedNotSettledLookback,
+		failedFirstRoundLookback:   cfg.FailedFirstRoundLookback,
 	}
 	s.base = csched.NewBaseScheduler(config, s.execute, redis)
 	return s
@@ -40,11 +44,11 @@ func (s *SettlementCheckScheduler) Start(ctx context.Context) error {
 }
 
 func (s *SettlementCheckScheduler) execute(ctx context.Context) error {
-	if err := s.settlementCheck.CheckFirstRoundDeductFailure(ctx); err != nil {
+	if err := s.settlementCheck.CheckFirstRoundDeductFailure(ctx, time.Now().Add(-s.failedFirstRoundLookback)); err != nil {
 		logger.Error("check first round deduct failure failed", "error", err)
 		return err
 	}
-	if err := s.settlementCheck.CheckDeductedButNotSettled(ctx, time.Now().Add(-5*time.Minute)); err != nil {
+	if err := s.settlementCheck.CheckDeductedButNotSettled(ctx, time.Now().Add(-s.deductedNotSettledLookback)); err != nil {
 		logger.Error("check deducted but not settled failed", "error", err)
 		return err
 	}

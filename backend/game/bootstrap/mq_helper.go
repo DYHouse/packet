@@ -9,8 +9,6 @@ import (
 	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/broadcast"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
-	settlementService "github.com/cashparty/backend/settlement/service"
-	"gorm.io/gorm"
 )
 
 // createKafkaProducer 构造 game 服务的 Kafka Producer。
@@ -46,12 +44,11 @@ func createRoomEventConsumer(
 
 // createGameEventConsumer 构造 GameEventConsumer。
 // GroupID 使用 per-node 策略：`game-events-{nodeID}`。
+// 业务编排逻辑通过 handler 注入，consumer 仅做消息解析与转发。
 func createGameEventConsumer(
 	cfg *gameconfig.Config,
-	db *gorm.DB,
 	redis *cRedis.Client,
-	settlementSvc *settlementService.SettlementService,
-	robotBehaviorEngine messaging.RobotBehaviorEngineInterface,
+	handler messaging.GameEventHandlerInterface,
 	nodeID string,
 ) (*messaging.GameEventConsumer, error) {
 	consumerCfg := kafka.NewConsumerConfig(
@@ -59,7 +56,7 @@ func createGameEventConsumer(
 		kafka.TopicGameEvents,
 		fmt.Sprintf("game-events-%s", nodeID),
 	)
-	return messaging.NewGameEventConsumer(db, redis, settlementSvc, robotBehaviorEngine, consumerCfg)
+	return messaging.NewGameEventConsumer(redis, handler, consumerCfg)
 }
 
 // createBroadcaster 构造 GameBroadcaster。

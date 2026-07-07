@@ -21,14 +21,9 @@ func NewGameEventPublisher(producer *kafka.Producer) *GameEventPublisher {
 	}
 }
 
-// PublishGameEvent 实现 domain.EventPublisher 接口。
+// PublishGameEvent 实现 domain.GameEventPublisher 接口。
 func (p *GameEventPublisher) PublishGameEvent(ctx context.Context, event *domain.GameEvent) error {
 	return p.publish(ctx, event)
-}
-
-// PublishRoomEvent 实现 domain.EventPublisher 接口，但 GameEventPublisher 不支持发布 RoomEvent。
-func (p *GameEventPublisher) PublishRoomEvent(ctx context.Context, event *domain.RoomEvent) error {
-	return fmt.Errorf("GameEventPublisher does not support PublishRoomEvent")
 }
 
 // PublishSessionStart 发布会话开始事件（语义化包装）。

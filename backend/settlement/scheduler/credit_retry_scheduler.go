@@ -15,6 +15,7 @@ import (
 type CreditRetryScheduler struct {
 	base        *csched.BaseScheduler
 	creditRetry *service.CreditRetryService
+	limit       int
 }
 
 func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *CreditRetryScheduler {
@@ -28,6 +29,7 @@ func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis *cRe
 
 	s := &CreditRetryScheduler{
 		creditRetry: creditRetry,
+		limit:       cfg.Limit,
 	}
 	s.base = csched.NewBaseScheduler(config, s.execute, redis)
 	return s
@@ -40,7 +42,7 @@ func (s *CreditRetryScheduler) Start(ctx context.Context) error {
 }
 
 func (s *CreditRetryScheduler) execute(ctx context.Context) error {
-	bills, err := s.creditRetry.GetRetryableCredits(ctx, 100)
+	bills, err := s.creditRetry.GetRetryableCredits(ctx, s.limit)
 	if err != nil {
 		logger.Error("get retryable credits failed", "error", err)
 		return err

@@ -7,26 +7,33 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/game/infrastructure/persistence/mysql"
+	"github.com/cashparty/backend/settlement/domain"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// VirtualBalanceService 虚拟余额服务
-type VirtualBalanceService struct {
+// VirtualBalanceRepository 虚拟余额仓储实现
+// 从 game/infrastructure/persistence/redis/virtual_balance.go 迁移而来，
+// 收敛所有虚拟余额 Redis 操作到 settlement 层。
+//
+// 行为约束（与原 game 层实现完全一致）：
+//   - Redis Key 仍引用 common/rediskeys 常量（经 settlement/infrastructure/persistence/redis/keys.go re-export）
+//   - dirty 标志读写次序完全保持不变
+//   - IncBy + SAdd 的非原子性保持不变（本次仅做位置迁移，不做原子性修复）
+type VirtualBalanceRepository struct {
 	redis *cRedis.Client
-	repo  *mysql.RobotAccountRepository
+	repo  domain.RobotAccountStore
 }
 
-// NewVirtualBalanceService 创建虚拟余额服务实例
-func NewVirtualBalanceService(redis *cRedis.Client, repo *mysql.RobotAccountRepository) *VirtualBalanceService {
-	return &VirtualBalanceService{
+// NewVirtualBalanceRepository 创建虚拟余额仓储实例
+func NewVirtualBalanceRepository(redis *cRedis.Client, repo domain.RobotAccountStore) *VirtualBalanceRepository {
+	return &VirtualBalanceRepository{
 		redis: redis,
 		repo:  repo,
 	}
 }
 
 // Credit 虚拟入账（原子操作）
-func (s *VirtualBalanceService) Credit(ctx context.Context, userID int64, amount int64) error {
+func (s *VirtualBalanceRepository) Credit(ctx context.Context, userID int64, amount int64) error {
 	key := RobotVirtualBalanceKey(userID)
 	if _, err := s.redis.IncrBy(ctx, key, amount).Result(); err != nil {
 		return err
@@ -38,7 +45,7 @@ func (s *VirtualBalanceService) Credit(ctx context.Context, userID int64, amount
 }
 
 // GetBalance 查询虚拟余额
-func (s *VirtualBalanceService) GetBalance(ctx context.Context, userID int64) (int64, error) {
+func (s *VirtualBalanceRepository) GetBalance(ctx context.Context, userID int64) (int64, error) {
 	key := RobotVirtualBalanceKey(userID)
 	balance, err := s.redis.Get(ctx, key).Int64()
 	if err == nil {
@@ -48,14 +55,14 @@ func (s *VirtualBalanceService) GetBalance(ctx context.Context, userID int64) (i
 		return 0, err
 	}
 	// 缓存未命中，从DB加载
-	account, err := s.repo.GetByUserID(ctx, userID)
+	balance, err = s.repo.GetVirtualBalance(ctx, userID)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.redis.Set(ctx, key, account.VirtualBalance, 0).Err(); err != nil {
+	if err := s.redis.Set(ctx, key, balance, 0).Err(); err != nil {
 		return 0, err
 	}
-	return account.VirtualBalance, nil
+	return balance, nil
 }
 
 // SyncToDB 批量同步脏数据到DB（由定时任务调用）
@@ -65,7 +72,7 @@ func (s *VirtualBalanceService) GetBalance(ctx context.Context, userID int64) (i
 //  2. Del 会丢失循环中 DB 更新失败被 continue 跳过的成员
 //
 // SPOP 保证每个成员只被消费一次；处理失败时重新 SAdd 回 dirtyKey 等下次重试。
-func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
+func (s *VirtualBalanceRepository) SyncToDB(ctx context.Context) error {
 	dirtyKey := RobotVirtualBalanceDirtyKey()
 
 	for {
@@ -103,16 +110,16 @@ func (s *VirtualBalanceService) SyncToDB(ctx context.Context) error {
 }
 
 // AddToRobotSet 添加到机器人ID集合（供RobotChecker使用）
-func (s *VirtualBalanceService) AddToRobotSet(ctx context.Context, userID int64) error {
+func (s *VirtualBalanceRepository) AddToRobotSet(ctx context.Context, userID int64) error {
 	return s.redis.SAdd(ctx, RobotUserIDsKey(), converter.FormatID(userID)).Err()
 }
 
 // IsRobot 判断是否为机器人
-func (s *VirtualBalanceService) IsRobot(ctx context.Context, userID int64) (bool, error) {
+func (s *VirtualBalanceRepository) IsRobot(ctx context.Context, userID int64) (bool, error) {
 	return s.redis.SIsMember(ctx, RobotUserIDsKey(), converter.FormatID(userID)).Result()
 }
 
 // SetBalance 设置虚拟余额（初始化时使用）
-func (s *VirtualBalanceService) SetBalance(ctx context.Context, userID int64, balance int64) error {
+func (s *VirtualBalanceRepository) SetBalance(ctx context.Context, userID int64, balance int64) error {
 	return s.redis.Set(ctx, RobotVirtualBalanceKey(userID), balance, 0).Err()
 }

@@ -9,16 +9,19 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	csched "github.com/cashparty/backend/common/scheduler"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/service"
 )
 
 type GameSettleTimeoutScheduler struct {
-	base          *csched.BaseScheduler
-	billMgr       *service.BillManager
-	gameSettleSvc *service.GameSettleService
+	base                *csched.BaseScheduler
+	roundSettlementRepo domain.RoundSettlementRepository
+	gameSettleSvc       *service.GameSettleReportingService
+	timeoutDuration     time.Duration
+	limit               int
 }
 
-func NewGameSettleTimeoutScheduler(billMgr *service.BillManager, gameSettleSvc *service.GameSettleService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleTimeoutScheduler {
+func NewGameSettleTimeoutScheduler(roundSettlementRepo domain.RoundSettlementRepository, gameSettleSvc *service.GameSettleReportingService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleTimeoutScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "game_settle_timeout",
 		Interval:     cfg.Interval,
@@ -28,8 +31,10 @@ func NewGameSettleTimeoutScheduler(billMgr *service.BillManager, gameSettleSvc *
 	}
 
 	s := &GameSettleTimeoutScheduler{
-		billMgr:       billMgr,
-		gameSettleSvc: gameSettleSvc,
+		roundSettlementRepo: roundSettlementRepo,
+		gameSettleSvc:       gameSettleSvc,
+		timeoutDuration:     cfg.TimeoutDuration,
+		limit:               cfg.Limit,
 	}
 	s.base = csched.NewBaseScheduler(config, s.execute, redis)
 	return s
@@ -42,8 +47,8 @@ func (s *GameSettleTimeoutScheduler) Start(ctx context.Context) error {
 }
 
 func (s *GameSettleTimeoutScheduler) execute(ctx context.Context) error {
-	// Find games where all rounds are credited but game settle not done for over 1 hour
-	sessionIDs, err := s.billMgr.GetTimedOutGameSettlements(ctx, 1*time.Hour, 100)
+	// 查找所有回合已入账但游戏结算超过 timeoutDuration 未完成的会话
+	sessionIDs, err := s.roundSettlementRepo.GetTimedOutGameSettlements(ctx, s.timeoutDuration, s.limit)
 	if err != nil {
 		logger.Error("get timed out game settlements failed", "error", err)
 		return err

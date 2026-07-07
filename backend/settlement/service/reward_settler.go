@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -24,15 +25,15 @@ func DefaultRewardSettlementConfig() *RewardSettlementConfig {
 
 type RewardSettler struct {
 	config       *RewardSettlementConfig
-	billMgr      *BillManager
+	billRepo     domain.BillRepository
 	traceIDGen   *TraceIDGenerator
 	robotChecker RobotChecker
 }
 
-func NewRewardSettler(rewardCfg *RewardSettlementConfig, billMgr *BillManager, traceIDGen *TraceIDGenerator, robotChecker RobotChecker) *RewardSettler {
+func NewRewardSettler(rewardCfg *RewardSettlementConfig, billRepo domain.BillRepository, traceIDGen *TraceIDGenerator, robotChecker RobotChecker) *RewardSettler {
 	return &RewardSettler{
 		config:       rewardCfg,
-		billMgr:      billMgr,
+		billRepo:     billRepo,
 		traceIDGen:   traceIDGen,
 		robotChecker: robotChecker,
 	}
@@ -66,7 +67,7 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 	// 幂等检查：若平台支出 bill 已存在且成功，视为已结算，直接返回 nil。
 	// 防止 Kafka 重试时 SettleRound 上抛 err 触发重试，导致 reward bills 被重复创建。
 	// 与 creditRound 中 GetBillByRoundTypeAndUser 跳过已成功 grab bill 的模式一致。
-	existingBill, err := s.billMgr.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeSystemReward, dto.PlatformAccountID)
+	existingBill, err := s.billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeSystemReward, dto.PlatformAccountID)
 	if err == nil && existingBill != nil && existingBill.Status == dto.BillStatusSuccess {
 		return nil
 	}
@@ -108,5 +109,5 @@ func (s *RewardSettler) SettleReward(ctx context.Context, settlement *model.Roun
 		allBills = append(allBills, playerBill)
 	}
 
-	return s.billMgr.CreateBillsInTransaction(ctx, allBills)
+	return s.billRepo.CreateBillsInTransaction(ctx, allBills)
 }

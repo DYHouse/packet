@@ -8,9 +8,10 @@ import (
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/utils"
-	"github.com/cashparty/backend/game/infrastructure/persistence/mysql"
+	"github.com/cashparty/backend/game/domain"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/game/model"
+	settlementDomain "github.com/cashparty/backend/settlement/domain"
 )
 
 // defaultRoomFee is the room fee used to calculate the initial virtual balance
@@ -27,18 +28,18 @@ const (
 // RobotAccountService manages the lifecycle of robot accounts including
 // creation, status transitions, virtual balance operations and lookups.
 type RobotAccountService struct {
-	repo           *mysql.RobotAccountRepository
+	repo           domain.RobotAccountRepository
 	userSvc        *UserService
-	virtualBalance *redis.VirtualBalanceService
+	virtualBalance settlementDomain.VirtualBalanceService
 	robotPool      *redis.RobotPoolService
 	avatarCfg      *config.AvatarConfig
 }
 
 // NewRobotAccountService creates a new RobotAccountService instance.
 func NewRobotAccountService(
-	repo *mysql.RobotAccountRepository,
+	repo domain.RobotAccountRepository,
 	userSvc *UserService,
-	virtualBalance *redis.VirtualBalanceService,
+	virtualBalance settlementDomain.VirtualBalanceService,
 	robotPool *redis.RobotPoolService,
 	avatarCfg *config.AvatarConfig,
 ) *RobotAccountService {

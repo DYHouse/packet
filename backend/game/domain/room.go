@@ -9,6 +9,9 @@ const (
 	RoomStatusInterrupted RoomStatus = 4
 )
 
+// MaxPlayers 单个房间允许的最大玩家数。
+const MaxPlayers = 5
+
 type RoomMeta struct {
 	RoomID           string
 	RoomNo           string

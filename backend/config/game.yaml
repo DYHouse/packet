@@ -11,20 +11,26 @@ timeout:
   replace: 30s
   robot: 5s
   check_interval: 1s
+  handler_timeout: 30s
 
 settlement_scheduler:
   credit_retry:
     interval: 30s
     initial_delay: 10s
     lock_ttl: 60
+    limit: 100
   settlement_check:
     interval: 5m
     initial_delay: 1m
     lock_ttl: 300
+    deducted_not_settled_lookback: 5m
+    failed_first_round_lookback: 10m
   refund_process:
     interval: 1m
     initial_delay: 30s
     lock_ttl: 120
+    limit: 100
+    offset: 0
   game_settle_retry:
     interval: 30s
     initial_delay: 15s
@@ -33,6 +39,8 @@ settlement_scheduler:
     interval: 5m
     initial_delay: 1m
     lock_ttl: 300
+    timeout_duration: 1h
+    limit: 100
 
 lock:
   first_round_deduct_lock_ttl: 60s
