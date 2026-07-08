@@ -7,7 +7,6 @@ import (
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/logger"
-	"github.com/cashparty/backend/common/utils"
 	"github.com/cashparty/backend/game/application"
 	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
@@ -61,7 +60,7 @@ func (s *RobotAccountService) BatchCreateRobotsWithBalance(ctx context.Context, 
 
 		avatar := ""
 		if s.avatarCfg != nil {
-			avatar = utils.GetRandomAvatar(s.avatarCfg.BaseURL, s.avatarCfg.DefaultCount)
+			avatar = application.GetRandomAvatar(s.avatarCfg.BaseURL, s.avatarCfg.DefaultCount)
 		}
 
 		formattedID, savedAvatar, err := s.userSvc.SaveUser(ctx, robotUserID, nickname, avatar, "", "")

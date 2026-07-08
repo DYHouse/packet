@@ -8,7 +8,6 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
-	"github.com/cashparty/backend/common/utils"
 	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 )
@@ -44,7 +43,7 @@ func (s *UserService) SaveUser(ctx context.Context, userID, nickname, avatar, ip
 	}
 
 	if avatar == "" && s.avatarCfg != nil {
-		avatar = utils.GetRandomAvatar(s.avatarCfg.BaseURL, s.avatarCfg.DefaultCount)
+		avatar = GetRandomAvatar(s.avatarCfg.BaseURL, s.avatarCfg.DefaultCount)
 	}
 
 	newUser, err := model.NewUser(s.idGen, userID, nickname, avatar, ip, deviceID)

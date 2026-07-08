@@ -225,7 +225,7 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	connID := connection.GenerateConnID()
 	conn := connection.NewConnection(connID, wsConn, s.config.SendQueueSize)
-	conn.IP = utils.GetClientIP(c.Request)
+	conn.IP = connection.GetClientIP(c.Request)
 	conn.UserAgent = c.Request.UserAgent()
 
 	ctx := context.Background()

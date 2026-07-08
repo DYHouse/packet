@@ -5,6 +5,7 @@ import (
 )
 
 var (
-	// 虚拟余额（1）
+	// 虚拟余额（2）
 	DeductBalance = cRedis.NewScript("deduct_balance", luaDeductBalance)
+	CreditBalance = cRedis.NewScript("credit_balance", luaCreditBalance)
 )

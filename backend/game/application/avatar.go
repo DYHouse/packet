@@ -1,4 +1,4 @@
-package utils
+package application
 
 import (
 	"crypto/rand"
@@ -6,6 +6,8 @@ import (
 	"math/big"
 )
 
+// GetRandomAvatar 根据基础URL和头像数量随机返回一个头像URL
+// 使用 crypto/rand 保证安全随机性（规约 §6.4）
 func GetRandomAvatar(baseURL string, count int) string {
 	if baseURL == "" || count <= 0 {
 		return ""

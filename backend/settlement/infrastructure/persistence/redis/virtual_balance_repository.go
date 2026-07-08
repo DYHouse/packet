@@ -18,11 +18,11 @@ import (
 // 从 game/infrastructure/persistence/redis/virtual_balance.go 迁移而来，
 // 收敛所有虚拟余额 Redis 操作到 settlement 层。
 //
-// 行为约束（与原 game 层实现完全一致）：
-//   - Redis Key 仍引用 common/rediskeys 常量（经 settlement/infrastructure/persistence/redis/keys.go re-export）
-//   - dirty 标志读写次序完全保持不变
+// 行为约束：
+//   - Redis Key 引用 common/rediskeys 常量
+//   - dirty 标志读写次序与原 game 层实现一致
 //   - Deduct 通过 luaDeductBalance 脚本原子执行 INCRBY + SADD（消除竞态）
-//   - Credit 的 IncBy + SAdd 非原子性保持不变（仅做位置迁移，不做原子性修复）
+//   - Credit 通过 luaCreditBalance 脚本原子执行 INCRBY + SADD（消除竞态）
 type VirtualBalanceRepository struct {
 	redis cRedis.RedisClient
 	repo  domain.RobotAccountStore
@@ -52,14 +52,14 @@ func (s *VirtualBalanceRepository) Deduct(ctx context.Context, userID int64, amo
 	return nil
 }
 
-// Credit 虚拟入账（原子操作）
+// Credit 虚拟入账（Lua 原子操作）
+// 通过 luaCreditBalance 脚本原子执行 "INCRBY + SADD"，消除原 Go 代码两步之间的竞态
+// （INCRBY 成功但 SADD 失败时 dirty 标志丢失，导致 SyncToDB 漏同步该用户余额）。
 func (s *VirtualBalanceRepository) Credit(ctx context.Context, userID int64, amount int64) error {
 	key := rediskeys.RobotVirtualBalanceKey(userID)
-	if _, err := s.redis.IncrBy(ctx, key, amount).Result(); err != nil {
-		return err
-	}
-	if err := s.redis.SAdd(ctx, rediskeys.RobotVirtualBalanceDirtyKey(), converter.FormatID(userID)).Err(); err != nil {
-		return err
+	dirtyKey := rediskeys.RobotVirtualBalanceDirtyKey()
+	if _, err := scripts.CreditBalance.Run(ctx, s.redis, []string{key, dirtyKey}, amount, converter.FormatID(userID)).Result(); err != nil {
+		return fmt.Errorf("credit virtual balance failed: %w", err)
 	}
 	return nil
 }

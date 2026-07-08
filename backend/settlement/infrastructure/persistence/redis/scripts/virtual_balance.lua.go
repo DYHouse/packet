@@ -22,3 +22,21 @@ end
 redis.call('SADD', KEYS[2], ARGV[2])
 return 1
 `
+
+// luaCreditBalance 原子入账虚拟余额 Lua 脚本
+// KEYS[1] = 机器人虚拟余额 key (cashparty:robot:virtual_balance:{userID})
+// KEYS[2] = 脏数据集合 key (cashparty:robot:virtual_balance:dirty)
+// ARGV[1] = 入账金额（正数）
+// ARGV[2] = userID 字符串（用于加入脏数据集合）
+//
+// 返回值：
+//
+//	1 = 入账成功
+//
+// 脚本在 Redis 单线程中原子执行 "INCRBY + SADD"，消除原 Go 代码两步之间的竞态
+// （INCRBY 成功但 SADD 失败时 dirty 标志丢失，导致 SyncToDB 漏同步该用户余额）。
+const luaCreditBalance = `
+redis.call('INCRBY', KEYS[1], ARGV[1])
+redis.call('SADD', KEYS[2], ARGV[2])
+return 1
+`

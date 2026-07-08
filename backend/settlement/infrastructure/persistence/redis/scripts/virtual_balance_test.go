@@ -126,3 +126,78 @@ func TestLuaDeductBalance_Concurrent(t *testing.T) {
 		t.Fatalf("expect balance %d, got %s", expect, balance)
 	}
 }
+
+// TestLuaCreditBalance_Basic 基本入账：余额 100 入账 50，返回 1，余额变为 150，
+// 并将 userID 加入 dirty 集合。
+func TestLuaCreditBalance_Basic(t *testing.T) {
+	cRedis.SetUseEvalSHA(false)
+	ctx := context.Background()
+	client, mr := newTestClient(t)
+
+	mr.Set(testBalanceKey, "100")
+
+	keys := []string{testBalanceKey, testDirtyKey}
+	res, err := CreditBalance.Run(ctx, client, keys, 50, testUserID).Result()
+	if err != nil {
+		t.Fatalf("CreditBalance run failed: %v", err)
+	}
+	if got := res.(int64); got != 1 {
+		t.Fatalf("expect result 1 (success), got %d", got)
+	}
+
+	if balance, _ := mr.Get(testBalanceKey); balance != "150" {
+		t.Fatalf("expect balance 150, got %s", balance)
+	}
+
+	if ok, _ := mr.IsMember(testDirtyKey, testUserID); !ok {
+		t.Fatalf("expect dirty set contains %s", testUserID)
+	}
+}
+
+// TestLuaCreditBalance_NoExistingKey key 不存在时入账：相当于从 0 入账 200，余额变为 200。
+func TestLuaCreditBalance_NoExistingKey(t *testing.T) {
+	cRedis.SetUseEvalSHA(false)
+	ctx := context.Background()
+	client, mr := newTestClient(t)
+
+	keys := []string{testBalanceKey, testDirtyKey}
+	res, err := CreditBalance.Run(ctx, client, keys, 200, testUserID).Result()
+	if err != nil {
+		t.Fatalf("CreditBalance run failed: %v", err)
+	}
+	if got := res.(int64); got != 1 {
+		t.Fatalf("expect result 1 (success), got %d", got)
+	}
+
+	if balance, _ := mr.Get(testBalanceKey); balance != "200" {
+		t.Fatalf("expect balance 200, got %s", balance)
+	}
+}
+
+// TestLuaCreditBalance_Concurrent 并发安全：10 个 goroutine 各入账 100，
+// 验证最终余额为 1000 且 dirty 集合包含 userID（只入一次，集合幂等）。
+func TestLuaCreditBalance_Concurrent(t *testing.T) {
+	cRedis.SetUseEvalSHA(false)
+	ctx := context.Background()
+	client, mr := newTestClient(t)
+
+	keys := []string{testBalanceKey, testDirtyKey}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = CreditBalance.Run(ctx, client, keys, 100, testUserID).Result()
+		}()
+	}
+	wg.Wait()
+
+	if balance, _ := mr.Get(testBalanceKey); balance != "1000" {
+		t.Fatalf("expect balance 1000, got %s", balance)
+	}
+
+	if ok, _ := mr.IsMember(testDirtyKey, testUserID); !ok {
+		t.Fatalf("expect dirty set contains %s", testUserID)
+	}
+}
