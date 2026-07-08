@@ -17,6 +17,7 @@ import (
 	"github.com/cashparty/backend/gateway/handler"
 	"github.com/cashparty/backend/gateway/health"
 	"github.com/cashparty/backend/gateway/middleware"
+	"github.com/cashparty/backend/gateway/protocol"
 	"github.com/cashparty/backend/gateway/router"
 	"github.com/cashparty/backend/gateway/service"
 	"github.com/gin-gonic/gin"
@@ -385,7 +386,7 @@ func (s *Server) cleanupConnection(conn *connection.Connection) {
 }
 
 func (s *Server) sendError(conn *connection.Connection, cmd, requestID string, code int) {
-	resp := message.NewErrorResponse(cmd, requestID, code)
+	resp := protocol.NewErrorResponse(cmd, requestID, code)
 	data, _ := resp.ToJSON()
 	conn.Send(data)
 }

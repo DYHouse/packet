@@ -8,49 +8,49 @@ import (
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/trace"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/events"
 )
 
 type GameEventPublisher struct {
-	producer *kafka.Producer
+	producer kafka.KafkaProducer
 }
 
-func NewGameEventPublisher(producer *kafka.Producer) *GameEventPublisher {
+func NewGameEventPublisher(producer kafka.KafkaProducer) *GameEventPublisher {
 	return &GameEventPublisher{
 		producer: producer,
 	}
 }
 
-// PublishGameEvent 实现 domain.GameEventPublisher 接口。
-func (p *GameEventPublisher) PublishGameEvent(ctx context.Context, event *domain.GameEvent) error {
+// PublishGameEvent 实现 events.GameEventPublisher 接口。
+func (p *GameEventPublisher) PublishGameEvent(ctx context.Context, event *events.GameEvent) error {
 	return p.publish(ctx, event)
 }
 
 // PublishSessionStart 发布会话开始事件（语义化包装）。
-func (p *GameEventPublisher) PublishSessionStart(ctx context.Context, event *domain.GameEvent) error {
-	event.EventType = domain.GameEventSessionStart
+func (p *GameEventPublisher) PublishSessionStart(ctx context.Context, event *events.GameEvent) error {
+	event.EventType = events.GameEventSessionStart
 	return p.publish(ctx, event)
 }
 
 // PublishPacketCreated 发布红包创建事件（语义化包装）。
-func (p *GameEventPublisher) PublishPacketCreated(ctx context.Context, event *domain.GameEvent) error {
-	event.EventType = domain.GameEventPacketCreated
+func (p *GameEventPublisher) PublishPacketCreated(ctx context.Context, event *events.GameEvent) error {
+	event.EventType = events.GameEventPacketCreated
 	return p.publish(ctx, event)
 }
 
 // PublishRoundSettle 发布单轮结算事件（语义化包装）。
-func (p *GameEventPublisher) PublishRoundSettle(ctx context.Context, event *domain.GameEvent) error {
-	event.EventType = domain.GameEventRoundSettle
+func (p *GameEventPublisher) PublishRoundSettle(ctx context.Context, event *events.GameEvent) error {
+	event.EventType = events.GameEventRoundSettle
 	return p.publish(ctx, event)
 }
 
 // PublishSessionEnd 发布会话结束事件（语义化包装）。
-func (p *GameEventPublisher) PublishSessionEnd(ctx context.Context, event *domain.GameEvent) error {
-	event.EventType = domain.GameEventSessionEnd
+func (p *GameEventPublisher) PublishSessionEnd(ctx context.Context, event *events.GameEvent) error {
+	event.EventType = events.GameEventSessionEnd
 	return p.publish(ctx, event)
 }
 
-func (p *GameEventPublisher) publish(ctx context.Context, event *domain.GameEvent) error {
+func (p *GameEventPublisher) publish(ctx context.Context, event *events.GameEvent) error {
 	// 优先使用 event 已有的 TraceID（GameAppService 显式设置的确定性 TraceID，同时作为 Consumer 幂等键）；
 	// 其次从 context 提取 TraceID（实现端到端追踪）；
 	// 两者都为空时自动生成（兜底，避免阻塞消息发送）。

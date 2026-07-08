@@ -16,7 +16,12 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/game"
+	"github.com/cashparty/backend/game/domain/push"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/reward"
+	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/scheduler"
 )
@@ -25,29 +30,29 @@ import (
 // 在游戏结束时通过异步任务回调 GameLifecycleService.EndGameWithOptions。
 // 从 GameAppService 拆分（Phase 2.1），保持原有业务逻辑完全不变。
 type RoundSettlementService struct {
-	repo           domain.RoomRepository
-	broadcaster    domain.Broadcaster
-	eventPublisher domain.GameEventPublisher
-	redis          *cRedis.Client
-	commissionCfg  *domain.CommissionConfig
+	repo           repository.RoomRepository
+	broadcaster    events.Broadcaster
+	eventPublisher events.GameEventPublisher
+	redis          cRedis.RedisClient
+	commissionCfg  *game.CommissionConfig
 	timeoutCfg     *config.TimeoutConfig
 	lockCfg        *config.LockConfig
 	scheduler      *scheduler.TimeoutScheduler
-	taskRunner     *async.TaskRunner
+	taskRunner     async.TaskRunner
 	idGen          idgen.IDGenerator
 	gameEnder      GameEnder
 }
 
 // NewRoundSettlementService 创建单局结算服务。
 func NewRoundSettlementService(
-	repo domain.RoomRepository,
-	broadcaster domain.Broadcaster,
-	eventPublisher domain.GameEventPublisher,
-	redisClient *cRedis.Client,
+	repo repository.RoomRepository,
+	broadcaster events.Broadcaster,
+	eventPublisher events.GameEventPublisher,
+	redisClient cRedis.RedisClient,
 	timeoutCfg *config.TimeoutConfig,
 	lockCfg *config.LockConfig,
 	schedulerInst *scheduler.TimeoutScheduler,
-	taskRunner *async.TaskRunner,
+	taskRunner async.TaskRunner,
 	idGen idgen.IDGenerator,
 ) *RoundSettlementService {
 	if lockCfg == nil {
@@ -59,7 +64,7 @@ func NewRoundSettlementService(
 		broadcaster:    broadcaster,
 		eventPublisher: eventPublisher,
 		redis:          redisClient,
-		commissionCfg:  domain.DefaultCommissionConfig(),
+		commissionCfg:  game.DefaultCommissionConfig(),
 		timeoutCfg:     timeoutCfg,
 		lockCfg:        lockCfg,
 		scheduler:      schedulerInst,
@@ -78,22 +83,22 @@ func (s *RoundSettlementService) SetGameEnder(e GameEnder) {
 // 该方法由 GameAppService.GrabPacket/OnRobotGrabbed（通过异步任务）和
 // GameLifecycleService.OnGrabTimeout（同步调用）触发。
 func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundID string) {
-	lockKey := redis.SettleLockKey(roomID, roundID)
+	lockKey := rediskeys.SettleLockKey(roomID, roundID)
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.GameAppSettleLockTTL.Seconds()), func() error {
+	err := lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.GameAppSettleLockTTL.Seconds()), func() error {
 		meta, _ := s.repo.GetRoomMeta(ctx, roomID)
 
 		var sessionPlayerTotalsKey string
 		if meta != nil && meta.CurrentSessionID != "" {
-			sessionPlayerTotalsKey = redis.SessionPlayerTotalsKey(meta.CurrentSessionID)
+			sessionPlayerTotalsKey = rediskeys.SessionPlayerTotalsKey(meta.CurrentSessionID)
 		}
 
 		keys := []string{
-			redis.RoundStateKey(roundID),
-			redis.RoundGrabbersKey(roundID),
-			redis.RoomPlayersKey(roomID),
-			redis.RoomHashKey(roomID),
-			redis.RoundAvailablePacketsKey(roundID),
+			rediskeys.RoundStateKey(roundID),
+			rediskeys.RoundGrabbersKey(roundID),
+			rediskeys.RoomPlayersKey(roomID),
+			rediskeys.RoomHashKey(roomID),
+			rediskeys.RoundAvailablePacketsKey(roundID),
 			sessionPlayerTotalsKey,
 		}
 
@@ -125,14 +130,14 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 		minAmountPlayer := converter.ParseString(res[4])
 		isGameEnd := converter.ParseInt(res[5]) == 1
 
-		var results []message.RoundResult
+		var results []push.RoundEndResult
 		if len(res) > 6 {
 			if arr, ok := res[6].([]interface{}); ok {
 				for _, item := range arr {
 					if tuple, ok := item.([]interface{}); ok && len(tuple) >= 7 {
 						isAutoAssigned := converter.ParseInt(tuple[5]) == 1
 						packetID := converter.ParseInt64(tuple[6])
-						results = append(results, message.RoundResult{
+						results = append(results, push.RoundEndResult{
 							UserID:         converter.ParseString(tuple[0]),
 							Amount:         currency.NewMoneyFromFen(converter.ParseInt64(tuple[1])),
 							Nickname:       converter.ParseString(tuple[2]),
@@ -162,12 +167,12 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 			rewardAmount = converter.ParseInt64(res[8])
 		}
 
-		var finalResults []message.GameResult
+		var finalResults []push.GameResult
 		if isGameEnd && len(res) > 9 {
 			if arr, ok := res[9].([]interface{}); ok {
 				for _, item := range arr {
 					if tuple, ok := item.([]interface{}); ok && len(tuple) >= 5 {
-						finalResults = append(finalResults, message.GameResult{
+						finalResults = append(finalResults, push.GameResult{
 							UserID:      converter.ParseString(tuple[0]),
 							Nickname:    converter.ParseString(tuple[1]),
 							Avatar:      converter.ParseString(tuple[2]),
@@ -182,7 +187,7 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 		logger.Info("reward from redis", "rewardType", rewardType, "rewardAmount", rewardAmount)
 
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(ctx, roomID, message.PushRoundEnd, &message.RoundEndPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushRoundEnd, &push.RoundEndPush{
 				RoomID:          roomID,
 				RoundID:         roundID,
 				CurrentRound:    int32(roundNo),
@@ -200,9 +205,9 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 		}
 
 		if s.eventPublisher != nil && meta != nil {
-			roundResults := make([]*domain.RoundResult, 0, len(results))
+			roundResults := make([]*events.RoundResult, 0, len(results))
 			for _, r := range results {
-				roundResults = append(roundResults, &domain.RoundResult{
+				roundResults = append(roundResults, &events.RoundResult{
 					UserID:         r.UserID,
 					PacketID:       r.PacketID,
 					Position:       int(r.Position),
@@ -229,14 +234,14 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 					"error", err,
 				)
 			}
-			event := &domain.GameEvent{
+			event := &events.GameEvent{
 				EventHeader: message.NewEventHeader(roundSettleTraceID),
 				RoomID:      roomID,
 				SessionID:   meta.CurrentSessionID,
 				RoundID:     roundID,
-				EventType:   domain.GameEventRoundSettle,
+				EventType:   events.GameEventRoundSettle,
 			}
-			_ = event.SetPayload(&domain.RoundSettleData{
+			_ = event.SetPayload(&events.RoundSettleData{
 				RoundNo:          roundNo,
 				SenderID:         senderID,
 				SenderType:       senderType,
@@ -261,11 +266,11 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 		}
 
 		if isGameEnd {
-			var finalResultsForEvent []*domain.FinalResult
+			var finalResultsForEvent []*events.FinalResult
 			if meta != nil {
-				finalResultsForEvent = make([]*domain.FinalResult, 0, len(finalResults))
+				finalResultsForEvent = make([]*events.FinalResult, 0, len(finalResults))
 				for _, r := range finalResults {
-					finalResultsForEvent = append(finalResultsForEvent, &domain.FinalResult{
+					finalResultsForEvent = append(finalResultsForEvent, &events.FinalResult{
 						UserID:      r.UserID,
 						Nickname:    r.Nickname,
 						TotalProfit: r.TotalProfit.Fen(),
@@ -282,7 +287,7 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 			if err := s.taskRunner.Submit("end_game_on_settle", 15*time.Second, func(ctx context.Context) {
 				if s.gameEnder != nil {
 					if err := s.gameEnder.EndGameWithOptions(ctx, roomID, &EndGameOptions{
-						AllowedStatus: int(domain.RoomStatusPlaying),
+						AllowedStatus: int(room.RoomStatusPlaying),
 						EndReason:     message.ReasonNormalEnd,
 						SessionID:     sessionID,
 						ActualRounds:  roundNo,
@@ -308,7 +313,7 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 						sendDuration = 30 * time.Second
 					}
 				}
-				if rewardType == domain.RewardTypeStraight {
+				if rewardType == reward.RewardTypeStraight {
 					sendDuration += 5 * time.Second
 				}
 				s.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeSend, roomID, minAmountPlayer, sendDuration)

@@ -18,7 +18,7 @@ const (
 )
 
 // newTestClient 启动一个 miniredis 实例并返回包装好的 cRedis.Client。
-func newTestClient(t *testing.T) (*cRedis.Client, *miniredis.Miniredis) {
+func newTestClient(t *testing.T) (cRedis.RedisClient, *miniredis.Miniredis) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {

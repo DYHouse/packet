@@ -8,32 +8,32 @@ import (
 	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/trace"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/events"
 )
 
 type RoomEventPublisher struct {
-	producer *kafka.Producer
+	producer kafka.KafkaProducer
 	topic    string
 }
 
-func NewRoomEventPublisher(producer *kafka.Producer, topic string) *RoomEventPublisher {
+func NewRoomEventPublisher(producer kafka.KafkaProducer, topic string) *RoomEventPublisher {
 	return &RoomEventPublisher{
 		producer: producer,
 		topic:    topic,
 	}
 }
 
-// PublishRoomEvent 实现 domain.RoomEventPublisher 接口。
-func (p *RoomEventPublisher) PublishRoomEvent(ctx context.Context, event *domain.RoomEvent) error {
+// PublishRoomEvent 实现 events.RoomEventPublisher 接口。
+func (p *RoomEventPublisher) PublishRoomEvent(ctx context.Context, event *events.RoomEvent) error {
 	return p.publish(ctx, event)
 }
 
 // Publish 是 PublishRoomEvent 的别名，保留向后兼容。
-func (p *RoomEventPublisher) Publish(ctx context.Context, event *domain.RoomEvent) error {
+func (p *RoomEventPublisher) Publish(ctx context.Context, event *events.RoomEvent) error {
 	return p.PublishRoomEvent(ctx, event)
 }
 
-func (p *RoomEventPublisher) publish(ctx context.Context, event *domain.RoomEvent) error {
+func (p *RoomEventPublisher) publish(ctx context.Context, event *events.RoomEvent) error {
 	// 优先使用 event 已有的 TraceID（向后兼容调用方显式设置）；
 	// 其次从 context 提取 TraceID（实现端到端追踪）；
 	// 两者都为空时自动生成（兜底，保证消息一定能发出）。

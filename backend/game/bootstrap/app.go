@@ -21,6 +21,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
+	"github.com/cashparty/backend/game/application/robot"
 	gameconfig "github.com/cashparty/backend/game/config"
 	"github.com/cashparty/backend/game/infrastructure/adapter"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
@@ -28,6 +29,7 @@ import (
 	"github.com/cashparty/backend/game/server"
 	settlementConfig "github.com/cashparty/backend/settlement/config"
 	settlementMysqlRepo "github.com/cashparty/backend/settlement/infrastructure/persistence/mysql"
+	settlementRedis "github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
@@ -36,10 +38,10 @@ type Application struct {
 	config         *gameconfig.Config
 	grpcServer     *server.GRPCServer
 	cancel         context.CancelFunc
-	nacos          *nacos.Client
+	nacos          nacos.NacosClient
 	grpcPort       int
 	appCtx         context.Context
-	taskRunner     *async.TaskRunner
+	taskRunner     async.TaskRunner
 	wg             sync.WaitGroup
 	kafkaConsumers []io.Closer
 }
@@ -137,6 +139,9 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	roundSettlementRepo := settlementMysqlRepo.NewRoundSettlementRepository(db)
 	refundAuditRepo := settlementMysqlRepo.NewRefundAuditRepository(db)
 	settlementQueryRepo := settlementMysqlRepo.NewSettlementQueryRepository(db)
+	// P0-1：创建 settlement DBRepository 聚合，用于 AppService 编排事务。
+	// Repository 不再自治开事务，由 AppService/Service 通过 dbRepo.WithTransaction 编排。
+	settlementDbRepo := settlementMysqlRepo.NewDBRepository(db)
 
 	// 获取已初始化的 IDGenerator（规约 SID-7：禁止懒加载，GetGenerator 返回 error 时 fail-fast）
 	idGen, err := idgen.GetGenerator()
@@ -149,7 +154,8 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	platformCfg := settlementConfig.FromCommonConfig(&cfg.Platform)
 
 	dbRepo := mysqlRepo.NewDBRepository(db)
-	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar, idGen)
+	userCacheRepo := redisRepo.NewUserCacheRepository(redisClient)
+	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen)
 	// 通过 UserSaverAdapter 将 game 层 *application.UserService 适配为 settlement/domain.UserService，
 	// 解除 settlement 对 game/model 的反向依赖（Phase 1.1）。
 	userSaverAdapter := adapter.NewUserSaverAdapter(userSvc)
@@ -162,15 +168,21 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	// Robot checker and settlement-layer virtual balance service (shared with
 	// game-layer robot services via the same Redis keys).
 	robotChecker := settlementService.NewRobotChecker(redisClient)
-	settlementVirtualBalance := settlementService.NewVirtualBalanceService(redisClient)
+	// 创建 RobotAccountStore 适配器，将 game 层 RobotAccountRepository 适配为
+	// settlement/domain.RobotAccountStore 接口，避免 settlement → game 反向依赖。
+	// P0-4：统一使用 VirtualBalanceRepository（经 domain.VirtualBalanceService 接口注入），
+	// 消除旧的 settlement/service.VirtualBalanceService 双实现。
+	robotAccountRepo := mysqlRepo.NewRobotAccountRepository(db)
+	robotAccountStore := &robotAccountStoreAdapter{repo: robotAccountRepo}
+	settlementVirtualBalance := settlementRedis.NewVirtualBalanceRepository(redisClient, robotAccountStore)
 
-	deductSvc := settlementService.NewDeductService(platformClient, billRepo, roundSettlementRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
-	refundSvc := settlementService.NewRefundService(platformClient, billRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr)
-	rewardSettler := settlementService.NewRewardSettler(settlementService.DefaultRewardSettlementConfig(), billRepo, traceIDGen, robotChecker)
+	deductSvc := settlementService.NewDeductService(platformClient, settlementDbRepo, billRepo, roundSettlementRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	refundSvc := settlementService.NewRefundService(platformClient, settlementDbRepo, billRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr)
+	rewardSettler := settlementService.NewRewardSettler(billRepo, traceIDGen, robotChecker)
 	// Phase 2.4：拆分 GameSettleService 为 SessionPayoutService（调 platform.Credit 派奖）
 	// 与 GameSettleReportingService（调 platform.Settle 上报游戏结果）。
 	// SessionPayoutService 先创建，作为 GameSettleReportingService 的依赖注入。
-	sessionPayoutSvc := settlementService.NewSessionPayoutService(platformClient, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	sessionPayoutSvc := settlementService.NewSessionPayoutService(platformClient, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance, exceptionMgr)
 	gameSettleSvc := settlementService.NewGameSettleReportingService(platformClient, billRepo, roundSettlementRepo, settlementQueryRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr, robotChecker, sessionPayoutSvc)
 
 	// 拆分原 SettlementService 为 3 个职责单一的 Service（P0-10）：
@@ -178,7 +190,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	// - PenaltySettlementService：罚款扣款与分配（DeductPenaltyToPlatform/DistributePenaltyFromPlatform）
 	// - BalanceQueryService：余额与账单查询（CheckBalance/GetUserBalance/GetBill*/GetRoundSettlement）
 	roundSettleSvc := settlementService.NewRoundSettleService(billRepo, roundSettlementRepo, redisClient, traceIDGen, rewardSettler, gameSettleSvc, &cfg.Lock, robotChecker)
-	penaltySettlementSvc := settlementService.NewPenaltySettlementService(platformClient, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
+	penaltySettlementSvc := settlementService.NewPenaltySettlementService(platformClient, settlementDbRepo, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance, exceptionMgr)
 	balanceQuerySvc := settlementService.NewBalanceQueryService(platformClient, billRepo, roundSettlementRepo, platformCfg, userIDConvert, robotChecker, settlementVirtualBalance)
 
 	algorithmConfig := convertAlgorithmConfig(&cfg.Algorithm)
@@ -189,7 +201,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	packetGenerator := algorithm.NewPacketGenerator(algorithmConfig, packetCacheRepo, rewardCacheRepo, roomRepo)
 
 	// Validate robot configuration before assembling robot services.
-	application.ValidateRobotConfig(&cfg.Robot)
+	robot.ValidateRobotConfig(&cfg.Robot)
 
 	taskRunner := async.NewTaskRunner(appCtx, 10*time.Second)
 	if err := taskRunner.Start(); err != nil {
@@ -469,7 +481,7 @@ func convertAlgorithmConfig(cfg *gameconfig.AlgorithmConfig) *algorithm.Config {
 
 // loadRateLimiterConfigFromNacos 从 nacos 拉取限流配置并覆盖 cfg.RateLimiter。
 // 未配置 RateLimiterDataID 或拉取/解析失败时保持本地配置,仅 Warn 不阻塞启动。
-func loadRateLimiterConfigFromNacos(nacosClient *nacos.Client, cfg *gameconfig.Config) {
+func loadRateLimiterConfigFromNacos(nacosClient nacos.NacosClient, cfg *gameconfig.Config) {
 	if nacosClient == nil || cfg.Nacos.RateLimiterDataID == "" {
 		return
 	}

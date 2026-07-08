@@ -9,10 +9,11 @@ import (
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
+	"github.com/cashparty/backend/game/domain/reward"
 	"github.com/cashparty/backend/settlement/config"
-	"github.com/cashparty/backend/settlement/domain"
+	settlementDomain "github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
 )
 
@@ -21,10 +22,10 @@ import (
 // 资金移动由 SessionPayoutService 通过 platform.Credit 完成。
 type GameSettleReportingService struct {
 	platform            platform.Client
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
-	settlementQueryRepo domain.SettlementQueryRepository
-	redis               *cRedis.Client
+	billRepo            settlementDomain.BillRepository
+	roundSettlementRepo settlementDomain.RoundSettlementRepository
+	settlementQueryRepo settlementDomain.SettlementQueryRepository
+	redis               cRedis.RedisClient
 	traceIDGen          *TraceIDGenerator
 	cfg                 *config.PlatformConfig
 	lockCfg             *config.LockConfig
@@ -36,10 +37,10 @@ type GameSettleReportingService struct {
 
 func NewGameSettleReportingService(
 	platformClient platform.Client,
-	billRepo domain.BillRepository,
-	roundSettlementRepo domain.RoundSettlementRepository,
-	settlementQueryRepo domain.SettlementQueryRepository,
-	redis *cRedis.Client,
+	billRepo settlementDomain.BillRepository,
+	roundSettlementRepo settlementDomain.RoundSettlementRepository,
+	settlementQueryRepo settlementDomain.SettlementQueryRepository,
+	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
@@ -83,8 +84,8 @@ func (s *GameSettleReportingService) SettleGame(ctx context.Context, sessionID i
 		return nil
 	}
 
-	lockKey := redis.GameSettleLockKey(sessionID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.GameSettleLockTTL.Seconds()), func() error {
+	lockKey := rediskeys.GameSettleLockKey(sessionID)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.GameSettleLockTTL.Seconds()), func() error {
 		// Double-check inside lock (in case of race)
 		allSettled, err := s.checkAllPlayersSettled(ctx, sessionID)
 		if err != nil {
@@ -228,7 +229,14 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 	// 平台暂未提供查询接口，当前依靠 platform.Settle 的 BizOrderNo 幂等兜底。
 
 	// 机器人虚拟通道：跳过 platform.Settle，仅更新状态
-	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
+	if s.robotChecker == nil {
+		return fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("check robot failed: %w", err)
+	}
+	if isRobot {
 		if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleNone, dto.BillGameSettleSettled); err != nil {
 			logger.Error("mark robot game settle status failed", "session_id", sessionID, "user_id", userID, "error", err)
 		}
@@ -240,10 +248,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
-	gameResult := "lose"
-	if payOut > betAmount {
-		gameResult = "win"
-	}
+	gameResult := reward.DetermineGameResult(payOut, betAmount)
 
 	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(s.traceIDGen.GenerateGameSettleTraceID(sessionID), dto.BillTypeGameSettle, userID)
 
@@ -310,8 +315,8 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 
 // RetryPlayerSettle retries game-level settle for a single player
 func (s *GameSettleReportingService) RetryPlayerSettle(ctx context.Context, sessionID int64, userID int64) error {
-	lockKey := redis.GameSettleRetryLockKey(sessionID, userID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.GameSettleRetryLockTTL.Seconds()), func() error {
+	lockKey := rediskeys.GameSettleRetryLockKey(sessionID, userID)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.GameSettleRetryLockTTL.Seconds()), func() error {
 		betMap, err := s.settlementQueryRepo.AggregateBetBySession(ctx, sessionID)
 		if err != nil {
 			return fmt.Errorf("aggregate bet by session failed: %w", err)

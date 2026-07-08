@@ -6,14 +6,14 @@ import (
 	"github.com/cashparty/backend/common/kafka"
 	cRedis "github.com/cashparty/backend/common/redis"
 	gameconfig "github.com/cashparty/backend/game/config"
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/infrastructure/broadcast"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
 )
 
 // createKafkaProducer 构造 game 服务的 Kafka Producer。
 // brokers 为空时返回 error（配置守卫，PR-2 / CF-4）。
-func createKafkaProducer(cfg *gameconfig.Config) (*kafka.Producer, error) {
+func createKafkaProducer(cfg *gameconfig.Config) (kafka.KafkaProducer, error) {
 	if len(cfg.Kafka.Brokers) == 0 {
 		return nil, fmt.Errorf("kafka producer config: brokers must not be empty")
 	}
@@ -30,8 +30,8 @@ func createKafkaProducer(cfg *gameconfig.Config) (*kafka.Producer, error) {
 // GroupID 使用 per-node 策略：`game-room-events-{nodeID}`。
 func createRoomEventConsumer(
 	cfg *gameconfig.Config,
-	dbRepo domain.DBRepository,
-	redis *cRedis.Client,
+	dbRepo repository.DBRepository,
+	redis cRedis.RedisClient,
 	nodeID string,
 ) (*messaging.RoomEventConsumer, error) {
 	consumerCfg := kafka.NewConsumerConfig(
@@ -47,7 +47,7 @@ func createRoomEventConsumer(
 // 业务编排逻辑通过 handler 注入，consumer 仅做消息解析与转发。
 func createGameEventConsumer(
 	cfg *gameconfig.Config,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	handler messaging.GameEventHandlerInterface,
 	nodeID string,
 ) (*messaging.GameEventConsumer, error) {
@@ -62,8 +62,8 @@ func createGameEventConsumer(
 // createBroadcaster 构造 GameBroadcaster。
 func createBroadcaster(
 	cfg *gameconfig.Config,
-	producer *kafka.Producer,
-	redis *cRedis.Client,
+	producer kafka.KafkaProducer,
+	redis cRedis.RedisClient,
 ) (*broadcast.GameBroadcaster, error) {
 	return broadcast.NewGameBroadcaster(&cfg.Broadcast, producer, redis), nil
 }

@@ -14,8 +14,10 @@ import (
 	csched "github.com/cashparty/backend/common/scheduler"
 	"github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/application"
+	"github.com/cashparty/backend/game/application/robot"
 	gameconfig "github.com/cashparty/backend/game/config"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/events"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/infrastructure/broadcast"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
@@ -24,7 +26,7 @@ import (
 	settlementApplication "github.com/cashparty/backend/settlement/application"
 	settlementConfig "github.com/cashparty/backend/settlement/config"
 	settlementDomain "github.com/cashparty/backend/settlement/domain"
-	settlementRedis "github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
+	settlementMysqlRepo "github.com/cashparty/backend/settlement/infrastructure/persistence/mysql"
 	settlementScheduler "github.com/cashparty/backend/settlement/scheduler"
 	settlementService "github.com/cashparty/backend/settlement/service"
 	"gorm.io/gorm"
@@ -38,13 +40,13 @@ type Container struct {
 	LockCfg                *config.LockConfig
 	RedisTTL               *config.RedisTTLConfig
 	DB                     *gorm.DB
-	Redis                  *cRedis.Client
-	KafkaProducer          *kafka.Producer
-	DBRepo                 domain.DBRepository
-	RoomRepo               domain.RoomRepository
-	Broadcaster            domain.Broadcaster
-	EventPublisher         domain.RoomEventPublisher
-	GameEventPublisher     domain.GameEventPublisher
+	Redis                  cRedis.RedisClient
+	KafkaProducer          kafka.KafkaProducer
+	DBRepo                 repository.DBRepository
+	RoomRepo               repository.RoomRepository
+	Broadcaster            events.Broadcaster
+	EventPublisher         events.RoomEventPublisher
+	GameEventPublisher     events.GameEventPublisher
 	// RoomEventConsumer / GameEventConsumer 的 Close 生命周期由 Application.kafkaConsumers
 	// 统一管理（PLAN §6 LF-2），Container 不持有 io.Closer 列表，避免双重关闭。
 	RoomEventConsumer *messaging.RoomEventConsumer
@@ -75,7 +77,7 @@ type Container struct {
 	SchedulerRegistry *csched.Registry
 
 	// TaskRunner manages fire-and-forget async tasks for the application layer.
-	TaskRunner *async.TaskRunner
+	TaskRunner async.TaskRunner
 
 	// Rate limiter (grab command)
 	UserLimiter    *limiter.UserLimiter
@@ -86,10 +88,10 @@ type Container struct {
 	VirtualBalanceService settlementDomain.VirtualBalanceService
 	RobotPoolService      *redisRepo.RobotPoolService
 	RobotSchedulerRedis   *redisRepo.RobotSchedulerRedis
-	RobotAccountService   *application.RobotAccountService
-	RobotPlayer           *application.RobotPlayer
-	RobotBehaviorEngine   *application.RobotBehaviorEngine
-	RobotSchedulerService *application.RobotSchedulerService
+	RobotAccountService   *robot.RobotAccountService
+	RobotPlayer           *robot.RobotPlayer
+	RobotBehaviorEngine   *robot.RobotBehaviorEngine
+	RobotSchedulerService *robot.RobotSchedulerService
 
 	// Shared settlement service instances (created in app.go, not recreated)
 	platformClient           platform.Client
@@ -106,7 +108,7 @@ type Container struct {
 	callMgr                  *settlementService.PlatformCallManager
 	gameSettleSvc            *settlementService.GameSettleReportingService
 	robotChecker             settlementService.RobotChecker
-	settlementVirtualBalance *settlementService.VirtualBalanceService
+	settlementVirtualBalance settlementDomain.VirtualBalanceService
 	idGen                    idgen.IDGenerator
 }
 
@@ -117,13 +119,13 @@ func NewContainer(
 	robotCfg *config.RobotConfig,
 	broadcastCfg *config.BroadcastConfig,
 	db *gorm.DB,
-	redis *cRedis.Client,
-	kafkaProducer *kafka.Producer,
+	redis cRedis.RedisClient,
+	kafkaProducer kafka.KafkaProducer,
 	roundSettleSvc *settlementService.RoundSettleService,
 	penaltySettlementSvc *settlementService.PenaltySettlementService,
 	balanceQuerySvc *settlementService.BalanceQueryService,
 	packetGenerator *algorithm.PacketGenerator,
-	roomRepo domain.RoomRepository,
+	roomRepo repository.RoomRepository,
 	platformClient platform.Client,
 	billRepo settlementDomain.BillRepository,
 	roundSettlementRepo settlementDomain.RoundSettlementRepository,
@@ -140,8 +142,8 @@ func NewContainer(
 	callMgr *settlementService.PlatformCallManager,
 	gameSettleSvc *settlementService.GameSettleReportingService,
 	robotChecker settlementService.RobotChecker,
-	settlementVirtualBalance *settlementService.VirtualBalanceService,
-	taskRunner *async.TaskRunner,
+	settlementVirtualBalance settlementDomain.VirtualBalanceService,
+	taskRunner async.TaskRunner,
 	settlementSchedulerCfg *config.SettlementSchedulerConfig,
 	redisTTL *config.RedisTTLConfig,
 	rateLimiterCfg *gameconfig.RateLimiterConfig,
@@ -165,7 +167,8 @@ func NewContainer(
 	registry := csched.NewRegistry()
 	registry.Register(timeoutScheduler)
 
-	grabService := application.NewGrabService(redis, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
+	packetCacheRepo := redisRepo.NewPacketCacheRepository(redis)
+	grabService := application.NewGrabService(redis, packetCacheRepo, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
 	penaltyService := application.NewPenaltyService(redis, nil, penaltySettlementSvc, *redisTTL)
 
 	// 从 RateLimiterConfig.Commands 构建 UserLimiter 配置
@@ -221,12 +224,16 @@ func NewContainer(
 }
 
 func (c *Container) InitAppServices() {
-	c.UserService = application.NewUserService(c.DBRepo, c.Redis, c.AvatarCfg, c.idGen)
+	userCacheRepo := redisRepo.NewUserCacheRepository(c.Redis)
+	c.UserService = application.NewUserService(c.DBRepo, userCacheRepo, c.AvatarCfg, c.idGen)
 
 	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert, c.settlementVirtualBalance, c.robotChecker)
 
 	// Phase 3.5：创建 settlement Application 层 facade，作为外部调用方访问 settlement 用例的统一入口。
+	// P0-1：注入 settlement DBRepository，由 AppService 通过 dbRepo.WithTransaction 编排事务。
+	settlementDbRepo := settlementMysqlRepo.NewDBRepository(c.DB)
 	c.SettleAppSvc = settlementApplication.NewSettleAppService(
+		settlementDbRepo,
 		c.RoundSettleSvc,
 		c.PenaltySettlementSvc,
 		c.DeductSvc,
@@ -250,6 +257,7 @@ func (c *Container) InitAppServices() {
 
 	// Phase 2.1 拆分：创建 3 个职责单一的子 Service。
 	// 跨 Service 依赖通过接口注入（DeductFailureHandler/GameEnder/PacketInitiator/RoundSettler）避免循环依赖。
+	packetCacheRepo := redisRepo.NewPacketCacheRepository(c.Redis)
 	c.PacketOrchestrator = application.NewPacketOrchestrator(
 		c.RoomRepo,
 		c.DBRepo,
@@ -257,9 +265,8 @@ func (c *Container) InitAppServices() {
 		c.GameEventPublisher,
 		c.GrabService,
 		c.PacketGenerator,
-		c.rewardSettler,
-		c.Redis,
-		c.DeductSvc,
+		packetCacheRepo,
+		c.SettleAppSvc,
 		c.TaskRunner,
 		c.idGen,
 		c.LockCfg,
@@ -289,7 +296,7 @@ func (c *Container) InitAppServices() {
 		c.TimeoutCfg,
 		*c.RedisTTL,
 		c.PenaltyService,
-		c.PenaltySettlementSvc,
+		c.SettleAppSvc,
 		c.GrabService,
 		c.TaskRunner,
 		c.idGen,
@@ -364,28 +371,25 @@ func (c *Container) initRobotServices() {
 	// Create robot account repository
 	robotAccountRepo := mysqlRepo.NewRobotAccountRepository(c.DB)
 
-	// 创建 RobotAccountStore 适配器，将 game 层的 RobotAccountRepository
-	// 适配为 settlement/domain.RobotAccountStore 接口，避免 settlement → game 反向依赖。
-	robotAccountStore := &robotAccountStoreAdapter{repo: robotAccountRepo}
-
-	// Create Redis services (game layer)
-	c.VirtualBalanceService = settlementRedis.NewVirtualBalanceRepository(c.Redis, robotAccountStore)
+	// P0-4：复用 app.go 创建的统一 VirtualBalanceRepository 实例（经 domain.VirtualBalanceService 接口），
+	// 消除 game 层与 settlement 层的双实现。RobotAccountStore 适配器在 app.go 中创建。
+	c.VirtualBalanceService = c.settlementVirtualBalance
 	c.RobotPoolService = redisRepo.NewRobotPoolService(c.Redis)
 	c.RobotSchedulerRedis = redisRepo.NewRobotSchedulerRedis(c.Redis)
 
 	// Create account service
-	c.RobotAccountService = application.NewRobotAccountService(
+	c.RobotAccountService = robot.NewRobotAccountService(
 		robotAccountRepo, c.UserService, c.VirtualBalanceService, c.RobotPoolService, c.AvatarCfg,
 	)
 
 	// Create robot player
-	c.RobotPlayer = application.NewRobotPlayer(
+	c.RobotPlayer = robot.NewRobotPlayer(
 		c.SeatAppService, c.GameAppService, c.RoomAppService,
 		c.RobotAccountService, c.GrabService, c.RoomRepo, c.RobotCfg,
 	)
 
 	// Create behavior engine
-	c.RobotBehaviorEngine = application.NewRobotBehaviorEngine(
+	c.RobotBehaviorEngine = robot.NewRobotBehaviorEngine(
 		c.RobotCfg, c.RobotPlayer, c.TimeoutScheduler,
 		c.RobotAccountService, c.GrabService, c.RobotSchedulerRedis,
 	)
@@ -397,9 +401,9 @@ func (c *Container) initRobotServices() {
 	c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeRobot, c.RobotBehaviorEngine.HandleRobotTimeout)
 
 	// Create scheduler service
-	c.RobotSchedulerService = application.NewRobotSchedulerService(
+	c.RobotSchedulerService = robot.NewRobotSchedulerService(
 		c.RobotAccountService, c.RobotPlayer, c.RoomRepo, c.DBRepo,
-		c.Redis, c.RobotSchedulerRedis, c.RobotPoolService, c.RobotCfg,
+		c.RobotSchedulerRedis, c.RobotPoolService, c.RobotCfg,
 	)
 	c.SchedulerRegistry.Register(c.RobotSchedulerService)
 
@@ -469,12 +473,12 @@ func buildUserLimiterConfigs(cfg *gameconfig.RateLimiterConfig) map[string]limit
 	return configs
 }
 
-// robotAccountStoreAdapter 将 game 层的 domain.RobotAccountRepository 适配为
+// robotAccountStoreAdapter 将 game 层的 repository.RobotAccountRepository 适配为
 // settlement/domain.RobotAccountStore 接口。
 // 用于在 settlement 层 VirtualBalanceRepository 与 game 层 RobotAccountRepository 之间解耦，
 // 避免 settlement → game 反向依赖。
 type robotAccountStoreAdapter struct {
-	repo domain.RobotAccountRepository
+	repo repository.RobotAccountRepository
 }
 
 // GetVirtualBalance 根据 userID 查询机器人账户的虚拟余额。

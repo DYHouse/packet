@@ -35,14 +35,14 @@ const (
 // 心跳续约：每 5 分钟 EXPIRE，防止 TTL 过期导致 nodeID 被回收。
 // 优雅退出：Release 通过 Lua 脚本 DEL（仅当 value==instanceID，防止误删他人锁）。
 type NodeAllocator struct {
-	redis      *cRedis.Client
+	redis      cRedis.RedisClient
 	instanceID string // 实例唯一标识（UUID），用于持有者校验
 	nodeID     int64
 	cancel     context.CancelFunc
 }
 
 // NewNodeAllocator 创建 nodeID 分配器。
-func NewNodeAllocator(redis *cRedis.Client) *NodeAllocator {
+func NewNodeAllocator(redis cRedis.RedisClient) *NodeAllocator {
 	return &NodeAllocator{
 		redis:      redis,
 		instanceID: uuid.NewString(),

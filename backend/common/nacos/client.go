@@ -18,7 +18,19 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
-type Client struct {
+// NacosClient Nacos 客户端接口，支持 mock 测试。
+// 封装 nacos sdk：服务注册、反注册、发现、配置拉取、配置监听。
+type NacosClient interface {
+	RegisterService() error
+	DeregisterService() error
+	DiscoverService(serviceName string) ([]model.Instance, error)
+	GetConfig(dataID, group string) (string, error)
+	ListenConfig(dataID, group string, onChange func(content string)) error
+	Close() error
+}
+
+// client Nacos 客户端实现
+type client struct {
 	configClient config_client.IConfigClient
 	namingClient naming_client.INamingClient
 	cfg          *config.NacosConfig
@@ -29,7 +41,8 @@ type Client struct {
 	closed       bool
 }
 
-func NewClient(cfg *config.NacosConfig) (*Client, error) {
+// NewClient 创建 Nacos 客户端。
+func NewClient(cfg *config.NacosConfig) (NacosClient, error) {
 	host, port := parseServerAddr(cfg.ServerAddr)
 	serverConfigs := []constant.ServerConfig{
 		{
@@ -69,7 +82,7 @@ func NewClient(cfg *config.NacosConfig) (*Client, error) {
 		return nil, fmt.Errorf("failed to create nacos naming client: %w", err)
 	}
 
-	return &Client{
+	return &client{
 		configClient: configClient,
 		namingClient: namingClient,
 		cfg:          cfg,
@@ -96,7 +109,7 @@ func parseServerAddr(addr string) (string, uint64) {
 	return host, port
 }
 
-func (c *Client) RegisterService() error {
+func (c *client) RegisterService() error {
 	if c.serviceName == "" {
 		return ErrServiceNameEmpty
 	}
@@ -123,7 +136,7 @@ func (c *Client) RegisterService() error {
 	return nil
 }
 
-func (c *Client) DeregisterService() error {
+func (c *client) DeregisterService() error {
 	if c.serviceName == "" {
 		return nil
 	}
@@ -143,7 +156,7 @@ func (c *Client) DeregisterService() error {
 	return nil
 }
 
-func (c *Client) DiscoverService(serviceName string) ([]model.Instance, error) {
+func (c *client) DiscoverService(serviceName string) ([]model.Instance, error) {
 	instances, err := c.namingClient.SelectInstances(vo.SelectInstancesParam{
 		ServiceName: serviceName,
 		GroupName:   c.cfg.Group,
@@ -160,7 +173,7 @@ func (c *Client) DiscoverService(serviceName string) ([]model.Instance, error) {
 	return instances, nil
 }
 
-func (c *Client) GetConfig(dataID, group string) (string, error) {
+func (c *client) GetConfig(dataID, group string) (string, error) {
 	content, err := c.configClient.GetConfig(vo.ConfigParam{
 		DataId: dataID,
 		Group:  group,
@@ -171,7 +184,7 @@ func (c *Client) GetConfig(dataID, group string) (string, error) {
 	return content, nil
 }
 
-func (c *Client) ListenConfig(dataID, group string, onChange func(content string)) error {
+func (c *client) ListenConfig(dataID, group string, onChange func(content string)) error {
 	err := c.configClient.ListenConfig(vo.ConfigParam{
 		DataId: dataID,
 		Group:  group,
@@ -189,7 +202,7 @@ func (c *Client) ListenConfig(dataID, group string, onChange func(content string
 	return nil
 }
 
-func (c *Client) Close() error {
+func (c *client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {

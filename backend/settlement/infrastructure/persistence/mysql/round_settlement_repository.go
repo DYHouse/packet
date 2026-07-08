@@ -86,18 +86,19 @@ func (m *roundSettlementRepository) GetRoundSettlementByRoundID(ctx context.Cont
 	return &settlement, nil
 }
 
+// CreateRoundSettlementAndBills 创建回合结算与配对账单。事务边界由 AppService 通过
+// DBRepository.WithTransaction 编排：在事务回调内通过 tx.RoundSettlementRepo() 获取的子 repo，
+// 其 m.db 即为事务连接，settlement 与 bills 的多次 Create 自动纳入同一事务。
 func (m *roundSettlementRepository) CreateRoundSettlementAndBills(ctx context.Context, settlement *model.RoundSettlement, bills []*model.BillRecord) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(settlement).Error; err != nil {
-			return fmt.Errorf("create round settlement failed: %w", err)
+	if err := m.db.WithContext(ctx).Create(settlement).Error; err != nil {
+		return fmt.Errorf("create round settlement failed: %w", err)
+	}
+	for _, bill := range bills {
+		if err := m.db.WithContext(ctx).Create(bill).Error; err != nil {
+			return fmt.Errorf("create bill failed: %w", err)
 		}
-		for _, bill := range bills {
-			if err := tx.Create(bill).Error; err != nil {
-				return fmt.Errorf("create bill failed: %w", err)
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func (m *roundSettlementRepository) UpdateRoundSettlementDeductSuccess(ctx context.Context, roundTraceID string, successCount int, deductedAt time.Time) error {

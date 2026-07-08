@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/currency"
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/limiter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
@@ -37,7 +38,7 @@ type GenericServiceServer struct {
 	userSvc     *application.UserService
 	balanceSvc  *settlementService.BalanceService
 	historySvc  *application.HistoryService
-	redis       *cRedis.Client
+	redis       cRedis.RedisClient
 	userLimiter *limiter.UserLimiter
 	broadcastFn BroadcastFunc
 	// grab 命令 fail-open 策略(资金操作)
@@ -54,7 +55,7 @@ func NewGenericServiceServer(
 	userSvc *application.UserService,
 	balanceSvc *settlementService.BalanceService,
 	historySvc *application.HistoryService,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
 	grabFailOpen bool,
@@ -132,7 +133,7 @@ func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.Forwar
 			Cmd:       req.Cmd,
 			RequestId: req.RequestId,
 			Code:      int32(message.CodeUnknownCommand),
-			Msg:       message.GetErrorMsg(message.CodeUnknownCommand),
+			Msg:       i18n.GetErrorMsg(message.CodeUnknownCommand),
 			Timestamp: req.Timestamp,
 		}
 	}
@@ -576,7 +577,7 @@ func (s *GenericServiceServer) handleGetPlayerHistory(ctx context.Context, req *
 	var historyReq application.PlayerHistoryReq
 	if len(req.Data) > 0 {
 		if err := json.Unmarshal(req.Data, &historyReq); err != nil {
-			return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+			return s.errorResponse(req, message.CodeHistoryParamInvalid, i18n.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
 		}
 	}
 
@@ -584,7 +585,7 @@ func (s *GenericServiceServer) handleGetPlayerHistory(ctx context.Context, req *
 		historyReq.Page = 1
 	}
 	if historyReq.PageSize < 1 || historyReq.PageSize > 50 {
-		return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+		return s.errorResponse(req, message.CodeHistoryParamInvalid, i18n.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
 	}
 
 	resp, err := s.historySvc.GetPlayerHistory(ctx, userID, historyReq)
@@ -606,13 +607,13 @@ func (s *GenericServiceServer) handleGetPlayerSessionDetail(ctx context.Context,
 	}
 	if len(req.Data) > 0 {
 		if err := json.Unmarshal(req.Data, &data); err != nil {
-			return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+			return s.errorResponse(req, message.CodeHistoryParamInvalid, i18n.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
 		}
 	}
 
 	sessionID, err := strconv.ParseInt(data.SessionID, 10, 64)
 	if err != nil || sessionID <= 0 {
-		return s.errorResponse(req, message.CodeHistoryParamInvalid, message.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
+		return s.errorResponse(req, message.CodeHistoryParamInvalid, i18n.GetErrorMsg(message.CodeHistoryParamInvalid)), nil
 	}
 
 	resp, err := s.historySvc.GetPlayerSessionDetail(ctx, userID, sessionID)
@@ -650,7 +651,7 @@ func (s *GenericServiceServer) parseRequestData(req *commonPb.ForwardRequest, ta
 		if err := json.Unmarshal(req.Data, target); err != nil {
 			logger.Warn("invalid request data",
 				"cmd", req.Cmd, "request_id", req.RequestId, "error", err)
-			return s.errorResponse(req, message.CodeInvalidParams, message.GetErrorMsg(message.CodeInvalidParams)), true
+			return s.errorResponse(req, message.CodeInvalidParams, i18n.GetErrorMsg(message.CodeInvalidParams)), true
 		}
 	}
 	return nil, false
@@ -706,7 +707,7 @@ func (s *GenericServiceServer) checkRateLimit(ctx context.Context, req *commonPb
 		logger.Warn("rate limit exceeded",
 			"cmd", cmd, "user_id", req.UserId, "request_id", req.RequestId)
 		return s.errorResponse(req, message.CodeRateLimitExceeded,
-			message.GetErrorMsg(message.CodeRateLimitExceeded)), false
+			i18n.GetErrorMsg(message.CodeRateLimitExceeded)), false
 	}
 	return nil, true
 }
@@ -715,7 +716,7 @@ func (s *GenericServiceServer) handleError(req *commonPb.ForwardRequest, err err
 	if gameErr, ok := message.IsGameError(err); ok {
 		return s.errorResponse(req, gameErr.Code, gameErr.Msg)
 	}
-	return s.errorResponse(req, message.CodeSystemError, message.GetErrorMsg(message.CodeSystemError))
+	return s.errorResponse(req, message.CodeSystemError, i18n.GetErrorMsg(message.CodeSystemError))
 }
 
 func (s *GenericServiceServer) errorResponse(req *commonPb.ForwardRequest, code int, msg string) *commonPb.ForwardResponse {
@@ -738,7 +739,7 @@ func (s *GenericServiceServer) successResponse(req *commonPb.ForwardRequest, dat
 		Cmd:       req.Cmd,
 		RequestId: req.RequestId,
 		Code:      int32(message.CodeSuccess),
-		Msg:       message.GetErrorMsg(message.CodeSuccess),
+		Msg:       i18n.GetErrorMsg(message.CodeSuccess),
 		Data:      dataBytes,
 		Timestamp: time.Now().UnixMilli(),
 	}
@@ -759,7 +760,7 @@ func NewGRPCServer(
 	userSvc *application.UserService,
 	balanceSvc *settlementService.BalanceService,
 	historySvc *application.HistoryService,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
 	grabFailOpen bool,

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -13,7 +13,7 @@ type gormRoundRepository struct {
 	db *gorm.DB
 }
 
-func NewGormRoundRepository(db *gorm.DB) domain.RoundDBRepository {
+func NewGormRoundRepository(db *gorm.DB) repository.RoundDBRepository {
 	return &gormRoundRepository{db: db}
 }
 

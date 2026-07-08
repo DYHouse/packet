@@ -10,8 +10,8 @@ import (
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
-	"github.com/cashparty/backend/gateway"
 	"github.com/cashparty/backend/gateway/connection"
+	"github.com/cashparty/backend/gateway/protocol"
 	"github.com/cashparty/backend/gateway/service"
 )
 
@@ -32,7 +32,7 @@ type AuthLockConfig struct {
 
 type AuthMiddleware struct {
 	tokenService  *service.TokenService
-	redis         *cRedis.Client
+	redis         cRedis.RedisClient
 	maxAttempts   int
 	lockDuration  time.Duration
 	counterWindow time.Duration
@@ -41,7 +41,7 @@ type AuthMiddleware struct {
 }
 
 // NewAuthMiddleware 创建 Auth 中间件
-func NewAuthMiddleware(tokenService *service.TokenService, redis *cRedis.Client, cfg AuthLockConfig) *AuthMiddleware {
+func NewAuthMiddleware(tokenService *service.TokenService, redis cRedis.RedisClient, cfg AuthLockConfig) *AuthMiddleware {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &AuthMiddleware{
 		tokenService:  tokenService,
@@ -55,7 +55,7 @@ func NewAuthMiddleware(tokenService *service.TokenService, redis *cRedis.Client,
 }
 
 func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connection, firstMessage []byte) error {
-	var req message.Request
+	var req protocol.Request
 	if err := json.Unmarshal(firstMessage, &req); err != nil {
 		logger.Warn("failed to parse first message", "conn_id", conn.ConnID, "error", err)
 		m.sendError(conn, "", "", message.CodeInvalidMessage)
@@ -118,20 +118,20 @@ func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connect
 }
 
 func (m *AuthMiddleware) sendError(conn *connection.Connection, cmd, requestID string, code int) {
-	resp := message.NewErrorResponse(cmd, requestID, code)
+	resp := protocol.NewErrorResponse(cmd, requestID, code)
 	data, _ := resp.ToJSON()
 	conn.Send(data)
 }
 
 func (m *AuthMiddleware) sendSuccess(conn *connection.Connection, cmd, requestID string, data interface{}) {
-	resp := message.NewSuccessResponse(cmd, requestID, data)
+	resp := protocol.NewSuccessResponse(cmd, requestID, data)
 	respData, _ := resp.ToJSON()
 	conn.Send(respData)
 }
 
 // isLocked 检查 IP 是否被锁定（查 Redis）
 func (m *AuthMiddleware) isLocked(ctx context.Context, ip string) bool {
-	key := gateway.GatewayLockedIPKey(ip)
+	key := rediskeys.GatewayLockedIPKey(ip)
 	exists, err := m.redis.Exists(ctx, key).Result()
 	if err != nil {
 		logger.Error("failed to check ip lock in redis",
@@ -158,7 +158,7 @@ func (m *AuthMiddleware) recordFailedAttempt(ctx context.Context, ip string) {
 	}
 
 	if count >= int64(m.maxAttempts) {
-		lockKey := gateway.GatewayLockedIPKey(ip)
+		lockKey := rediskeys.GatewayLockedIPKey(ip)
 		if err := m.redis.Set(ctx, lockKey, "1", m.lockDuration).Err(); err != nil {
 			logger.Error("failed to set ip lock",
 				"ip", ip, "error", err)
@@ -171,7 +171,7 @@ func (m *AuthMiddleware) recordFailedAttempt(ctx context.Context, ip string) {
 // clearFailedAttempts 清理失败计数（成功登录后调用）
 func (m *AuthMiddleware) clearFailedAttempts(ctx context.Context, ip string) {
 	counterKey := rediskeys.GatewayAuthFailKey(ip)
-	lockKey := gateway.GatewayLockedIPKey(ip)
+	lockKey := rediskeys.GatewayLockedIPKey(ip)
 	if err := m.redis.Del(ctx, counterKey, lockKey).Err(); err != nil {
 		logger.Warn("failed to clear failed attempts",
 			"ip", ip, "error", err)

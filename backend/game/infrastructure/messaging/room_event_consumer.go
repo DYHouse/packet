@@ -10,21 +10,22 @@ import (
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/common/trace"
-	"github.com/cashparty/backend/game/domain"
-	redisKeys "github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/google/uuid"
 )
 
 type RoomEventConsumer struct {
-	dbRepo   domain.DBRepository
-	redis    *cRedis.Client
+	dbRepo   repository.DBRepository
+	redis    cRedis.RedisClient
 	consumer *kafka.Consumer
 }
 
 func NewRoomEventConsumer(
-	dbRepo domain.DBRepository,
-	redis *cRedis.Client,
+	dbRepo repository.DBRepository,
+	redis cRedis.RedisClient,
 	cfg kafka.ConsumerConfig,
 ) (*RoomEventConsumer, error) {
 	c := &RoomEventConsumer{
@@ -48,7 +49,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		}
 	}()
 
-	event, err := domain.ParseRoomEvent(msg.Value)
+	event, err := events.ParseRoomEvent(msg.Value)
 	if err != nil {
 		// fail-closed: return error to trigger common/kafka.Consumer retry + DLQ.
 		logger.Error("failed to parse room event", "error", err)
@@ -90,18 +91,14 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 
 	var handleErr error
 	switch event.EventType {
-	case domain.RoomEventSpectatorJoin:
-		handleErr = c.handleSpectatorJoin(ctx, event)
-	case domain.RoomEventSpectatorLeave:
-		handleErr = c.handleSpectatorLeave(ctx, event)
-	case domain.RoomEventPlayerReady:
-		handleErr = c.handlePlayerReady(ctx, event)
-	case domain.RoomEventSeatCancel:
-		handleErr = c.handleSeatCancel(ctx, event)
-	case domain.RoomEventSpectatorKick:
-		handleErr = c.handleSpectatorKick(ctx, event)
-	case domain.RoomEventSubstitute:
-		handleErr = c.handleSubstitute(ctx, event)
+	case events.RoomEventSpectatorJoin,
+		events.RoomEventSpectatorLeave,
+		events.RoomEventPlayerReady,
+		events.RoomEventSeatCancel,
+		events.RoomEventSpectatorKick,
+		events.RoomEventSubstitute:
+		// 所有已知房间事件类型均触发同步房间计数，无需按类型分发到独立 handler
+		handleErr = c.syncRoomCounts(ctx, event)
 	default:
 		// fail-closed: unknown event type returns error to trigger retry + DLQ.
 		logger.Warn("unknown event type",
@@ -131,10 +128,10 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 	return nil
 }
 
-func (c *RoomEventConsumer) syncRoomCounts(ctx context.Context, event *domain.RoomEvent) error {
+func (c *RoomEventConsumer) syncRoomCounts(ctx context.Context, event *events.RoomEvent) error {
 	pipe := c.redis.Pipeline()
-	playersCmd := pipe.HLen(ctx, redisKeys.RoomPlayersKey(event.RoomID))
-	spectatorsCmd := pipe.HLen(ctx, redisKeys.RoomSpectatorsKey(event.RoomID))
+	playersCmd := pipe.HLen(ctx, rediskeys.RoomPlayersKey(event.RoomID))
+	spectatorsCmd := pipe.HLen(ctx, rediskeys.RoomSpectatorsKey(event.RoomID))
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
@@ -148,31 +145,6 @@ func (c *RoomEventConsumer) syncRoomCounts(ctx context.Context, event *domain.Ro
 	})
 }
 
-func (c *RoomEventConsumer) handleSpectatorJoin(ctx context.Context, event *domain.RoomEvent) error {
-	return c.syncRoomCounts(ctx, event)
-}
-
-func (c *RoomEventConsumer) handleSpectatorLeave(ctx context.Context, event *domain.RoomEvent) error {
-	return c.syncRoomCounts(ctx, event)
-}
-
-func (c *RoomEventConsumer) handlePlayerReady(ctx context.Context, event *domain.RoomEvent) error {
-	return c.syncRoomCounts(ctx, event)
-}
-
-func (c *RoomEventConsumer) handleSeatCancel(ctx context.Context, event *domain.RoomEvent) error {
-	return c.syncRoomCounts(ctx, event)
-}
-
-func (c *RoomEventConsumer) handleSpectatorKick(ctx context.Context, event *domain.RoomEvent) error {
-	return c.syncRoomCounts(ctx, event)
-}
-
-func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *domain.RoomEvent) error {
-	// 替补上座：spectator → player，两个计数都变化，需同步
-	return c.syncRoomCounts(ctx, event)
-}
-
 // tryAcquire 用 SetNX 原子抢占事件处理权。
 // 返回 (true, token, nil) 表示抢占成功（首次处理），token 为本次持有的随机值，释放锁时需传入。
 // 返回 (false, "", nil) 表示已被其他 consumer 处理过（幂等跳过）。
@@ -184,7 +156,7 @@ func (c *RoomEventConsumer) tryAcquire(ctx context.Context, eventID string) (boo
 		return true, "", nil
 	}
 	token := uuid.New().String()
-	key := redisKeys.RoomEventProcessedKey(eventID)
+	key := rediskeys.RoomEventProcessedKey(eventID)
 	ok, err := c.redis.SetNX(ctx, key, token, 7*24*time.Hour).Result()
 	if err != nil {
 		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
@@ -201,7 +173,7 @@ func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, eventID string, 
 	if c.redis == nil {
 		return nil
 	}
-	key := redisKeys.RoomEventProcessedKey(eventID)
+	key := rediskeys.RoomEventProcessedKey(eventID)
 	return lockScripts.ReleaseLockScript.Run(ctx, c.redis, []string{key}, token).Err()
 }
 

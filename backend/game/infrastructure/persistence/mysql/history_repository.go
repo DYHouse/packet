@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -13,7 +13,7 @@ type gormHistoryRepository struct {
 	db *gorm.DB
 }
 
-func NewGormHistoryRepository(db *gorm.DB) domain.HistoryDBRepository {
+func NewGormHistoryRepository(db *gorm.DB) repository.HistoryDBRepository {
 	return &gormHistoryRepository{db: db}
 }
 
@@ -72,7 +72,7 @@ func (r *gormHistoryRepository) GetSession(sessionID int64) (*model.GameSession,
 // ListPlayerSessionsWithBill 基于 bill_record 聚合的玩家历史会话查询（仅已完成会话 status=1）。
 // 通过 SUM(CASE WHEN ...) 计算 total_grab/total_send/total_bet/total_income/profit 等，
 // profit = total_income - total_bet。
-func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]domain.PlayerSessionBillRow, int64, error) {
+func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]repository.PlayerSessionBillRow, int64, error) {
 	join := "game_sessions gs INNER JOIN bill_record b ON b.session_id = gs.session_id AND b.user_id = ? AND b.status = 1"
 	joinArgs := []interface{}{userID}
 
@@ -124,7 +124,7 @@ func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTi
 	listArgs := append(append([]interface{}{}, joinArgs...), args...)
 	listArgs = append(listArgs, limit, offset)
 
-	var rows []domain.PlayerSessionBillRow
+	var rows []repository.PlayerSessionBillRow
 	if err := r.db.Raw(listSQL, listArgs...).Scan(&rows).Error; err != nil {
 		return nil, 0, err
 	}
@@ -133,7 +133,7 @@ func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTi
 
 // GetPlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）。
 // 按 (session_id, user_id) 聚合，profit = total_income - total_bet。
-func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID int64) (*domain.PlayerSessionBillSummary, error) {
+func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID int64) (*repository.PlayerSessionBillSummary, error) {
 	query := `SELECT
        COALESCE(SUM(CASE WHEN bill_type = 3 AND amount > 0 THEN amount ELSE 0 END), 0) AS total_grab,
        COALESCE(SUM(CASE WHEN bill_type = 4 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_send,
@@ -147,7 +147,7 @@ func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID in
        COALESCE(SUM(CASE WHEN bill_type = 4 THEN 1 ELSE 0 END), 0) AS send_count
        FROM bill_record
        WHERE session_id = ? AND user_id = ? AND status = 1 AND user_id != 0 AND bill_type != 12`
-	var summary domain.PlayerSessionBillSummary
+	var summary repository.PlayerSessionBillSummary
 	if err := r.db.Raw(query, sessionID, userID).Scan(&summary).Error; err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID in
 
 // AggregatePlayerStatsFromBill 玩家累计统计（基于 bill_record 聚合）。
 // 内层按 session_id 分组计算每局盈亏，外层汇总 games/win/各总额。
-func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*domain.PlayerStatsBillAggregate, error) {
+func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*repository.PlayerStatsBillAggregate, error) {
 	query := `SELECT
        COUNT(*) AS total_games,
        COALESCE(SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END), 0) AS win_count,
@@ -186,7 +186,7 @@ func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*dom
            WHERE user_id = ? AND status = 1 AND user_id != 0 AND bill_type != 12
            GROUP BY session_id
        ) sub`
-	var agg domain.PlayerStatsBillAggregate
+	var agg repository.PlayerStatsBillAggregate
 	if err := r.db.Raw(query, userID).Scan(&agg).Error; err != nil {
 		return nil, err
 	}

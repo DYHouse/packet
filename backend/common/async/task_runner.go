@@ -10,10 +10,18 @@ import (
 	"github.com/cashparty/backend/common/logger"
 )
 
-// TaskRunner 管理应用层 fire-and-forget 异步任务。
+// TaskRunner 异步任务运行器接口，支持 mock 测试。
 // 所有任务从 rootCtx 派生 context，享有 per-task 超时与 panic recovery。
 // 生命周期：NewTaskRunner → Start → Submit*N → Stop → Wait。
-type TaskRunner struct {
+type TaskRunner interface {
+	Start() error
+	Submit(taskID string, ttl time.Duration, task func(ctx context.Context)) error
+	Stop()
+	Wait()
+}
+
+// taskRunner 异步任务运行器实现
+type taskRunner struct {
 	rootCtx    context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
@@ -24,9 +32,9 @@ type TaskRunner struct {
 
 // NewTaskRunner 创建 runner。rootCtx 通常是 Application 的 app-level ctx。
 // defaultTTL 是 Submit 未显式指定 timeout 时的兜底超时，建议 10s。
-func NewTaskRunner(rootCtx context.Context, defaultTTL time.Duration) *TaskRunner {
+func NewTaskRunner(rootCtx context.Context, defaultTTL time.Duration) TaskRunner {
 	ctx, cancel := context.WithCancel(rootCtx)
-	return &TaskRunner{
+	return &taskRunner{
 		rootCtx:    ctx,
 		cancel:     cancel,
 		defaultTTL: defaultTTL,
@@ -34,7 +42,7 @@ func NewTaskRunner(rootCtx context.Context, defaultTTL time.Duration) *TaskRunne
 }
 
 // Start 标记 runner 可用。当前实现无副作用，保留以便未来扩展（如 metrics）。
-func (r *TaskRunner) Start() error {
+func (r *taskRunner) Start() error {
 	return nil
 }
 
@@ -42,7 +50,7 @@ func (r *TaskRunner) Start() error {
 // taskID 用于日志标识（如 "publish_session_start"）。
 // ttl=0 表示使用 runner.defaultTTL。
 // 返回 error 仅当 runner 已 closed（Stop 后再 Submit）。
-func (r *TaskRunner) Submit(taskID string, ttl time.Duration, task func(ctx context.Context)) error {
+func (r *taskRunner) Submit(taskID string, ttl time.Duration, task func(ctx context.Context)) error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -77,7 +85,7 @@ func (r *TaskRunner) Submit(taskID string, ttl time.Duration, task func(ctx cont
 // Stop 取消 rootCtx 并标记 closed，拒绝新任务提交。
 // 已提交的任务会收到 ctx.Done() 信号自行退出。
 // 幂等：重复调用安全。
-func (r *TaskRunner) Stop() {
+func (r *taskRunner) Stop() {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -90,6 +98,6 @@ func (r *TaskRunner) Stop() {
 
 // Wait 阻塞等待所有已提交任务退出。
 // 必须在 Stop 之后调用。建议外层包 select+超时兜底。
-func (r *TaskRunner) Wait() {
+func (r *taskRunner) Wait() {
 	r.wg.Wait()
 }

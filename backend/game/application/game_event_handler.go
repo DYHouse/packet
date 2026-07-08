@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/events"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/model"
 	settlementApplication "github.com/cashparty/backend/settlement/application"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
@@ -19,16 +21,16 @@ import (
 // Phase 3.5：settlement 用例调用从直接依赖 RoundSettleService 改为通过
 // settlement/application.SettleAppService facade，统一 Application 层入口。
 type GameEventHandler struct {
-	dbRepo              domain.DBRepository
+	dbRepo              repository.DBRepository
 	settleAppService    *settlementApplication.SettleAppService
-	robotBehaviorEngine *RobotBehaviorEngine
+	robotBehaviorEngine RobotBehaviorNotifier
 }
 
 // NewGameEventHandler 创建 GameEventHandler 实例。
 func NewGameEventHandler(
-	dbRepo domain.DBRepository,
+	dbRepo repository.DBRepository,
 	settleAppService *settlementApplication.SettleAppService,
-	robotBehaviorEngine *RobotBehaviorEngine,
+	robotBehaviorEngine RobotBehaviorNotifier,
 ) *GameEventHandler {
 	return &GameEventHandler{
 		dbRepo:              dbRepo,
@@ -39,23 +41,23 @@ func NewGameEventHandler(
 
 // HandleGameEvent 处理游戏事件，实现 messaging.GameEventHandlerInterface。
 // 根据 event.EventType 分发到对应的处理方法，业务逻辑与原 consumer 一致。
-func (h *GameEventHandler) HandleGameEvent(ctx context.Context, event *domain.GameEvent) error {
+func (h *GameEventHandler) HandleGameEvent(ctx context.Context, event *events.GameEvent) error {
 	switch event.EventType {
-	case domain.GameEventSessionStart:
+	case events.GameEventSessionStart:
 		return h.handleSessionStart(ctx, event)
-	case domain.GameEventPacketCreated:
+	case events.GameEventPacketCreated:
 		return h.handlePacketCreated(ctx, event)
-	case domain.GameEventRoundSettle:
+	case events.GameEventRoundSettle:
 		return h.handleRoundSettle(ctx, event)
-	case domain.GameEventSessionEnd:
+	case events.GameEventSessionEnd:
 		return h.handleSessionEnd(ctx, event)
 	default:
 		return fmt.Errorf("unknown event type: %s", event.EventType)
 	}
 }
 
-func (h *GameEventHandler) handleSessionStart(ctx context.Context, event *domain.GameEvent) error {
-	var data domain.SessionStartData
+func (h *GameEventHandler) handleSessionStart(ctx context.Context, event *events.GameEvent) error {
+	var data events.SessionStartData
 	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal session start data failed: %w", err)
 	}
@@ -85,7 +87,7 @@ func (h *GameEventHandler) handleSessionStart(ctx context.Context, event *domain
 		StartedAt:   &now,
 	}
 
-	return h.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	return h.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		sessionRepo := tx.SessionDBRepo()
 		if err := sessionRepo.CreateSession(ctx, session); err != nil {
 			return fmt.Errorf("create session failed: %w", err)
@@ -116,8 +118,8 @@ func (h *GameEventHandler) handleSessionStart(ctx context.Context, event *domain
 	})
 }
 
-func (h *GameEventHandler) handlePacketCreated(ctx context.Context, event *domain.GameEvent) error {
-	var data domain.PacketCreatedData
+func (h *GameEventHandler) handlePacketCreated(ctx context.Context, event *events.GameEvent) error {
+	var data events.PacketCreatedData
 	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal packet created data failed: %w", err)
 	}
@@ -136,7 +138,7 @@ func (h *GameEventHandler) handlePacketCreated(ctx context.Context, event *domai
 
 	now := time.Now
 
-	if err := h.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	if err := h.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		roundRepo := tx.RoundDBRepo()
 		if err := roundRepo.UpdateRoundSending(ctx, parseInt64(event.RoundID), parseInt64(data.SenderID), data.SenderType, now()); err != nil {
 			return fmt.Errorf("update round failed: %w", err)
@@ -174,8 +176,8 @@ func (h *GameEventHandler) handlePacketCreated(ctx context.Context, event *domai
 	return nil
 }
 
-func (h *GameEventHandler) handleRoundSettle(ctx context.Context, event *domain.GameEvent) error {
-	var data domain.RoundSettleData
+func (h *GameEventHandler) handleRoundSettle(ctx context.Context, event *events.GameEvent) error {
+	var data events.RoundSettleData
 	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal round settle data failed: %w", err)
 	}
@@ -200,7 +202,7 @@ func (h *GameEventHandler) handleRoundSettle(ctx context.Context, event *domain.
 		return fmt.Errorf("invalid trace_id: %w", err)
 	}
 
-	if err := h.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	if err := h.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		roundRepo := tx.RoundDBRepo()
 		if err := roundRepo.UpdateRoundEnded(ctx, parseInt64(event.RoundID), traceID, now); err != nil {
 			return fmt.Errorf("update round failed: %w", err)
@@ -239,7 +241,7 @@ func (h *GameEventHandler) handleRoundSettle(ctx context.Context, event *domain.
 			}
 		}
 
-		if data.SenderType != domain.SenderTypeSystem && data.SenderType != domain.SenderTypeSystemForced {
+		if data.SenderType != round.SenderTypeSystem && data.SenderType != round.SenderTypeSystemForced {
 			senderIDInt := parseInt64(data.SenderID)
 			if senderIDInt != 0 {
 				if err := sessionRepo.IncrementSessionPlayerSend(ctx, sessionIDInt64, senderIDInt, data.TotalAmount); err != nil {
@@ -324,8 +326,8 @@ func (h *GameEventHandler) handleRoundSettle(ctx context.Context, event *domain.
 	return nil
 }
 
-func (h *GameEventHandler) handleSessionEnd(ctx context.Context, event *domain.GameEvent) error {
-	var data domain.SessionEndData
+func (h *GameEventHandler) handleSessionEnd(ctx context.Context, event *events.GameEvent) error {
+	var data events.SessionEndData
 	if err := event.GetPayload(&data); err != nil {
 		return fmt.Errorf("unmarshal session end data failed: %w", err)
 	}
@@ -347,7 +349,7 @@ func (h *GameEventHandler) handleSessionEnd(ctx context.Context, event *domain.G
 
 	now := time.Now()
 
-	if err := h.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	if err := h.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		sessionRepo := tx.SessionDBRepo()
 		if err := sessionRepo.UpdateSessionEnded(ctx, sessionIDInt64, data.ActualRounds, now, data.EndReason); err != nil {
 			return fmt.Errorf("update session failed: %w", err)

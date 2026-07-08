@@ -7,7 +7,8 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/room"
+	roundDom "github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/model"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 )
@@ -44,7 +45,7 @@ type roundInitDeductStep struct {
 func (p *PacketOrchestrator) initRoundCore(
 	ctx context.Context,
 	roomID string,
-	meta *domain.RoomMeta,
+	meta *room.RoomMeta,
 	roundNo int,
 	step *roundInitDeductStep,
 ) (*initRoundResult, error) {
@@ -125,7 +126,7 @@ func (p *PacketOrchestrator) updateRoundFailed(ctx context.Context, roundID int6
 }
 
 // initRoundAndDeduct 首轮初始化与扣款（所有玩家均摊房费）。
-func (p *PacketOrchestrator) initRoundAndDeduct(ctx context.Context, roomID string, meta *domain.RoomMeta, roundNo int, players []*domain.Player) (*initRoundResult, error) {
+func (p *PacketOrchestrator) initRoundAndDeduct(ctx context.Context, roomID string, meta *room.RoomMeta, roundNo int, players []*room.Player) (*initRoundResult, error) {
 	roomIDInt := converter.ParseID(roomID)
 	sessionID := roomIDInt
 	if meta.CurrentSessionID != "" {
@@ -153,7 +154,7 @@ func (p *PacketOrchestrator) initRoundAndDeduct(ctx context.Context, roomID stri
 			Players:          deductPlayers,
 		}
 
-		deductResult, err := p.deductSvc.DeductForFirstRound(ctx, deductReq)
+		deductResult, err := p.settleAppService.DeductForFirstRound(ctx, deductReq)
 		if err != nil {
 			if updateErr := p.updateRoundFailed(ctx, roundID, fmt.Sprintf("deduct failed: %v", err)); updateErr != nil {
 				logger.Error("update round failed status error", "round_id", roundID, "error", updateErr)
@@ -178,14 +179,14 @@ func (p *PacketOrchestrator) initRoundAndDeduct(ctx context.Context, roomID stri
 		deductScene:  settlementDto.DeductSceneFirstRoundShare,
 		deductAmount: meta.RoomFee,
 		senderID:     0,
-		senderType:   domain.SenderTypeSystem,
+		senderType:   roundDom.SenderTypeSystem,
 		totalAmount:  meta.RoomFee,
 		deductFn:     deductFn,
 	})
 }
 
 // initLaterRoundAndDeduct 后续轮初始化与扣款（最小金额玩家发包）。
-func (p *PacketOrchestrator) initLaterRoundAndDeduct(ctx context.Context, roomID string, meta *domain.RoomMeta, roundNo int, senderID string, roomFee int64) (*initRoundResult, error) {
+func (p *PacketOrchestrator) initLaterRoundAndDeduct(ctx context.Context, roomID string, meta *room.RoomMeta, roundNo int, senderID string, roomFee int64) (*initRoundResult, error) {
 	roomIDInt := converter.ParseID(roomID)
 	sessionID := roomIDInt
 	if meta.CurrentSessionID != "" {
@@ -208,7 +209,7 @@ func (p *PacketOrchestrator) initLaterRoundAndDeduct(ctx context.Context, roomID
 			RoundTraceID: roundTraceID,
 		}
 
-		err := p.deductSvc.DeductForLaterRound(ctx, deductReq)
+		err := p.settleAppService.DeductForLaterRound(ctx, deductReq)
 		if err != nil {
 			if updateErr := p.updateRoundFailed(ctx, roundID, fmt.Sprintf("deduct failed: %v", err)); updateErr != nil {
 				logger.Error("update round failed status error", "round_id", roundID, "error", updateErr)
@@ -231,7 +232,7 @@ func (p *PacketOrchestrator) initLaterRoundAndDeduct(ctx context.Context, roomID
 }
 
 // initSystemRoundAndDeduct 系统发包轮次初始化与扣款。
-func (p *PacketOrchestrator) initSystemRoundAndDeduct(ctx context.Context, roomID string, meta *domain.RoomMeta, roundNo int, totalAmount int64, reason string) (*initRoundResult, error) {
+func (p *PacketOrchestrator) initSystemRoundAndDeduct(ctx context.Context, roomID string, meta *room.RoomMeta, roundNo int, totalAmount int64, reason string) (*initRoundResult, error) {
 	roomIDInt := converter.ParseID(roomID)
 	sessionID := roomIDInt
 	if meta.CurrentSessionID != "" {
@@ -251,7 +252,7 @@ func (p *PacketOrchestrator) initSystemRoundAndDeduct(ctx context.Context, roomI
 			Reason:       reason,
 		}
 
-		err := p.deductSvc.DeductForSystemPacket(ctx, deductReq)
+		err := p.settleAppService.DeductForSystemPacket(ctx, deductReq)
 		if err != nil {
 			if updateErr := p.updateRoundFailed(ctx, roundID, fmt.Sprintf("deduct failed: %v", err)); updateErr != nil {
 				logger.Error("update round failed status error", "round_id", roundID, "error", updateErr)

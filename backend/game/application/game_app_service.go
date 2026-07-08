@@ -8,7 +8,11 @@ import (
 	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/push"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/room"
+	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/scheduler"
 )
 
@@ -21,11 +25,11 @@ import (
 // 保持 gRPC 接口与外部依赖完全兼容。
 // GrabPacket/OnRobotGrabbed 保留在 facade 中，结算调用 roundSettlementService.SettleRound。
 type GameAppService struct {
-	repo                   domain.RoomRepository
+	repo                   repository.RoomRepository
 	grabService            *GrabService
-	broadcaster            domain.Broadcaster
+	broadcaster            events.Broadcaster
 	scheduler              *scheduler.TimeoutScheduler
-	taskRunner             *async.TaskRunner
+	taskRunner             async.TaskRunner
 	packetOrchestrator     *PacketOrchestrator
 	roundSettlementService *RoundSettlementService
 	gameLifecycleService   *GameLifecycleService
@@ -38,11 +42,11 @@ type GameAppService struct {
 // 与原构造函数相比移除了 3 个死字段对应的参数：publisher、refundSvc、rewardController
 // （原 game_app_service.go 中从未引用这些字段，属于历史遗留死代码）。
 func NewGameAppService(
-	repo domain.RoomRepository,
+	repo repository.RoomRepository,
 	grabService *GrabService,
-	broadcaster domain.Broadcaster,
+	broadcaster events.Broadcaster,
 	schedulerInst *scheduler.TimeoutScheduler,
-	taskRunner *async.TaskRunner,
+	taskRunner async.TaskRunner,
 	packetOrchestrator *PacketOrchestrator,
 	roundSettlementService *RoundSettlementService,
 	gameLifecycleService *GameLifecycleService,
@@ -123,7 +127,7 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 		return nil, message.NewError(message.CodeRoomNotFound)
 	}
 
-	if meta.Status != domain.RoomStatusPlaying {
+	if meta.Status != room.RoomStatusPlaying {
 		return nil, message.NewError(message.CodeGameNotStarted)
 	}
 
@@ -144,7 +148,7 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushPacketGrabbed, &push.PacketGrabbedPush{
 			RoomID:   req.RoomID,
 			RoundID:  roundID,
 			PacketID: result.PacketID,
@@ -187,7 +191,7 @@ func (s *GameAppService) GrabPacket(ctx context.Context, req *GrabPacketRequest)
 // to all players and trigger round settlement if this was the last packet.
 // 与原 GameAppService.OnRobotGrabbed 业务逻辑完全一致，仅将内部 settleRound 调用
 // 改为跨 Service 调用 roundSettlementService.SettleRound。
-func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, userID string, result *domain.GrabResult) {
+func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, userID string, result *round.GrabResult) {
 	player, _ := s.repo.GetPlayer(ctx, roomID, userID)
 	nickname := ""
 	if player != nil {
@@ -195,7 +199,7 @@ func (s *GameAppService) OnRobotGrabbed(ctx context.Context, roomID, roundID, us
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, roomID, message.PushPacketGrabbed, &message.PacketGrabbedPush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushPacketGrabbed, &push.PacketGrabbedPush{
 			RoomID:   roomID,
 			RoundID:  roundID,
 			PacketID: result.PacketID,

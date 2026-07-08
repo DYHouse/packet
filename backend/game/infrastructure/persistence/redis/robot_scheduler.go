@@ -2,38 +2,40 @@ package redis
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/google/uuid"
 )
 
 // RobotSchedulerRedis 机器人调度器状态 Redis 服务
 type RobotSchedulerRedis struct {
-	redis *cRedis.Client
+	redis cRedis.RedisClient
 }
 
 // NewRobotSchedulerRedis 创建机器人调度器状态 Redis 服务实例
-func NewRobotSchedulerRedis(redis *cRedis.Client) *RobotSchedulerRedis {
+func NewRobotSchedulerRedis(redis cRedis.RedisClient) *RobotSchedulerRedis {
 	return &RobotSchedulerRedis{redis: redis}
 }
 
 // AddRobotToRoom 添加机器人到房间
 func (s *RobotSchedulerRedis) AddRobotToRoom(ctx context.Context, roomID string, userID int64) error {
-	return s.redis.SAdd(ctx, RobotRoomKey(roomID), converter.FormatID(userID)).Err()
+	return s.redis.SAdd(ctx, rediskeys.RobotRoomKey(roomID), converter.FormatID(userID)).Err()
 }
 
 // RemoveRobotFromRoom 从房间移除机器人
 func (s *RobotSchedulerRedis) RemoveRobotFromRoom(ctx context.Context, roomID string, userID int64) error {
-	return s.redis.SRem(ctx, RobotRoomKey(roomID), converter.FormatID(userID)).Err()
+	return s.redis.SRem(ctx, rediskeys.RobotRoomKey(roomID), converter.FormatID(userID)).Err()
 }
 
 // GetRoomRobots 获取房间内所有机器人
 func (s *RobotSchedulerRedis) GetRoomRobots(ctx context.Context, roomID string) ([]int64, error) {
-	members, err := s.redis.SMembers(ctx, RobotRoomKey(roomID)).Result()
+	members, err := s.redis.SMembers(ctx, rediskeys.RobotRoomKey(roomID)).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +53,7 @@ func (s *RobotSchedulerRedis) GetRoomRobots(ctx context.Context, roomID string) 
 
 // ClearRoomRobots 清空房间机器人
 func (s *RobotSchedulerRedis) ClearRoomRobots(ctx context.Context, roomID string) error {
-	return s.redis.Del(ctx, RobotRoomKey(roomID)).Err()
+	return s.redis.Del(ctx, rediskeys.RobotRoomKey(roomID)).Err()
 }
 
 // AcquireAssignLock 获取分配锁
@@ -59,7 +61,7 @@ func (s *RobotSchedulerRedis) ClearRoomRobots(ctx context.Context, roomID string
 // token 用于 ReleaseAssignLock 校验持有者，防止 TTL 过期后误删其他持有者的锁
 func (s *RobotSchedulerRedis) AcquireAssignLock(ctx context.Context, userID int64, roomID string, ttl time.Duration) (bool, string, error) {
 	token := uuid.New().String()
-	ok, err := s.redis.SetNX(ctx, RobotAssignLockKey(userID), token, ttl).Result()
+	ok, err := s.redis.SetNX(ctx, rediskeys.RobotAssignLockKey(userID), token, ttl).Result()
 	if err != nil {
 		return false, "", err
 	}
@@ -69,7 +71,7 @@ func (s *RobotSchedulerRedis) AcquireAssignLock(ctx context.Context, userID int6
 // ReleaseAssignLock 释放分配锁（需校验 token）
 // 若 TTL 已过期被他人抢占，GET != token，不会 del，保护新持有者
 func (s *RobotSchedulerRedis) ReleaseAssignLock(ctx context.Context, userID int64, token string) error {
-	return lockScripts.ReleaseLockScript.Run(ctx, s.redis, []string{RobotAssignLockKey(userID)}, token).Err()
+	return lockScripts.ReleaseLockScript.Run(ctx, s.redis, []string{rediskeys.RobotAssignLockKey(userID)}, token).Err()
 }
 
 // AcquireRoomAssignLock 获取房间分配限流锁
@@ -77,7 +79,7 @@ func (s *RobotSchedulerRedis) ReleaseAssignLock(ctx context.Context, userID int6
 // token 用于 ReleaseRoomAssignLock 校验持有者，防止 TTL 过期后误删其他持有者的锁
 func (s *RobotSchedulerRedis) AcquireRoomAssignLock(ctx context.Context, roomID string, ttl time.Duration) (bool, string, error) {
 	token := uuid.New().String()
-	ok, err := s.redis.SetNX(ctx, RobotRoomAssignLockKey(roomID), token, ttl).Result()
+	ok, err := s.redis.SetNX(ctx, rediskeys.RobotRoomAssignLockKey(roomID), token, ttl).Result()
 	if err != nil {
 		return false, "", err
 	}
@@ -87,17 +89,17 @@ func (s *RobotSchedulerRedis) AcquireRoomAssignLock(ctx context.Context, roomID 
 // ReleaseRoomAssignLock 释放房间分配限流锁（需校验 token）
 // 若 TTL 已过期被他人抢占，GET != token，不会 del，保护新持有者
 func (s *RobotSchedulerRedis) ReleaseRoomAssignLock(ctx context.Context, roomID string, token string) error {
-	return lockScripts.ReleaseLockScript.Run(ctx, s.redis, []string{RobotRoomAssignLockKey(roomID)}, token).Err()
+	return lockScripts.ReleaseLockScript.Run(ctx, s.redis, []string{rediskeys.RobotRoomAssignLockKey(roomID)}, token).Err()
 }
 
 // SetRecycleCooldown 设置回收冷却
 func (s *RobotSchedulerRedis) SetRecycleCooldown(ctx context.Context, userID int64, ttl time.Duration) error {
-	return s.redis.Set(ctx, RobotRecycleCooldownKey(userID), 1, ttl).Err()
+	return s.redis.Set(ctx, rediskeys.RobotRecycleCooldownKey(userID), 1, ttl).Err()
 }
 
 // IsInRecycleCooldown 检查是否在回收冷却中
 func (s *RobotSchedulerRedis) IsInRecycleCooldown(ctx context.Context, userID int64) (bool, error) {
-	n, err := s.redis.Exists(ctx, RobotRecycleCooldownKey(userID)).Result()
+	n, err := s.redis.Exists(ctx, rediskeys.RobotRecycleCooldownKey(userID)).Result()
 	if err != nil {
 		return false, err
 	}
@@ -106,20 +108,50 @@ func (s *RobotSchedulerRedis) IsInRecycleCooldown(ctx context.Context, userID in
 
 // AddToActiveSet 添加到活跃集合
 func (s *RobotSchedulerRedis) AddToActiveSet(ctx context.Context, userID int64) error {
-	return s.redis.SAdd(ctx, RobotSchedulerActiveKey(), converter.FormatID(userID)).Err()
+	return s.redis.SAdd(ctx, rediskeys.RobotSchedulerActiveKey(), converter.FormatID(userID)).Err()
 }
 
 // RemoveFromActiveSet 从活跃集合移除
 func (s *RobotSchedulerRedis) RemoveFromActiveSet(ctx context.Context, userID int64) error {
-	return s.redis.SRem(ctx, RobotSchedulerActiveKey(), converter.FormatID(userID)).Err()
+	return s.redis.SRem(ctx, rediskeys.RobotSchedulerActiveKey(), converter.FormatID(userID)).Err()
 }
 
 // IsActiveRobot 检查是否为活跃机器人
 func (s *RobotSchedulerRedis) IsActiveRobot(ctx context.Context, userID int64) (bool, error) {
-	return s.redis.SIsMember(ctx, RobotSchedulerActiveKey(), converter.FormatID(userID)).Result()
+	return s.redis.SIsMember(ctx, rediskeys.RobotSchedulerActiveKey(), converter.FormatID(userID)).Result()
 }
 
 // GetActiveCount 获取活跃机器人数量
 func (s *RobotSchedulerRedis) GetActiveCount(ctx context.Context) (int64, error) {
-	return s.redis.SCard(ctx, RobotSchedulerActiveKey()).Result()
+	return s.redis.SCard(ctx, rediskeys.RobotSchedulerActiveKey()).Result()
+}
+
+// ScanRoomIDs 扫描匹配指定前缀的房间 key，返回房间 ID 列表。
+// prefix 应为带尾随冒号的 key 前缀拼接 "*"（如 "cashparty:room:hash:*"）。
+// 房间 ID 取 key 中最后一个冒号后的段。
+func (s *RobotSchedulerRedis) ScanRoomIDs(ctx context.Context, prefix string, count int64) ([]string, error) {
+	var cursor uint64
+	roomIDs := make([]string, 0)
+	for {
+		keys, nextCursor, err := s.redis.Scan(ctx, cursor, prefix, count).Result()
+		if err != nil {
+			return roomIDs, err
+		}
+		for _, key := range keys {
+			idx := strings.LastIndex(key, ":")
+			if idx < 0 || idx == len(key)-1 {
+				continue
+			}
+			roomID := key[idx+1:]
+			if roomID == "" {
+				continue
+			}
+			roomIDs = append(roomIDs, roomID)
+		}
+		if nextCursor == 0 {
+			break
+		}
+		cursor = nextCursor
+	}
+	return roomIDs, nil
 }

@@ -14,7 +14,7 @@ import (
 
 // newTestRedis 创建测试用 miniredis 和 cRedis.Client
 // 复用 scripts/sliding_window_test.go 中的创建模式
-func newTestRedis(t *testing.T) (*cRedis.Client, *miniredis.Miniredis) {
+func newTestRedis(t *testing.T) (cRedis.RedisClient, *miniredis.Miniredis) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {

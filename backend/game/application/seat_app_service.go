@@ -7,12 +7,17 @@ import (
 
 	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/push"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/scheduler"
 	"github.com/cashparty/backend/settlement/dto"
@@ -20,18 +25,18 @@ import (
 )
 
 type SeatAppService struct {
-	repo              domain.RoomRepository
-	dbRepo            domain.DBRepository
-	broadcaster       domain.Broadcaster
-	publisher         domain.RoomEventPublisher
+	repo              repository.RoomRepository
+	dbRepo            repository.DBRepository
+	broadcaster       events.Broadcaster
+	publisher         events.RoomEventPublisher
 	scheduler         *scheduler.TimeoutScheduler
 	settlementService *settlementService.BalanceQueryService
 	gameService       *GameAppService
 	roomAppService    *RoomAppService
-	redis             *cRedis.Client
+	redis             cRedis.RedisClient
 	balanceService    *settlementService.BalanceService
 	readyCountdown    time.Duration
-	taskRunner        *async.TaskRunner
+	taskRunner        async.TaskRunner
 }
 
 // SetRoomAppService 注入 RoomAppService（用于 CancelSeat 后触发自动替补）
@@ -40,17 +45,17 @@ func (s *SeatAppService) SetRoomAppService(svc *RoomAppService) {
 }
 
 func NewSeatAppService(
-	repo domain.RoomRepository,
-	dbRepo domain.DBRepository,
-	broadcaster domain.Broadcaster,
-	publisher domain.RoomEventPublisher,
+	repo repository.RoomRepository,
+	dbRepo repository.DBRepository,
+	broadcaster events.Broadcaster,
+	publisher events.RoomEventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
 	settlementSvc *settlementService.BalanceQueryService,
 	gameService *GameAppService,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	balanceService *settlementService.BalanceService,
 	readyCountdown time.Duration,
-	taskRunner *async.TaskRunner,
+	taskRunner async.TaskRunner,
 ) *SeatAppService {
 	return &SeatAppService{
 		repo:              repo,
@@ -111,7 +116,7 @@ func (s *SeatAppService) SelectSeat(ctx context.Context, req *SelectSeatRequest)
 	}
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar)); err != nil {
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar)); err != nil {
 			logger.Warn("publish seat_select event failed",
 				"room_id", req.RoomID,
 				"user_id", req.UserID,
@@ -153,7 +158,7 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 		return nil, message.NewError(message.CodeRoomNotFound)
 	}
 
-	if meta.Status != domain.RoomStatusWaiting {
+	if meta.Status != room.RoomStatusWaiting {
 		return nil, message.NewError(message.CodeGameInProgress)
 	}
 
@@ -179,7 +184,7 @@ func (s *SeatAppService) CancelSeat(ctx context.Context, req *CancelSeatRequest)
 	}
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname)); err != nil {
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewSeatCancelEvent(req.RoomID, req.UserID, freedSeatNo, nickname)); err != nil {
 			logger.Warn("publish seat_cancel event failed",
 				"room_id", req.RoomID,
 				"user_id", req.UserID,
@@ -247,13 +252,13 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		}
 
 		if !balanceResult.IsSufficient {
-			return nil, message.NewErrorWithMsg(message.CodeInsufficientBalance, message.GetInsufficientBalanceMsg(balanceResult.RequiredFee, balanceResult.Balance))
+			return nil, message.NewErrorWithMsg(message.CodeInsufficientBalance, i18n.GetInsufficientBalanceMsg(balanceResult.RequiredFee, balanceResult.Balance))
 		}
 	}
 
-	roomHashKey := redis.RoomHashKey(req.RoomID)
-	playersKey := redis.RoomPlayersKey(req.RoomID)
-	spectatorsKey := redis.RoomSpectatorsKey(req.RoomID)
+	roomHashKey := rediskeys.RoomHashKey(req.RoomID)
+	playersKey := rediskeys.RoomPlayersKey(req.RoomID)
+	spectatorsKey := rediskeys.RoomSpectatorsKey(req.RoomID)
 	now := time.Now().Unix()
 
 	result, err := scripts.PlayerReady.Run(ctx, s.redis,
@@ -269,7 +274,7 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 	}
 
 	code := converter.ParseInt(result[0])
-	if code != 1 {
+	if code != 0 {
 		luaErr := domain.MapLuaError(code)
 		logger.Warn("player ready failed", "lua_code", code, "room_id", req.RoomID, "user_id", req.UserID)
 		return nil, luaErr
@@ -293,7 +298,7 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		}
 		json.Unmarshal([]byte(playerDataStr), &player)
 
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReadyEvent(
 			req.RoomID, req.UserID, player.SeatNo, player.Nickname, player.Avatar)); err != nil {
 			logger.Warn("publish player_ready event failed",
 				"room_id", req.RoomID,
@@ -314,7 +319,7 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 
 	if shouldStartCountdown == 1 {
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushCountdownStart, &message.CountdownStartPush{
+			s.broadcaster.Broadcast(ctx, req.RoomID, message.PushCountdownStart, &push.CountdownStartPush{
 				RoomID:    req.RoomID,
 				Countdown: int32(s.readyCountdown.Seconds()),
 			}, "")
@@ -359,12 +364,12 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 }
 
 func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID string) {
-	roomHashKey := redis.RoomHashKey(roomID)
-	playersKey := redis.RoomPlayersKey(roomID)
-	spectatorsKey := redis.RoomSpectatorsKey(roomID)
-	seatsKey := redis.RoomSeatsKey(roomID)
-	seatOwnerKey := redis.RoomSeatOwnerKey(roomID)
-	userRoomKey := redis.PlayerRoomKey(userID)
+	roomHashKey := rediskeys.RoomHashKey(roomID)
+	playersKey := rediskeys.RoomPlayersKey(roomID)
+	spectatorsKey := rediskeys.RoomSpectatorsKey(roomID)
+	seatsKey := rediskeys.RoomSeatsKey(roomID)
+	seatOwnerKey := rediskeys.RoomSeatOwnerKey(roomID)
+	userRoomKey := rediskeys.PlayerRoomKey(userID)
 
 	result, err := scripts.HandleSeatTimeout.Run(ctx, s.redis,
 		[]string{roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey, userRoomKey},
@@ -397,7 +402,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 		return
 	}
 
-	if code != 1 {
+	if code != 0 {
 		logger.Warn("seat timeout failed",
 			"room_id", roomID,
 			"user_id", userID,
@@ -406,7 +411,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	}
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout)); err != nil {
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout)); err != nil {
 			logger.Warn("publish spectator_kick event failed",
 				"room_id", roomID,
 				"user_id", userID,
@@ -416,11 +421,11 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.BroadcastToUser(ctx, userID, message.PushKicked, &message.KickedPush{
+		s.broadcaster.BroadcastToUser(ctx, userID, message.PushKicked, &push.KickedPush{
 			RoomID:  roomID,
 			UserID:  userID,
 			Reason:  message.ReasonSeatTimeout,
-			Message: message.GetKickMessage(message.ReasonSeatTimeout),
+			Message: i18n.GetKickMessage(message.ReasonSeatTimeout),
 		})
 
 		stateData, _ := s.repo.GetRoomStateData(ctx, roomID)

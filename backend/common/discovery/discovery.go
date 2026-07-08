@@ -24,7 +24,7 @@ type ServiceClient interface {
 }
 
 type nacosResolverBuilder struct {
-	nacosClient *nacos.Client
+	nacosClient nacos.NacosClient
 	appCtx      context.Context
 }
 
@@ -47,7 +47,7 @@ func (b *nacosResolverBuilder) Scheme() string {
 }
 
 type nacosResolver struct {
-	nacosClient *nacos.Client
+	nacosClient nacos.NacosClient
 	serviceName string
 	cc          resolver.ClientConn
 	cancel      context.CancelFunc
@@ -121,13 +121,13 @@ func (r *nacosResolver) Close() {
 }
 
 type ServiceDiscovery struct {
-	nacosClient *nacos.Client
+	nacosClient nacos.NacosClient
 	connections sync.Map
 	clients     sync.Map
 	builder     *nacosResolverBuilder
 }
 
-func NewServiceDiscovery(nacosClient *nacos.Client, appCtx context.Context) *ServiceDiscovery {
+func NewServiceDiscovery(nacosClient nacos.NacosClient, appCtx context.Context) *ServiceDiscovery {
 	return &ServiceDiscovery{
 		nacosClient: nacosClient,
 		builder:     &nacosResolverBuilder{nacosClient: nacosClient, appCtx: appCtx},
@@ -197,30 +197,4 @@ func (c *genericServiceClient) Close() error {
 		return c.conn.Close()
 	}
 	return nil
-}
-
-type UserSaverAdapter struct {
-	discovery *ServiceDiscovery
-}
-
-func NewUserSaverAdapter(discovery *ServiceDiscovery) *UserSaverAdapter {
-	return &UserSaverAdapter{discovery: discovery}
-}
-
-func (a *UserSaverAdapter) SaveUser(ctx context.Context, thirdPartyUserID, nickname, avatar, ip, deviceID string) (string, string, error) {
-	client, err := a.discovery.GetClient("game-service")
-	if err != nil {
-		return "", "", err
-	}
-	resp, err := client.SaveUser(ctx, &commonPb.SaveUserRequest{
-		UserId:   thirdPartyUserID,
-		Nickname: nickname,
-		Avatar:   avatar,
-		Ip:       ip,
-		DeviceId: deviceID,
-	})
-	if err != nil {
-		return "", "", err
-	}
-	return resp.Id, resp.Avatar, nil
 }

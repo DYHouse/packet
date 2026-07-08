@@ -11,7 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func newSlidingWindowTestClient(t *testing.T) (*miniredis.Miniredis, *cRedis.Client) {
+func newSlidingWindowTestClient(t *testing.T) (*miniredis.Miniredis, cRedis.RedisClient) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {

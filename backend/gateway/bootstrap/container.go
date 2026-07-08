@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"time"
 
 	"github.com/cashparty/backend/common/async"
@@ -18,11 +19,12 @@ import (
 	"github.com/cashparty/backend/gateway/server"
 	"github.com/cashparty/backend/gateway/service"
 	"github.com/cashparty/backend/gateway/store"
+	commonPb "github.com/cashparty/backend/proto/common"
 )
 
 type Container struct {
 	Config              *gatewayConfig.Config
-	Redis               *cRedis.Client
+	Redis               cRedis.RedisClient
 	KafkaConsumer       *kafka.Consumer
 	ConnMgr             *connection.Manager
 	BroadcastSvc        *broadcast.BroadcastService
@@ -38,11 +40,11 @@ type Container struct {
 	GameStore           *store.MemoryGameStore
 	GameHandler         *handler.GameHandler
 	Server              *server.Server
-	TaskRunner          *async.TaskRunner
+	TaskRunner          async.TaskRunner
 	nodeID              string
 }
 
-func NewContainer(cfg *gatewayConfig.Config, redis *cRedis.Client, nodeID string, taskRunner *async.TaskRunner) *Container {
+func NewContainer(cfg *gatewayConfig.Config, redis cRedis.RedisClient, nodeID string, taskRunner async.TaskRunner) *Container {
 	connMgr := connection.NewManager(&connection.ManagerConfig{
 		MaxConnections:       cfg.Gateway.MaxConnections,
 		DisconnectTimeout:    30 * time.Second,
@@ -89,7 +91,7 @@ func (c *Container) InitServices(serviceDiscovery *discovery.ServiceDiscovery, r
 
 	var userSaver service.UserSaver
 	if serviceDiscovery != nil {
-		userSaver = discovery.NewUserSaverAdapter(serviceDiscovery)
+		userSaver = &userSaverAdapter{discovery: serviceDiscovery}
 	}
 	c.GameService = service.NewGameService(c.Config, c.TokenService, userSaver)
 	c.TestService = service.NewTestService(c.TokenService, userSaver)
@@ -150,4 +152,28 @@ func (c *Container) Stop() {
 	if c.ConnMgr != nil {
 		c.ConnMgr.Stop()
 	}
+}
+
+// userSaverAdapter 通过 gRPC 调用 game-service 保存用户，实现 service.UserSaver 接口。
+type userSaverAdapter struct {
+	discovery *discovery.ServiceDiscovery
+}
+
+// SaveUser 委托 ServiceDiscovery 获取 game-service 的 gRPC 客户端，调用其 SaveUser 方法。
+func (a *userSaverAdapter) SaveUser(ctx context.Context, userID, nickname, avatar, ip, deviceID string) (string, string, error) {
+	client, err := a.discovery.GetClient("game-service")
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := client.SaveUser(ctx, &commonPb.SaveUserRequest{
+		UserId:   userID,
+		Nickname: nickname,
+		Avatar:   avatar,
+		Ip:       ip,
+		DeviceId: deviceID,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return resp.Id, resp.Avatar, nil
 }

@@ -18,7 +18,7 @@ type VirtualBalanceSyncScheduler struct {
 
 // NewVirtualBalanceSyncScheduler creates a new VirtualBalanceSyncScheduler.
 // interval <= 0 时设默认 30s，防止 time.NewTicker(0) panic。
-func NewVirtualBalanceSyncScheduler(virtualBalance settlementDomain.VirtualBalanceService, interval time.Duration, redis *cRedis.Client) *VirtualBalanceSyncScheduler {
+func NewVirtualBalanceSyncScheduler(virtualBalance settlementDomain.VirtualBalanceService, interval time.Duration, redis cRedis.RedisClient) *VirtualBalanceSyncScheduler {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}

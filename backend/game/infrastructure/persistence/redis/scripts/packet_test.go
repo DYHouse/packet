@@ -11,7 +11,7 @@ import (
 )
 
 // 本文件复用 round_test.go 中的 setupMiniRedis / must / resultArr / codeOf / parseTestLuaCode / resultCode 共享辅助函数。
-// setupMiniRedis 返回 3 个值：(*miniredis.Miniredis, *cRedis.Client, context.Context)，并在内部调用 cRedis.SetUseEvalSHA(false)。
+// setupMiniRedis 返回 3 个值：(*miniredis.Miniredis, cRedis.RedisClient, context.Context)，并在内部调用 cRedis.SetUseEvalSHA(false)。
 
 // 测试用常量
 const (
@@ -31,7 +31,7 @@ const (
 // ARGV: [userID, now, grabTimeout, roomID, packetID, packetDataTTL]
 // =============================================================================
 
-func runGrabPacket(t *testing.T, ctx context.Context, c *cRedis.Client, userID string) []interface{} {
+func runGrabPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, userID string) []interface{} {
 	t.Helper()
 	keys := []string{
 		rediskeys.RoundAvailablePacketsKey(testRoundID),
@@ -54,7 +54,7 @@ func runGrabPacket(t *testing.T, ctx context.Context, c *cRedis.Client, userID s
 }
 
 // setupGrabPacketReady 预置 phase=GRABBING + 玩家数据（luaGrabPacket 成功路径的前置）。
-func setupGrabPacketReady(t *testing.T, ctx context.Context, c *cRedis.Client) {
+func setupGrabPacketReady(t *testing.T, ctx context.Context, c cRedis.RedisClient) {
 	t.Helper()
 	must(t, c.HSet(ctx, rediskeys.RoomPlayersKey(testRoomID), testUserID, `{"user_id":"user-1"}`).Err())
 	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoundID),
@@ -166,7 +166,7 @@ func TestGrabPacketInfoNotFound(t *testing.T) {
 //        packetDataTTL, roundStateTTL]
 // =============================================================================
 
-func runSendPacket(t *testing.T, ctx context.Context, c *cRedis.Client, scenario, roundNo int) []interface{} {
+func runSendPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, scenario, roundNo int) []interface{} {
 	t.Helper()
 	keys := []string{
 		rediskeys.RoomHashKey(testRoomID),

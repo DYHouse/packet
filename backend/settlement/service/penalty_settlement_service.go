@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/logger"
@@ -14,27 +15,32 @@ import (
 
 // PenaltySettlementService 负责罚款相关结算操作：从用户扣款上交平台、将平台罚款分配给指定接收方。
 // 从原 SettlementService 拆分而来（P0-10）。
+// dbRepo 用于含 RPC 用例中对 DB 写入片段编排事务（短事务原则：禁止事务内 RPC）。
 type PenaltySettlementService struct {
 	platform       platform.Client
+	dbRepo         domain.DBRepository
 	billRepo       domain.BillRepository
 	traceIDGen     *TraceIDGenerator
 	cfg            *config.PlatformConfig
 	userIDConvert  *UserIDConvertService
 	callMgr        *PlatformCallManager
 	robotChecker   RobotChecker
-	virtualBalance *VirtualBalanceService
+	virtualBalance domain.VirtualBalanceService
+	exceptionMgr   *ExceptionManager
 }
 
 // NewPenaltySettlementService 构造 PenaltySettlementService 实例。
 func NewPenaltySettlementService(
 	platformClient platform.Client,
+	dbRepo domain.DBRepository,
 	billRepo domain.BillRepository,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
 	robotChecker RobotChecker,
-	virtualBalance *VirtualBalanceService,
+	virtualBalance domain.VirtualBalanceService,
+	exceptionMgr *ExceptionManager,
 ) *PenaltySettlementService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -42,6 +48,7 @@ func NewPenaltySettlementService(
 
 	return &PenaltySettlementService{
 		platform:       platformClient,
+		dbRepo:         dbRepo,
 		billRepo:       billRepo,
 		traceIDGen:     traceIDGen,
 		cfg:            cfg,
@@ -49,6 +56,7 @@ func NewPenaltySettlementService(
 		callMgr:        callMgr,
 		robotChecker:   robotChecker,
 		virtualBalance: virtualBalance,
+		exceptionMgr:   exceptionMgr,
 	}
 }
 
@@ -83,7 +91,13 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 		Status:       dto.BillStatusProcessing,
 		Remark:       fmt.Sprintf("惩罚扣款,类型:%s,回合:%d", req.PenaltyType, req.RoundNo),
 	}
-	isRobot := s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID)
+	if s.robotChecker == nil {
+		return fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, req.UserID)
+	if err != nil {
+		return fmt.Errorf("check robot failed: %w", err)
+	}
 	playerBill.IsRobot = isRobot
 
 	platformBill := &model.BillRecord{
@@ -99,8 +113,10 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 		Remark:       fmt.Sprintf("惩罚收入,来自用户:%d,类型:%s", req.UserID, req.PenaltyType),
 	}
 
-	// 同一事务创建两个 Bill，保证账目配对
-	if err := s.billRepo.CreateBillsPairInTransaction(ctx, playerBill, platformBill); err != nil {
+	// 同一事务创建两个 Bill，保证账目配对（含 RPC，事务仅包裹 DB 写入片段）
+	if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+		return tx.BillRepo().CreateBillsPair(ctx, playerBill, platformBill)
+	}); err != nil {
 		return fmt.Errorf("create penalty bills failed: %w", err)
 	}
 
@@ -156,9 +172,25 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 
 	balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
 	if err != nil {
-		logger.Error("parse balance amount failed after successful debit, mark bill as success with balance=0",
+		// ParseAmount 失败：平台可能已实际扣款但响应余额无法解析。
+		// 资金安全要求 fail-closed：标记账单为 Failed 并创建异常记录供人工对账，不得标记为 Success。
+		logger.Error("parse balance amount failed after successful debit, mark bill as failed",
 			"bill_id", playerBill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
-		balanceAfter = 0
+		if updateErr := s.billRepo.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
+			logger.Error("update bill to failed after parse amount error", "bill_id", playerBill.ID, "error", updateErr)
+		}
+		if callLog != nil {
+			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+				ID:       callLog.ID,
+				RespBody: result,
+				Status:   model.CallLogStatusSuccess,
+			})
+		}
+		detail := fmt.Sprintf("罚款扣款 ParseAmount 解析失败,平台可能已扣款但余额无法解析,需人工对账, user_id: %d, raw_amount: %s, error: %s", req.UserID, result.Data.Balance.Amount, err.Error())
+		if excErr := s.createExceptionRecord(ctx, playerBill, model.ExceptionTypeDebitFailed, detail); excErr != nil {
+			logger.Error("create exception record for parse amount failure failed", "bill_id", playerBill.ID, "error", excErr)
+		}
+		return fmt.Errorf("parse amount failed for penalty debit, bill_id: %d, user_id: %d: %w", playerBill.ID, req.UserID, err)
 	}
 	if err := s.billRepo.UpdateBillSuccess(ctx, playerBill.ID, dto.BillStatusProcessing, 0, balanceAfter); err != nil {
 		return err
@@ -175,12 +207,13 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 	return nil
 }
 
-func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Context, req *dto.PenaltyDistributeRequest) error {
+func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Context, tx domain.Transaction, req *dto.PenaltyDistributeRequest) error {
 	roundTraceID := s.traceIDGen.GeneratePenaltyDistTraceID(req.RoomID, req.SessionID)
+	billRepo := tx.BillRepo()
 
 	// 幂等检查：若已存在同 traceID + BillType + PlatformAccountID 的 Success 状态 bill，直接返回 nil。
 	// DistributePenaltyFromPlatform 的所有 bill 都是 Success 状态（不涉及平台调用），所以一次成功即可跳过。
-	existingBill, err := s.billRepo.GetBillByTraceTypeAndUser(ctx, roundTraceID, dto.BillTypePenaltyDistribute, dto.PlatformAccountID)
+	existingBill, err := billRepo.GetBillByTraceTypeAndUser(ctx, roundTraceID, dto.BillTypePenaltyDistribute, dto.PlatformAccountID)
 	if err == nil && existingBill != nil && existingBill.Status == dto.BillStatusSuccess {
 		return nil
 	}
@@ -223,10 +256,39 @@ func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Con
 				Status:       dto.BillStatusSuccess,
 				Remark:       fmt.Sprintf("罚款分红,总额:%d,原因:%s", req.Amount, req.Reason),
 			}
-			shareBill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, recipientID)
+			if s.robotChecker == nil {
+				return fmt.Errorf("robot checker is nil")
+			}
+			isRobot, err := s.robotChecker.IsRobot(ctx, recipientID)
+			if err != nil {
+				return fmt.Errorf("check robot failed: %w", err)
+			}
+			shareBill.IsRobot = isRobot
 			allBills = append(allBills, shareBill)
 		}
 	}
 
-	return s.billRepo.CreateBillsInTransaction(ctx, allBills)
+	return billRepo.CreateBills(ctx, allBills)
+}
+
+// createExceptionRecord 创建异常记录并关联到账单，供人工对账。
+func (s *PenaltySettlementService) createExceptionRecord(ctx context.Context, bill *model.BillRecord, exceptionType model.ExceptionType, detail string) error {
+	exception := &model.ExceptionRecord{
+		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(bill.ID, strconv.Itoa(int(exceptionType))),
+		ExceptionType:   exceptionType,
+		BillID:          bill.ID,
+		RoundTraceID:    bill.RoundTraceID,
+		RoundID:         bill.RoundID,
+		BillType:        bill.BillType,
+		UserID:          bill.UserID,
+		Amount:          bill.Amount,
+		Status:          model.ExceptionStatusPending,
+		ExceptionDetail: detail,
+	}
+
+	if err := s.exceptionMgr.Create(ctx, exception); err != nil {
+		return err
+	}
+
+	return s.billRepo.UpdateBillExceptionID(ctx, bill.ID, exception.ID)
 }

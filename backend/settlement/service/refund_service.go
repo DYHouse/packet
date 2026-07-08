@@ -9,18 +9,21 @@ import (
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
 )
 
+// RefundService 负责退款申请、审批与执行。
+// dbRepo 用于跨表事务方法（同时更新 refund_audit 与 bill_record）的事务编排。
 type RefundService struct {
 	platform        platform.Client
+	dbRepo          domain.DBRepository
 	billRepo        domain.BillRepository
 	refundAuditRepo domain.RefundAuditRepository
-	redis           *cRedis.Client
+	redis           cRedis.RedisClient
 	traceIDGen      *TraceIDGenerator
 	cfg             *config.PlatformConfig
 	lockCfg         *config.LockConfig
@@ -30,9 +33,10 @@ type RefundService struct {
 
 func NewRefundService(
 	platformClient platform.Client,
+	dbRepo domain.DBRepository,
 	billRepo domain.BillRepository,
 	refundAuditRepo domain.RefundAuditRepository,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
@@ -47,6 +51,7 @@ func NewRefundService(
 	}
 	return &RefundService{
 		platform:        platformClient,
+		dbRepo:          dbRepo,
 		billRepo:        billRepo,
 		refundAuditRepo: refundAuditRepo,
 		redis:           redis,
@@ -59,9 +64,9 @@ func NewRefundService(
 }
 
 func (s *RefundService) ApplyForRefund(ctx context.Context, req *dto.RefundApplyRequest) (string, error) {
-	lockKey := redis.RefundApplyLockKey(req.BillID)
+	lockKey := rediskeys.RefundApplyLockKey(req.BillID)
 	var refundOrderNo string
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.RefundApplyLockTTL.Seconds()), func() error {
+	err := lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.RefundApplyLockTTL.Seconds()), func() error {
 		var applyErr error
 		refundOrderNo, applyErr = s.applyForRefundLocked(ctx, req)
 		return applyErr
@@ -109,7 +114,10 @@ func (s *RefundService) applyForRefundLocked(ctx context.Context, req *dto.Refun
 		AppliedBy:     req.AppliedBy,
 	}
 
-	if err := s.refundAuditRepo.CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo); err != nil {
+	// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
+	if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+		return tx.RefundAuditRepo().CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
+	}); err != nil {
 		return "", err
 	}
 
@@ -126,8 +134,8 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *dto.RefundApprov
 		return fmt.Errorf("refund status is not pending")
 	}
 
-	lockKey := redis.RefundLockKey(req.RefundOrderNo)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.RefundApproveLockTTL.Seconds()), func() error {
+	lockKey := rediskeys.RefundLockKey(req.RefundOrderNo)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.RefundApproveLockTTL.Seconds()), func() error {
 		// 锁内二次检查状态，防止并发重复退款
 		refund, err := s.refundAuditRepo.GetRefundAuditByOrderNo(ctx, req.RefundOrderNo)
 		if err != nil {
@@ -215,7 +223,10 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 		})
 	}
 
-	return s.refundAuditRepo.UpdateRefundSuccessInTransaction(ctx, refund.ID, dto.RefundStatusProcessing, dto.BillStatusSuccess, platformTransID, time.Now())
+	// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
+	return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+		return tx.RefundAuditRepo().UpdateRefundSuccess(ctx, refund.ID, dto.RefundStatusProcessing, dto.BillStatusSuccess, platformTransID, time.Now())
+	})
 }
 
 func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectRequest) error {
@@ -228,8 +239,8 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 		return fmt.Errorf("refund status is not pending")
 	}
 
-	lockKey := redis.RefundLockKey(req.RefundOrderNo)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.RefundRejectLockTTL.Seconds()), func() error {
+	lockKey := rediskeys.RefundLockKey(req.RefundOrderNo)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.RefundRejectLockTTL.Seconds()), func() error {
 		// Re-check status after acquiring lock
 		refund, err := s.refundAuditRepo.GetRefundAuditByOrderNo(ctx, req.RefundOrderNo)
 		if err != nil {
@@ -239,7 +250,10 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 			return fmt.Errorf("refund status is not pending")
 		}
 
-		return s.refundAuditRepo.RejectRefund(ctx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
+		// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
+		return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+			return tx.RefundAuditRepo().RejectRefund(ctx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
+		})
 	})
 }
 

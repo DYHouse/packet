@@ -12,10 +12,10 @@ import (
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
 )
 
@@ -23,10 +23,11 @@ const defaultMaxConcurrentDeduct = 20
 
 type DeductService struct {
 	platform            platform.Client
+	dbRepo              domain.DBRepository
 	billRepo            domain.BillRepository
 	roundSettlementRepo domain.RoundSettlementRepository
 	refundAuditRepo     domain.RefundAuditRepository
-	redis               *cRedis.Client
+	redis               cRedis.RedisClient
 	traceIDGen          *TraceIDGenerator
 	cfg                 *config.PlatformConfig
 	lockCfg             *config.LockConfig
@@ -35,15 +36,16 @@ type DeductService struct {
 	callMgr             *PlatformCallManager
 	maxConcurrentDeduct int
 	robotChecker        RobotChecker
-	virtualBalance      *VirtualBalanceService
+	virtualBalance      domain.VirtualBalanceService
 }
 
 func NewDeductService(
 	platformClient platform.Client,
+	dbRepo domain.DBRepository,
 	billRepo domain.BillRepository,
 	roundSettlementRepo domain.RoundSettlementRepository,
 	refundAuditRepo domain.RefundAuditRepository,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
@@ -51,7 +53,7 @@ func NewDeductService(
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
 	robotChecker RobotChecker,
-	virtualBalance *VirtualBalanceService,
+	virtualBalance domain.VirtualBalanceService,
 ) *DeductService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -61,6 +63,7 @@ func NewDeductService(
 	}
 	return &DeductService{
 		platform:            platformClient,
+		dbRepo:              dbRepo,
 		billRepo:            billRepo,
 		roundSettlementRepo: roundSettlementRepo,
 		refundAuditRepo:     refundAuditRepo,
@@ -87,10 +90,10 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 		return s.getExistingFirstRoundResult(ctx, req.RoundID)
 	}
 
-	lockKey := redis.FirstRoundDeductLockKey(req.SessionID)
+	lockKey := rediskeys.FirstRoundDeductLockKey(req.SessionID)
 	var result *dto.FirstRoundDeductResult
 
-	err = lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.FirstRoundDeductLockTTL.Seconds()), func() error {
+	err = lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.FirstRoundDeductLockTTL.Seconds()), func() error {
 		// 锁内二次检查
 		exists, err := s.roundSettlementRepo.ExistsRoundSettlement(ctx, req.RoundID)
 		if err != nil {
@@ -138,11 +141,22 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 				Status:       dto.BillStatusProcessing,
 				Remark:       fmt.Sprintf("首回合平摊扣款,会话ID:%d,回合:%d", req.SessionID, req.RoundNo),
 			}
-			bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, player.UserID)
+			if s.robotChecker == nil {
+				return fmt.Errorf("robot checker is nil")
+			}
+			isRobot, err := s.robotChecker.IsRobot(ctx, player.UserID)
+			if err != nil {
+				return fmt.Errorf("check robot failed: %w", err)
+			}
+			bill.IsRobot = isRobot
 			bills = append(bills, bill)
 		}
 
-		if err := s.roundSettlementRepo.CreateRoundSettlementAndBills(ctx, settlement, bills); err != nil {
+		// 事务仅包裹 DB 写入片段（短事务原则：禁止事务内 RPC）。
+		// executeBatchDeduct 含 platform.Debit RPC，在事务外执行。
+		if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+			return tx.RoundSettlementRepo().CreateRoundSettlementAndBills(ctx, settlement, bills)
+		}); err != nil {
 			return fmt.Errorf("create round settlement and bills failed: %w", err)
 		}
 
@@ -248,7 +262,14 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 	}
 
 	// 机器人虚拟通道
-	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
+	if s.robotChecker == nil {
+		return fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, bill.UserID)
+	if err != nil {
+		return fmt.Errorf("check robot failed: %w", err)
+	}
+	if isRobot {
 		if err := s.virtualBalance.Deduct(ctx, bill.UserID, amount); err != nil {
 			s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual deduct failed: %w", err)
@@ -302,11 +323,14 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 
 	balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
 	if err != nil {
+		// ParseAmount 失败：平台可能已实际扣款但响应余额无法解析。
+		// 资金安全要求 fail-closed：标记账单为 Failed 并创建异常记录供人工对账，不得标记为 Success。
 		logger.Error("parse balance amount failed after successful debit, mark bill as failed",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
 		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
 			logger.Error("update bill to failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
 		}
+		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
 				ID:       callLog.ID,
@@ -314,7 +338,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 				Status:   model.CallLogStatusSuccess,
 			})
 		}
-		return fmt.Errorf("parse balance amount failed: %w", err)
+		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
 	}
 	if err := s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter); err != nil {
 		logger.Error("update bill success failed", "bill_id", bill.ID, "error", err)
@@ -360,7 +384,10 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 				AppliedBy:     0,
 			}
 
-			if err := s.refundAuditRepo.CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo); err != nil {
+			// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
+			if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+				return tx.RefundAuditRepo().CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
+			}); err != nil {
 				logger.Error("create refund audit and update bill refund status failed", "user_id", userID, "batch_id", batchID, "error", err)
 				continue
 			}
@@ -454,11 +481,14 @@ func (s *DeductService) DeductForLaterRound(ctx context.Context, req *dto.LaterR
 		RoundTraceID: req.RoundTraceID,
 		Remark:       fmt.Sprintf("后续回合房费扣款,最低金额玩家:%d", req.MinPlayerID),
 	}
-	return s.deductSingleUser(ctx, deductReq, redis.LaterRoundDeductLockKey(req.RoundID))
+	return s.deductSingleUser(ctx, deductReq, rediskeys.LaterRoundDeductLockKey(req.RoundID))
 }
 
-func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.SystemPacketDeductRequest) error {
-	exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
+// DeductForSystemPacket 系统红包扣款。tx 由 SettleAppService 的 WithTransaction 回调传入，
+// 所有 DB 操作（幂等检查 + CreateRoundSettlementAndBills）纳入同一事务。
+func (s *DeductService) DeductForSystemPacket(ctx context.Context, tx domain.Transaction, req *dto.SystemPacketDeductRequest) error {
+	billRepo := tx.BillRepo()
+	exists, err := billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
 	if err != nil {
 		return fmt.Errorf("check exists failed: %w", err)
 	}
@@ -466,9 +496,9 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 		return nil
 	}
 
-	lockKey := redis.SystemPacketDeductLockKey(req.RoundID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SystemPacketDeductLockTTL.Seconds()), func() error {
-		exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
+	lockKey := rediskeys.SystemPacketDeductLockKey(req.RoundID)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.SystemPacketDeductLockTTL.Seconds()), func() error {
+		exists, err := billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
 		if err != nil {
 			return fmt.Errorf("check exists failed: %w", err)
 		}
@@ -510,7 +540,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, req *dto.Syst
 			Remark:       fmt.Sprintf("系统发红包,原因:%s", req.Reason),
 		}
 
-		if err := s.roundSettlementRepo.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
+		if err := tx.RoundSettlementRepo().CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
 			return fmt.Errorf("create round settlement and bill failed: %w", err)
 		}
 
@@ -527,7 +557,7 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 		return nil
 	}
 
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.LaterRoundDeductLockTTL.Seconds()), func() error {
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.LaterRoundDeductLockTTL.Seconds()), func() error {
 		exists, err := s.billRepo.ExistsByRoundAndType(ctx, req.RoundID, req.BillType)
 		if err != nil {
 			return fmt.Errorf("check exists failed: %w", err)
@@ -573,9 +603,20 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 			Status:       dto.BillStatusProcessing,
 			Remark:       req.Remark,
 		}
-		bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID)
+		if s.robotChecker == nil {
+			return fmt.Errorf("robot checker is nil")
+		}
+		isRobot, err := s.robotChecker.IsRobot(ctx, req.UserID)
+		if err != nil {
+			return fmt.Errorf("check robot failed: %w", err)
+		}
+		bill.IsRobot = isRobot
 
-		if err := s.roundSettlementRepo.CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill}); err != nil {
+		// 事务仅包裹 DB 写入片段（短事务原则：禁止事务内 RPC）。
+		// executeSingleDeduct 含 platform.Debit RPC，在事务外执行。
+		if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+			return tx.RoundSettlementRepo().CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill})
+		}); err != nil {
 			return fmt.Errorf("create round settlement and bill failed: %w", err)
 		}
 

@@ -12,8 +12,9 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/application"
+	"github.com/cashparty/backend/game/application/robot"
 	gameconfig "github.com/cashparty/backend/game/config"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/repository"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
 	settlementRedis "github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
@@ -21,10 +22,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// robotAccountStoreAdapter 将 game 层的 domain.RobotAccountRepository 适配为
+// robotAccountStoreAdapter 将 game 层的 repository.RobotAccountRepository 适配为
 // settlement/domain.RobotAccountStore 接口，避免 settlement → game 反向依赖。
 type robotAccountStoreAdapter struct {
-	repo domain.RobotAccountRepository
+	repo repository.RobotAccountRepository
 }
 
 // GetVirtualBalance 根据 userID 查询机器人账户的虚拟余额。
@@ -102,7 +103,7 @@ func main() {
 	userSvc := application.NewUserService(dbRepo, redisClient, &cfg.Avatar, idGen)
 
 	// 7. Create RobotAccountService
-	robotAccountSvc := application.NewRobotAccountService(
+	robotAccountSvc := robot.NewRobotAccountService(
 		robotRepo,
 		userSvc,
 		virtualBalanceSvc,
@@ -159,14 +160,14 @@ func main() {
 }
 
 // getRobotIDSetCount returns the cardinality of the robot user id set in Redis.
-func getRobotIDSetCount(ctx context.Context, client *cRedis.Client) (int64, error) {
-	return client.SCard(ctx, redis.RobotUserIDsKey()).Result()
+func getRobotIDSetCount(ctx context.Context, client cRedis.RedisClient) (int64, error) {
+	return client.SCard(ctx, rediskeys.RobotUserIDsKey()).Result()
 }
 
 // clearRobotAccounts removes all robot accounts from database and Redis.
 // It deletes records from robot_accounts and users tables, and clears all
 // robot-related Redis keys (virtual balances, pool, user id set, user caches).
-func clearRobotAccounts(ctx context.Context, db *gorm.DB, redisClient *cRedis.Client) error {
+func clearRobotAccounts(ctx context.Context, db *gorm.DB, redisClient cRedis.RedisClient) error {
 	// 1. Delete robot_accounts table
 	if err := db.Exec("DELETE FROM robot_accounts").Error; err != nil {
 		return fmt.Errorf("delete robot_accounts failed: %w", err)

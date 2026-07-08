@@ -7,16 +7,16 @@ import (
 
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 )
 
 // packetCacheRepository 红包生成结果缓存仓储实现
 type packetCacheRepository struct {
-	client *cRedis.Client
+	client cRedis.RedisClient
 }
 
 // NewPacketCacheRepository 创建红包缓存仓储实例
-func NewPacketCacheRepository(client *cRedis.Client) domain.PacketCacheRepository {
+func NewPacketCacheRepository(client cRedis.RedisClient) repository.PacketCacheRepository {
 	return &packetCacheRepository{client: client}
 }
 
@@ -32,22 +32,34 @@ func (r *packetCacheRepository) SetNX(ctx context.Context, roundID string, value
 	return r.client.SetNX(ctx, key, value, ttl).Result()
 }
 
+// GetPacketInfo 根据 packetID 获取红包详情 JSON 字符串。key 不存在时返回 redis.Nil 错误。
+func (r *packetCacheRepository) GetPacketInfo(ctx context.Context, packetID string) (string, error) {
+	key := rediskeys.PacketInfoKey(packetID)
+	return r.client.Get(ctx, key).Result()
+}
+
+// GetAvailablePacketIDs 获取轮次可用红包 ID 列表（按插入顺序返回）。
+func (r *packetCacheRepository) GetAvailablePacketIDs(ctx context.Context, roundID string) ([]string, error) {
+	key := rediskeys.RoundAvailablePacketsKey(roundID)
+	return r.client.LRange(ctx, key, 0, -1).Result()
+}
+
 // rewardCacheRepository 奖励控制缓存仓储实现
 type rewardCacheRepository struct {
-	client *cRedis.Client
+	client cRedis.RedisClient
 }
 
 // NewRewardCacheRepository 创建奖励缓存仓储实例
-func NewRewardCacheRepository(client *cRedis.Client) domain.RewardCacheRepository {
+func NewRewardCacheRepository(client cRedis.RedisClient) repository.RewardCacheRepository {
 	return &rewardCacheRepository{client: client}
 }
 
 // rewardCycleKey 根据周期类型返回对应的 redis key
-func rewardCycleKey(roomID, sessionID string, cycleType domain.RewardCycleType) (string, error) {
+func rewardCycleKey(roomID, sessionID string, cycleType repository.RewardCycleType) (string, error) {
 	switch cycleType {
-	case domain.RewardCycleStraight:
+	case repository.RewardCycleStraight:
 		return rediskeys.RewardCycleStraightKey(roomID, sessionID), nil
-	case domain.RewardCycleLeopard:
+	case repository.RewardCycleLeopard:
 		return rediskeys.RewardCycleLeopardKey(roomID, sessionID), nil
 	default:
 		return "", fmt.Errorf("invalid reward cycle type: %d", cycleType)
@@ -55,7 +67,7 @@ func rewardCycleKey(roomID, sessionID string, cycleType domain.RewardCycleType) 
 }
 
 // GetCycleWon 获取会话内某奖励类型是否已触发（0=未触发, 1=已触发）
-func (r *rewardCacheRepository) GetCycleWon(ctx context.Context, roomID, sessionID string, cycleType domain.RewardCycleType) (int, error) {
+func (r *rewardCacheRepository) GetCycleWon(ctx context.Context, roomID, sessionID string, cycleType repository.RewardCycleType) (int, error) {
 	key, err := rewardCycleKey(roomID, sessionID, cycleType)
 	if err != nil {
 		return 0, err
@@ -64,7 +76,7 @@ func (r *rewardCacheRepository) GetCycleWon(ctx context.Context, roomID, session
 }
 
 // SetCycleWon 标记会话内某奖励类型已触发
-func (r *rewardCacheRepository) SetCycleWon(ctx context.Context, roomID, sessionID string, cycleType domain.RewardCycleType, ttl time.Duration) error {
+func (r *rewardCacheRepository) SetCycleWon(ctx context.Context, roomID, sessionID string, cycleType repository.RewardCycleType, ttl time.Duration) error {
 	key, err := rewardCycleKey(roomID, sessionID, cycleType)
 	if err != nil {
 		return err

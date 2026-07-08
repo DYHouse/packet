@@ -13,11 +13,11 @@ import (
 )
 
 type HealthChecker struct {
-	redis   *cRedis.Client
+	redis   cRedis.RedisClient
 	connMgr *connection.Manager
 }
 
-func NewHealthChecker(redis *cRedis.Client, connMgr *connection.Manager) *HealthChecker {
+func NewHealthChecker(redis cRedis.RedisClient, connMgr *connection.Manager) *HealthChecker {
 	return &HealthChecker{
 		redis:   redis,
 		connMgr: connMgr,

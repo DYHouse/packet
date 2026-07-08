@@ -8,13 +8,12 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
-	"github.com/cashparty/backend/gateway"
 	"github.com/redis/go-redis/v9"
 )
 
 // newAuthTestClient 创建 miniredis 与 cRedis.Client。
 // 复用 common/limiter/scripts/sliding_window_test.go 中的创建模式。
-func newAuthTestClient(t *testing.T) (*miniredis.Miniredis, *cRedis.Client) {
+func newAuthTestClient(t *testing.T) (*miniredis.Miniredis, cRedis.RedisClient) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -30,7 +29,7 @@ func newAuthTestClient(t *testing.T) (*miniredis.Miniredis, *cRedis.Client) {
 
 // newAuthMiddleware 构造用于测试的 AuthMiddleware。
 // tokenService 传 nil，因为被测方法（isLocked/recordFailedAttempt/clearFailedAttempts）不依赖它。
-func newAuthMiddleware(client *cRedis.Client, cfg AuthLockConfig) *AuthMiddleware {
+func newAuthMiddleware(client cRedis.RedisClient, cfg AuthLockConfig) *AuthMiddleware {
 	return NewAuthMiddleware(nil, client, cfg)
 }
 
@@ -50,8 +49,8 @@ func TestAuthMiddleware_IsLocked_ChecksRedis(t *testing.T) {
 		t.Fatal("expected isLocked=false when no lock key in redis")
 	}
 
-	// 在 Redis 中设置 GatewayLockedIPKey
-	lockKey := gateway.GatewayLockedIPKey(ip)
+	// 在 Redis 中设置 rediskeys.GatewayLockedIPKey
+	lockKey := rediskeys.GatewayLockedIPKey(ip)
 	if err := client.Set(ctx, lockKey, "1", time.Minute).Err(); err != nil {
 		t.Fatalf("failed to set lock key: %v", err)
 	}
@@ -105,7 +104,7 @@ func TestAuthMiddleware_LockAfterMaxAttempts(t *testing.T) {
 	})
 	ctx := context.Background()
 	ip := "1.2.3.4"
-	lockKey := gateway.GatewayLockedIPKey(ip)
+	lockKey := rediskeys.GatewayLockedIPKey(ip)
 
 	// 失败 3 次（达到 MaxAttempts）
 	for i := 0; i < 3; i++ {
@@ -138,7 +137,7 @@ func TestAuthMiddleware_ClearFailedAttempts(t *testing.T) {
 	ctx := context.Background()
 	ip := "1.2.3.4"
 	counterKey := rediskeys.GatewayAuthFailKey(ip)
-	lockKey := gateway.GatewayLockedIPKey(ip)
+	lockKey := rediskeys.GatewayLockedIPKey(ip)
 
 	// 累积失败并触发锁定
 	for i := 0; i < 3; i++ {

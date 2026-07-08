@@ -9,8 +9,9 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/room"
+	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/model"
 )
 
@@ -32,14 +33,14 @@ func (p *PacketOrchestrator) HandleSystemSendTimeout(ctx context.Context, roomID
 		RoundNo:     nextRound,
 		TotalAmount: meta.RoomFee,
 		Reason:      "leopard_reward",
-		Scenario:    domain.SendScenarioLeopardReward,
-		SenderType:  domain.SenderTypeSystem,
+		Scenario:    round.SendScenarioLeopardReward,
+		SenderType:  round.SenderTypeSystem,
 		Nickname:    "system",
 	})
 }
 
 // StartFirstRound 启动首轮发包（由 GameLifecycleService.StartGame 调用）。
-func (p *PacketOrchestrator) StartFirstRound(ctx context.Context, roomID string, meta *domain.RoomMeta) {
+func (p *PacketOrchestrator) StartFirstRound(ctx context.Context, roomID string, meta *room.RoomMeta) {
 	playersMap, err := p.repo.GetPlayers(ctx, roomID)
 	if err != nil {
 		logger.Error("get players failed", "room_id", roomID, "error", err)
@@ -51,7 +52,7 @@ func (p *PacketOrchestrator) StartFirstRound(ctx context.Context, roomID string,
 		return
 	}
 
-	players := make([]*domain.Player, 0, len(playersMap))
+	players := make([]*room.Player, 0, len(playersMap))
 	for _, player := range playersMap {
 		players = append(players, player)
 	}
@@ -65,9 +66,9 @@ func (p *PacketOrchestrator) StartFirstRound(ctx context.Context, roomID string,
 		return
 	}
 
-	result, err := p.sendPacketPipeline(ctx, &domain.SendPacketParams{
+	result, err := p.sendPacketPipeline(ctx, &round.SendPacketParams{
 		RoomID:      roomID,
-		Scenario:    domain.SendScenarioFirstRound,
+		Scenario:    round.SendScenarioFirstRound,
 		TotalAmount: meta.RoomFee,
 		RoundNo:     1,
 		RoundID:     initResult.RoundID,
@@ -97,7 +98,7 @@ func (p *PacketOrchestrator) StartFirstRound(ctx context.Context, roomID string,
 			ActualAmount: result.ActualAmount,
 			NextRound:    1,
 			PacketCount:  result.PacketCount,
-			SenderType:   domain.SenderTypeSystem,
+			SenderType:   round.SenderTypeSystem,
 		})
 	}); err != nil {
 		logger.Warn("submit post_send_packet_first_round task failed", "error", err)
@@ -106,11 +107,11 @@ func (p *PacketOrchestrator) StartFirstRound(ctx context.Context, roomID string,
 
 type systemSendPacketParams struct {
 	RoomID      string
-	Meta        *domain.RoomMeta
+	Meta        *room.RoomMeta
 	RoundNo     int
 	TotalAmount int64
 	Reason      string
-	Scenario    domain.SendScenario
+	Scenario    round.SendScenario
 	SenderType  string
 	Nickname    string
 }
@@ -126,7 +127,7 @@ func (p *PacketOrchestrator) executeSystemSendPacket(ctx context.Context, params
 		return
 	}
 
-	result, err := p.sendPacketPipeline(ctx, &domain.SendPacketParams{
+	result, err := p.sendPacketPipeline(ctx, &round.SendPacketParams{
 		RoomID:      params.RoomID,
 		SenderID:    "0",
 		Scenario:    params.Scenario,
@@ -193,14 +194,14 @@ func (p *PacketOrchestrator) ForceSendPacketForPlayer(ctx context.Context, roomI
 		RoundNo:     nextRound,
 		TotalAmount: penaltyAmount,
 		Reason:      "send_timeout_forced",
-		Scenario:    domain.SendScenarioTimeoutForced,
-		SenderType:  domain.SenderTypeSystemForced,
+		Scenario:    round.SendScenarioTimeoutForced,
+		SenderType:  round.SenderTypeSystemForced,
 		Nickname:    nickname,
 	})
 }
 
 // SystemSendRound 系统发包轮次（恢复中断游戏时由 GameLifecycleService.ResumeGame 调用）。
-func (p *PacketOrchestrator) SystemSendRound(ctx context.Context, roomID string, meta *domain.RoomMeta, roundNo int) {
+func (p *PacketOrchestrator) SystemSendRound(ctx context.Context, roomID string, meta *room.RoomMeta, roundNo int) {
 	nextRound := roundNo + 1
 
 	p.executeSystemSendPacket(ctx, &systemSendPacketParams{
@@ -209,8 +210,8 @@ func (p *PacketOrchestrator) SystemSendRound(ctx context.Context, roomID string,
 		RoundNo:     nextRound,
 		TotalAmount: meta.RoomFee,
 		Reason:      "resume_interrupt",
-		Scenario:    domain.SendScenarioResumeInterrupt,
-		SenderType:  domain.SenderTypeSystemResume,
+		Scenario:    round.SendScenarioResumeInterrupt,
+		SenderType:  round.SenderTypeSystemResume,
 		Nickname:    "system",
 	})
 }
@@ -226,10 +227,9 @@ func (p *PacketOrchestrator) publishPacketCreatedEvent(ctx context.Context, room
 		return
 	}
 
-	packets := make([]*domain.PacketData, 0, len(packetIDs))
+	packets := make([]*events.PacketData, 0, len(packetIDs))
 	for _, packetIDStr := range packetIDs {
-		packetKey := redis.PacketInfoKey(packetIDStr)
-		packetData, err := p.redis.Get(ctx, packetKey).Result()
+		packetData, err := p.packetCache.GetPacketInfo(ctx, packetIDStr)
 		if err != nil {
 			logger.Error("failed to get packet info", "packet_id", packetIDStr, "error", err)
 			continue
@@ -247,7 +247,7 @@ func (p *PacketOrchestrator) publishPacketCreatedEvent(ctx context.Context, room
 			continue
 		}
 
-		packets = append(packets, &domain.PacketData{
+		packets = append(packets, &events.PacketData{
 			PacketID: converter.FormatID(packet.PacketID),
 			RoomID:   packet.RoomID,
 			RoundID:  packet.RoundID,
@@ -269,14 +269,14 @@ func (p *PacketOrchestrator) publishPacketCreatedEvent(ctx context.Context, room
 			"error", err,
 		)
 	}
-	event := &domain.GameEvent{
+	event := &events.GameEvent{
 		EventHeader: message.NewEventHeader(packetCreatedTraceID),
 		RoomID:      roomID,
 		SessionID:   meta.CurrentSessionID,
 		RoundID:     roundID,
-		EventType:   domain.GameEventPacketCreated,
+		EventType:   events.GameEventPacketCreated,
 	}
-	_ = event.SetPayload(&domain.PacketCreatedData{
+	_ = event.SetPayload(&events.PacketCreatedData{
 		RoomID:      roomID,
 		SessionID:   meta.CurrentSessionID,
 		RoundID:     roundID,

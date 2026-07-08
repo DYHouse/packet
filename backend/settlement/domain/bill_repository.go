@@ -32,10 +32,11 @@ type BillRepository interface {
 	GetBillsByUserID(ctx context.Context, userID int64, limit, offset int) ([]*model.BillRecord, error)
 	// GetBillsByRoundID 查询指定回合全部账单（按创建时间正序）
 	GetBillsByRoundID(ctx context.Context, roundID int64) ([]*model.BillRecord, error)
-	// CreateBillsInTransaction 在单事务内批量创建账单
-	CreateBillsInTransaction(ctx context.Context, bills []*model.BillRecord) error
-	// CreateBillsPairInTransaction 在单事务内创建两条配对账单
-	CreateBillsPairInTransaction(ctx context.Context, bill1 *model.BillRecord, bill2 *model.BillRecord) error
+	// CreateBills 批量创建账单。事务边界由 AppService 通过 DBRepository.WithTransaction 编排，
+	// 调用方应在事务回调内通过 tx.BillRepo() 获取基于事务连接的子 repo 后调用本方法。
+	CreateBills(ctx context.Context, bills []*model.BillRecord) error
+	// CreateBillsPair 创建两条配对账单。事务边界由 AppService 通过 DBRepository.WithTransaction 编排。
+	CreateBillsPair(ctx context.Context, bill1 *model.BillRecord, bill2 *model.BillRecord) error
 	// GetBillsByBatchID 根据批次 id 查询账单（按创建时间正序）
 	GetBillsByBatchID(ctx context.Context, batchID string) ([]*model.BillRecord, error)
 	// GetBillByBatchAndUser 根据批次 id 与用户 id 查询账单

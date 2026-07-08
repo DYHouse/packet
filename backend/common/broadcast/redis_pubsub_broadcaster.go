@@ -9,11 +9,11 @@ import (
 )
 
 type RedisPubSubBroadcaster struct {
-	redis   *cRedis.Client
+	redis   cRedis.RedisClient
 	channel string
 }
 
-func NewRedisPubSubBroadcaster(redis *cRedis.Client, channel string) *RedisPubSubBroadcaster {
+func NewRedisPubSubBroadcaster(redis cRedis.RedisClient, channel string) *RedisPubSubBroadcaster {
 	if channel == "" {
 		channel = BroadcastChannelGateway
 	}

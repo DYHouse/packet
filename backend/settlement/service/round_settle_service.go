@@ -8,10 +8,10 @@ import (
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
 )
 
@@ -20,7 +20,7 @@ import (
 type RoundSettleService struct {
 	billRepo            domain.BillRepository
 	roundSettlementRepo domain.RoundSettlementRepository
-	redis               *cRedis.Client
+	redis               cRedis.RedisClient
 	traceIDGen          *TraceIDGenerator
 	rewardSettler       *RewardSettler
 	gameSettleSvc       *GameSettleReportingService
@@ -32,7 +32,7 @@ type RoundSettleService struct {
 func NewRoundSettleService(
 	billRepo domain.BillRepository,
 	roundSettlementRepo domain.RoundSettlementRepository,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	rewardSettler *RewardSettler,
 	gameSettleSvc *GameSettleReportingService,
@@ -55,15 +55,16 @@ func NewRoundSettleService(
 	}
 }
 
-func (s *RoundSettleService) SettleRound(ctx context.Context, req *dto.RoundSettleRequest) error {
-	settlement, err := s.roundSettlementRepo.GetRoundSettlementByRoundID(ctx, req.RoundID)
+func (s *RoundSettleService) SettleRound(ctx context.Context, tx domain.Transaction, req *dto.RoundSettleRequest) error {
+	roundSettlementRepo := tx.RoundSettlementRepo()
+	settlement, err := roundSettlementRepo.GetRoundSettlementByRoundID(ctx, req.RoundID)
 	if err == nil && settlement != nil && settlement.Status == dto.RoundStatusCredited {
 		return nil
 	}
 
-	lockKey := redis.SettleRoundLockKey(req.RoundID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SettleRoundLockTTL.Seconds()), func() error {
-		existingSettlement, err := s.roundSettlementRepo.GetRoundSettlementByRoundID(ctx, req.RoundID)
+	lockKey := rediskeys.SettleRoundLockKey(req.RoundID)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.SettleRoundLockTTL.Seconds()), func() error {
+		existingSettlement, err := roundSettlementRepo.GetRoundSettlementByRoundID(ctx, req.RoundID)
 		if err != nil {
 			return fmt.Errorf("get round settlement failed: %w", err)
 		}
@@ -75,7 +76,7 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, req *dto.RoundSett
 			return nil
 		}
 
-		if err := s.roundSettlementRepo.UpdateRoundSettlementSettleInfo(ctx, existingSettlement.RoundTraceID,
+		if err := roundSettlementRepo.UpdateRoundSettlementSettleInfo(ctx, existingSettlement.RoundTraceID,
 			req.SenderID, req.SenderType, req.TotalAmount, req.Commission, len(req.Players), req.MinPlayerID); err != nil {
 			return fmt.Errorf("update round settlement settle info failed: %w", err)
 		}
@@ -91,13 +92,13 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, req *dto.RoundSett
 		// creditRound 仅写入 grab/commission BillRecord，不在此处标记 round_settlement.status = Credited。
 		// status 由 SettleRound 在 credit + reward 全部成功后统一标记，避免 reward 失败但 round 被标 Credited
 		// 导致重试时进入 L83-L84 早返回分支、reward 永远无法补偿。
-		totalSettleAmount, settleUserCount, err := s.creditRound(ctx, existingSettlement, req.Players)
+		totalSettleAmount, settleUserCount, err := s.creditRound(ctx, tx, existingSettlement, req.Players)
 		if err != nil {
 			return err
 		}
 
 		if req.RewardType > 0 && req.RewardAmount > 0 {
-			if err := s.rewardSettler.SettleReward(ctx, existingSettlement, req.Players); err != nil {
+			if err := s.rewardSettler.SettleReward(ctx, tx, existingSettlement, req.Players); err != nil {
 				// 上抛 err 触发 caller (game_event_consumer) 事务回滚，并保证 Kafka 重试时
 				// round_settlement.status 仍非 Credited，SettleReward 能被重新调用。
 				return fmt.Errorf("settle system reward failed: %w", err)
@@ -106,7 +107,7 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, req *dto.RoundSett
 
 		// 所有子结算成功后才标记 round_settlement.status = Credited
 		now := time.Now()
-		if err := s.roundSettlementRepo.UpdateRoundSettlementCredited(ctx, existingSettlement.RoundTraceID, totalSettleAmount, settleUserCount, &now); err != nil {
+		if err := roundSettlementRepo.UpdateRoundSettlementCredited(ctx, existingSettlement.RoundTraceID, totalSettleAmount, settleUserCount, &now); err != nil {
 			return fmt.Errorf("update round settlement credited failed: %w", err)
 		}
 
@@ -119,9 +120,11 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, req *dto.RoundSett
 //
 // 返回 totalSettleAmount/settleUserCount 供 SettleRound 在所有子结算成功后统一标记 round_settlement.status。
 // 不再在此处调用 UpdateRoundSettlementCredited，避免 reward 失败后 status 被提前置位导致重试无法补偿。
-func (s *RoundSettleService) creditRound(ctx context.Context, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
+// tx 由 SettleRound 从 AppService 事务回调传入，所有 DB 操作纳入同一事务。
+func (s *RoundSettleService) creditRound(ctx context.Context, tx domain.Transaction, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
+	billRepo := tx.BillRepo()
 	if settlement.Commission > 0 {
-		if err := s.settleCommission(ctx, settlement); err != nil {
+		if err := s.settleCommission(ctx, tx, settlement); err != nil {
 			logger.Error("settle commission failed", "round_id", settlement.RoundID, "error", err)
 			return 0, 0, fmt.Errorf("settle commission failed: %w", err)
 		}
@@ -136,13 +139,21 @@ func (s *RoundSettleService) creditRound(ctx context.Context, settlement *model.
 			continue
 		}
 
-		existingBill, err := s.billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeGrabPacket, player.UserID)
+		existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeGrabPacket, player.UserID)
 		if err == nil && existingBill != nil {
 			if existingBill.Status == dto.BillStatusSuccess {
 				totalSettleAmount += player.Amount
 				settleUserCount++
 			}
 			continue
+		}
+
+		if s.robotChecker == nil {
+			return 0, 0, fmt.Errorf("robot checker is nil")
+		}
+		isRobot, err := s.robotChecker.IsRobot(ctx, player.UserID)
+		if err != nil {
+			return 0, 0, fmt.Errorf("check robot failed: %w", err)
 		}
 
 		bill := &model.BillRecord{
@@ -157,7 +168,7 @@ func (s *RoundSettleService) creditRound(ctx context.Context, settlement *model.
 			Amount:       player.Amount,
 			Status:       dto.BillStatusSuccess,
 			Remark:       fmt.Sprintf("抢红包收入(待会话级入账),局ID:%d", settlement.RoundID),
-			IsRobot:      s.robotChecker != nil && s.robotChecker.IsRobot(ctx, player.UserID),
+			IsRobot:      isRobot,
 		}
 		bills = append(bills, bill)
 		totalSettleAmount += player.Amount
@@ -165,7 +176,7 @@ func (s *RoundSettleService) creditRound(ctx context.Context, settlement *model.
 	}
 
 	if len(bills) > 0 {
-		if err := s.billRepo.CreateBillsInTransaction(ctx, bills); err != nil {
+		if err := billRepo.CreateBills(ctx, bills); err != nil {
 			return 0, 0, fmt.Errorf("create grab bills failed: %w", err)
 		}
 	}
@@ -173,8 +184,9 @@ func (s *RoundSettleService) creditRound(ctx context.Context, settlement *model.
 	return totalSettleAmount, settleUserCount, nil
 }
 
-func (s *RoundSettleService) settleCommission(ctx context.Context, settlement *model.RoundSettlement) error {
-	existingBill, err := s.billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeCommission, dto.PlatformAccountID)
+func (s *RoundSettleService) settleCommission(ctx context.Context, tx domain.Transaction, settlement *model.RoundSettlement) error {
+	billRepo := tx.BillRepo()
+	existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeCommission, dto.PlatformAccountID)
 	if err == nil && existingBill != nil {
 		if existingBill.Status == dto.BillStatusSuccess {
 			return nil
@@ -195,7 +207,7 @@ func (s *RoundSettleService) settleCommission(ctx context.Context, settlement *m
 		Remark:       fmt.Sprintf("佣金收入,局ID:%d", settlement.RoundID),
 	}
 
-	if err := s.billRepo.CreateBill(ctx, commissionBill); err != nil {
+	if err := billRepo.CreateBill(ctx, commissionBill); err != nil {
 		return fmt.Errorf("create commission bill failed: %w", err)
 	}
 

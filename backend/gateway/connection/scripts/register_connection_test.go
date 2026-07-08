@@ -11,7 +11,7 @@ import (
 
 // newMiniRedisClient 启动一个 miniredis 实例并包装为 cRedis.Client。
 // 测试结束自动清理连接与 miniredis 实例。
-func newMiniRedisClient(t *testing.T) *cRedis.Client {
+func newMiniRedisClient(t *testing.T) cRedis.RedisClient {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {

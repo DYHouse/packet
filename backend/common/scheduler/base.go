@@ -27,7 +27,7 @@ type BaseSchedulerConfig struct {
 type BaseScheduler struct {
 	config  BaseSchedulerConfig
 	task    TaskFunc
-	redis   *cRedis.Client
+	redis   cRedis.RedisClient
 	metrics *Metrics
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -37,7 +37,7 @@ type BaseScheduler struct {
 
 // NewBaseScheduler 创建 BaseScheduler。
 // task 在构造时传入，避免在 Start 中赋值导致 nil task 风险（P1-7）。
-func NewBaseScheduler(config BaseSchedulerConfig, task TaskFunc, redis *cRedis.Client) *BaseScheduler {
+func NewBaseScheduler(config BaseSchedulerConfig, task TaskFunc, redis cRedis.RedisClient) *BaseScheduler {
 	return &BaseScheduler{
 		config:  config,
 		task:    task,
@@ -106,7 +106,7 @@ func (s *BaseScheduler) executeTask() {
 	defer cancel()
 
 	// P0-4: 检查并记录 WithRedisLock 返回值（锁获取失败与 task 错误均记录）。
-	err := lock.WithRedisLock(ctx, s.redis, s.config.LockKey, s.config.LockTTL, func() error {
+	err := lock.WithRedisLock(ctx, s.config.LockKey, s.config.LockTTL, func() error {
 		return s.task(ctx)
 	})
 

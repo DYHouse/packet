@@ -9,33 +9,38 @@ import (
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/currency"
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/algorithm"
-	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/game"
+	"github.com/cashparty/backend/game/domain/push"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/reward"
+	"github.com/cashparty/backend/game/domain/room"
+	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/model"
 	"github.com/cashparty/backend/game/scheduler"
-	settlementService "github.com/cashparty/backend/settlement/service"
+	settlementApplication "github.com/cashparty/backend/settlement/application"
 )
 
 // PacketOrchestrator 负责发包管线：玩家发包、系统发包、轮次初始化与扣款。
 // 从 GameAppService 拆分（Phase 2.1），保持原有业务逻辑完全不变。
 type PacketOrchestrator struct {
-	repo                 domain.RoomRepository
-	dbRepo               domain.DBRepository
-	broadcaster          domain.Broadcaster
-	eventPublisher       domain.GameEventPublisher
+	repo                 repository.RoomRepository
+	dbRepo               repository.DBRepository
+	broadcaster          events.Broadcaster
+	eventPublisher       events.GameEventPublisher
 	grabService          *GrabService
 	packetGenerator      *algorithm.PacketGenerator
-	rewardSettler        *settlementService.RewardSettler
-	redis                *cRedis.Client
-	commissionCfg        *domain.CommissionConfig
-	deductSvc            *settlementService.DeductService
-	taskRunner           *async.TaskRunner
+	packetCache          repository.PacketCacheRepository
+	commissionCfg        *game.CommissionConfig
+	settleAppService     *settlementApplication.SettleAppService
+	taskRunner           async.TaskRunner
 	idGen                idgen.IDGenerator
 	lockCfg              *config.LockConfig
 	timeoutCfg           *config.TimeoutConfig
@@ -45,16 +50,15 @@ type PacketOrchestrator struct {
 
 // NewPacketOrchestrator 创建发包编排器。
 func NewPacketOrchestrator(
-	repo domain.RoomRepository,
-	dbRepo domain.DBRepository,
-	broadcaster domain.Broadcaster,
-	eventPublisher domain.GameEventPublisher,
+	repo repository.RoomRepository,
+	dbRepo repository.DBRepository,
+	broadcaster events.Broadcaster,
+	eventPublisher events.GameEventPublisher,
 	grabService *GrabService,
 	packetGenerator *algorithm.PacketGenerator,
-	rewardSettler *settlementService.RewardSettler,
-	redisClient *cRedis.Client,
-	deductSvc *settlementService.DeductService,
-	taskRunner *async.TaskRunner,
+	packetCache repository.PacketCacheRepository,
+	settleAppSvc *settlementApplication.SettleAppService,
+	taskRunner async.TaskRunner,
 	idGen idgen.IDGenerator,
 	lockCfg *config.LockConfig,
 	timeoutCfg *config.TimeoutConfig,
@@ -65,21 +69,20 @@ func NewPacketOrchestrator(
 		config.SetLockDefaults(lockCfg)
 	}
 	return &PacketOrchestrator{
-		repo:            repo,
-		dbRepo:          dbRepo,
-		broadcaster:     broadcaster,
-		eventPublisher:  eventPublisher,
-		grabService:     grabService,
-		packetGenerator: packetGenerator,
-		rewardSettler:   rewardSettler,
-		redis:           redisClient,
-		commissionCfg:   domain.DefaultCommissionConfig(),
-		deductSvc:       deductSvc,
-		taskRunner:      taskRunner,
-		idGen:           idGen,
-		lockCfg:         lockCfg,
-		timeoutCfg:      timeoutCfg,
-		scheduler:       schedulerInst,
+		repo:             repo,
+		dbRepo:           dbRepo,
+		broadcaster:      broadcaster,
+		eventPublisher:   eventPublisher,
+		grabService:      grabService,
+		packetGenerator:  packetGenerator,
+		packetCache:      packetCache,
+		commissionCfg:    game.DefaultCommissionConfig(),
+		settleAppService: settleAppSvc,
+		taskRunner:       taskRunner,
+		idGen:            idGen,
+		lockCfg:          lockCfg,
+		timeoutCfg:       timeoutCfg,
+		scheduler:        schedulerInst,
 	}
 }
 
@@ -110,7 +113,7 @@ type sendPacketResult struct {
 	SenderType   string
 }
 
-func (p *PacketOrchestrator) sendPacketPipeline(ctx context.Context, params *domain.SendPacketParams) (*sendPacketResult, error) {
+func (p *PacketOrchestrator) sendPacketPipeline(ctx context.Context, params *round.SendPacketParams) (*sendPacketResult, error) {
 	commission := p.commissionCfg.Calculate(params.TotalAmount)
 	actualAmount := params.TotalAmount - commission
 
@@ -130,8 +133,8 @@ func (p *PacketOrchestrator) sendPacketPipeline(ctx context.Context, params *dom
 	senderType := params.Scenario.SenderType()
 
 	var rewardAmount int64
-	if genResult.RewardType > 0 && p.rewardSettler != nil {
-		rewardAmount = p.rewardSettler.CalculateRewardAmount(int(genResult.RewardType), params.TotalAmount)
+	if genResult.RewardType > 0 {
+		rewardAmount = reward.CalculateRewardAmount(int(genResult.RewardType), params.TotalAmount)
 	}
 
 	_, packetIDs, err := p.grabService.InitRoundPackets(ctx,
@@ -157,17 +160,17 @@ func (p *PacketOrchestrator) sendPacketPipeline(ctx context.Context, params *dom
 }
 
 func (p *PacketOrchestrator) SendPacket(ctx context.Context, req *SendPacketRequest) (*SendPacketResult, error) {
-	lockKey := redis.SendPacketLockKey(req.RoomID, req.UserID)
+	lockKey := rediskeys.SendPacketLockKey(req.RoomID, req.UserID)
 
 	var result *sendPacketResult
 
-	err := lock.WithRedisLock(ctx, p.redis, lockKey, int(p.lockCfg.SendPacketLockTTL.Seconds()), func() error {
+	err := lock.WithRedisLock(ctx, lockKey, int(p.lockCfg.SendPacketLockTTL.Seconds()), func() error {
 		meta, err := p.repo.GetRoomMeta(ctx, req.RoomID)
 		if err != nil {
 			return message.NewError(message.CodeRoomNotFound)
 		}
 
-		if meta.Status != domain.RoomStatusPlaying {
+		if meta.Status != room.RoomStatusPlaying {
 			return message.NewError(message.CodeGameNotStarted)
 		}
 
@@ -183,8 +186,7 @@ func (p *PacketOrchestrator) SendPacket(ctx context.Context, req *SendPacketRequ
 		}
 
 		if nextRound > 1 {
-			roomHashKey := redis.RoomHashKey(req.RoomID)
-			nextSenderID, _ := p.redis.HGet(ctx, roomHashKey, "next_sender_id").Result()
+			nextSenderID, _ := p.repo.GetNextSenderID(ctx, req.RoomID)
 			if nextSenderID != "" && nextSenderID != req.UserID {
 				return message.NewError(message.CodeNotYourTurn)
 			}
@@ -199,13 +201,13 @@ func (p *PacketOrchestrator) SendPacket(ctx context.Context, req *SendPacketRequ
 				if p.deductFailureHandler != nil {
 					p.deductFailureHandler.HandleDeductFailure(ctx, req.RoomID, meta, message.ReasonLaterRoundDeductFailed, initErr)
 				}
-				return message.NewErrorWithMsg(message.CodeSystemError, message.GetInterruptMessage(message.ReasonLaterRoundDeductFailed))
+				return message.NewErrorWithMsg(message.CodeSystemError, i18n.GetInterruptMessage(message.ReasonLaterRoundDeductFailed))
 			}
 
-			pipelineResult, pipelineErr := p.sendPacketPipeline(ctx, &domain.SendPacketParams{
+			pipelineResult, pipelineErr := p.sendPacketPipeline(ctx, &round.SendPacketParams{
 				RoomID:      req.RoomID,
 				SenderID:    req.UserID,
-				Scenario:    domain.SendScenarioPlayerManual,
+				Scenario:    round.SendScenarioPlayerManual,
 				TotalAmount: meta.RoomFee,
 				RoundNo:     nextRound,
 				RoundID:     initResult.RoundID,
@@ -227,10 +229,10 @@ func (p *PacketOrchestrator) SendPacket(ctx context.Context, req *SendPacketRequ
 			return nil
 		}
 
-		pipelineResult, pipelineErr := p.sendPacketPipeline(ctx, &domain.SendPacketParams{
+		pipelineResult, pipelineErr := p.sendPacketPipeline(ctx, &round.SendPacketParams{
 			RoomID:      req.RoomID,
 			SenderID:    req.UserID,
-			Scenario:    domain.SendScenarioPlayerManual,
+			Scenario:    round.SendScenarioPlayerManual,
 			TotalAmount: meta.RoomFee,
 			RoundNo:     nextRound,
 			PlayerCount: meta.MaxPlayers,
@@ -298,16 +300,16 @@ func (p *PacketOrchestrator) postSendPacketAsync(ctx context.Context, params *po
 		p.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeGrab, params.RoomID, params.RoundID)
 	}
 
-	packets := make([]message.PacketInfo, len(params.PacketIDs))
+	packets := make([]push.PacketInfoPush, len(params.PacketIDs))
 	for i, packetID := range params.PacketIDs {
-		packets[i] = message.PacketInfo{
+		packets[i] = push.PacketInfoPush{
 			PacketID: packetID,
 			Position: int32(i + 1),
 		}
 	}
 
 	if p.broadcaster != nil {
-		p.broadcaster.Broadcast(ctx, params.RoomID, message.PushRoundStart, &message.RoundStartPush{
+		p.broadcaster.Broadcast(ctx, params.RoomID, message.PushRoundStart, &push.RoundStartPush{
 			RoomID:         params.RoomID,
 			RoundID:        params.RoundID,
 			CurrentRound:   int32(params.NextRound),

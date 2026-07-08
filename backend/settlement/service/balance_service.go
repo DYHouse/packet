@@ -6,7 +6,9 @@ import (
 
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/settlement/config"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 )
 
@@ -14,11 +16,11 @@ type BalanceService struct {
 	platform          platform.Client
 	cfg               *config.PlatformConfig
 	userIDConvert     *UserIDConvertService
-	virtualBalanceSvc *VirtualBalanceService
+	virtualBalanceSvc domain.VirtualBalanceService
 	robotChecker      RobotChecker
 }
 
-func NewBalanceService(platformClient platform.Client, cfg *config.PlatformConfig, userIDConvert *UserIDConvertService, virtualBalanceSvc *VirtualBalanceService, robotChecker RobotChecker) *BalanceService {
+func NewBalanceService(platformClient platform.Client, cfg *config.PlatformConfig, userIDConvert *UserIDConvertService, virtualBalanceSvc domain.VirtualBalanceService, robotChecker RobotChecker) *BalanceService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
@@ -32,10 +34,17 @@ func NewBalanceService(platformClient platform.Client, cfg *config.PlatformConfi
 }
 
 func (s *BalanceService) CheckBalanceForReady(ctx context.Context, req *dto.BalanceCheckRequest) (*dto.BalanceCheckResult, error) {
-	requiredFee := s.CalculateRequiredFee(req.RoomFee, req.MaxPlayers, req.MaxRounds)
+	requiredFee := room.CalculateRequiredFee(req.RoomFee, req.MaxPlayers, req.MaxRounds)
 
 	// 检查是否为机器人，使用虚拟余额
-	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, req.UserID) {
+	if s.robotChecker == nil {
+		return nil, fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, req.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("check robot failed: %w", err)
+	}
+	if isRobot {
 		if s.virtualBalanceSvc != nil {
 			balance, err := s.virtualBalanceSvc.GetBalance(ctx, req.UserID)
 			if err != nil {
@@ -70,17 +79,6 @@ func (s *BalanceService) CheckBalanceForReady(ctx context.Context, req *dto.Bala
 		RequiredFee:  requiredFee,
 		IsSufficient: balance >= requiredFee,
 	}, nil
-}
-
-func (s *BalanceService) CalculateRequiredFee(roomFee int64, maxPlayers int, maxRounds int) int64 {
-	if maxPlayers <= 0 || maxRounds <= 0 {
-		return 0
-	}
-
-	firstRoundFee := roomFee / int64(maxPlayers)
-	laterRoundsFee := roomFee * int64(maxRounds-1)
-
-	return firstRoundFee + laterRoundsFee
 }
 
 func (s *BalanceService) CheckUserBalance(ctx context.Context, userID int64) (int64, error) {

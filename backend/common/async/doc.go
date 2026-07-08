@@ -10,7 +10,7 @@
 // 2. 注入到需要 fire-and-forget 语义的 service：
 //
 //	type Service struct {
-//		taskRunner *async.TaskRunner
+//		taskRunner async.TaskRunner
 //	}
 //
 // 3. 在 service 方法中提交任务：

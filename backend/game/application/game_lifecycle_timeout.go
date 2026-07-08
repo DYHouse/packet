@@ -5,11 +5,14 @@ import (
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/currency"
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/common/rediskeys"
+	"github.com/cashparty/backend/game/domain/push"
+	"github.com/cashparty/backend/game/domain/room"
+	"github.com/cashparty/backend/game/domain/round"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 )
 
@@ -24,15 +27,15 @@ func (s *GameLifecycleService) OnGrabTimeout(ctx context.Context, roomID string,
 	}
 
 	if s.broadcaster != nil {
-		msgResults := make([]message.DistributeResult, len(results))
+		msgResults := make([]push.DistributeResultPush, len(results))
 		for i, r := range results {
-			msgResults[i] = message.DistributeResult{
+			msgResults[i] = push.DistributeResultPush{
 				UserID:   r.UserID,
 				Amount:   currency.NewMoneyFromFen(r.Amount),
 				Position: r.Position,
 			}
 		}
-		s.broadcaster.Broadcast(ctx, roomID, message.PushAutoDistribute, &message.AutoDistributePush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushAutoDistribute, &push.AutoDistributePush{
 			RoomID:           roomID,
 			RoundID:          roundID,
 			DistributedCount: int32(count),
@@ -56,9 +59,9 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 		return
 	}
 
-	lockKey := redis.SendPacketLockKey(roomID, userID)
+	lockKey := rediskeys.SendPacketLockKey(roomID, userID)
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.SendTimeoutLockTTL.Seconds()), func() error {
+	err := lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.SendTimeoutLockTTL.Seconds()), func() error {
 		meta, err := s.repo.GetRoomMeta(ctx, roomID)
 		if err != nil {
 			logger.Error("failed to get room meta for timeout", "room_id", roomID, "error", err)
@@ -74,8 +77,7 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 			return nil
 		}
 
-		roomHashKey := redis.RoomHashKey(roomID)
-		nextSenderID, _ := s.redis.HGet(ctx, roomHashKey, "next_sender_id").Result()
+		nextSenderID, _ := s.repo.GetNextSenderID(ctx, roomID)
 		if nextSenderID != "" && nextSenderID != userID {
 			logger.Info("not this player's turn, skip timeout handling",
 				"room_id", roomID,
@@ -91,7 +93,7 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 			sessionID = converter.ParseID(meta.CurrentSessionID)
 		}
 
-		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, domain.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound))
+		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound))
 		if err != nil {
 			logger.Error("apply penalty failed", "room_id", roomID, "user_id", userID, "error", err)
 			return nil
@@ -103,14 +105,14 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 		}
 
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(ctx, roomID, message.PushPenalty, &message.PenaltyPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushPenalty, &push.PenaltyPush{
 				RoomID:        roomID,
 				UserID:        userID,
 				PenaltyType:   message.ReasonPenaltySendTimeout,
 				PenaltyAmount: currency.NewMoneyFromFen(result.Amount),
 				PenaltyCount:  int32(result.Count),
 				KickRequired:  result.KickRequired,
-				Reason:        message.GetPenaltyMessage(result.Reason),
+				Reason:        i18n.GetPenaltyMessage(result.Reason),
 			}, "")
 		}
 
@@ -138,16 +140,16 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 func (s *GameLifecycleService) OnReplaceTimeout(ctx context.Context, roomID string, leftUserID string) {
 	logger.Warn("replacement timeout", "room_id", roomID, "left_user_id", leftUserID)
 
-	lockKey := redis.ReplaceTimeoutLockKey(roomID, leftUserID)
+	lockKey := rediskeys.ReplaceTimeoutLockKey(roomID, leftUserID)
 
-	err := lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.ReplaceTimeoutLockTTL.Seconds()), func() error {
+	err := lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.ReplaceTimeoutLockTTL.Seconds()), func() error {
 		meta, err := s.repo.GetRoomMeta(ctx, roomID)
 		if err != nil || meta == nil {
 			logger.Error("failed to get room meta for replacement timeout", "room_id", roomID, "error", err)
 			return nil
 		}
 
-		if meta.Status != domain.RoomStatusInterrupted {
+		if meta.Status != room.RoomStatusInterrupted {
 			logger.Info("room status changed, skip replacement timeout", "room_id", roomID, "status", meta.Status)
 			return nil
 		}
@@ -183,12 +185,12 @@ func (s *GameLifecycleService) OnReplaceTimeout(ctx context.Context, roomID stri
 			Reason:     "replacement_timeout",
 		}
 
-		if err := s.settlementService.DistributePenaltyFromPlatform(ctx, distReq); err != nil {
+		if err := s.settleAppService.DistributePenaltyFromPlatform(ctx, distReq); err != nil {
 			logger.Error("distribute penalty from platform failed", "room_id", roomID, "error", err)
 		}
 
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(ctx, roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushGameInterrupted, &push.GameInterruptedPush{
 				RoomID:       roomID,
 				Reason:       message.ReasonReplacementTimeout,
 				PenaltyShare: currency.NewMoneyFromFen(dist.ShareAmount),
@@ -197,7 +199,7 @@ func (s *GameLifecycleService) OnReplaceTimeout(ctx context.Context, roomID stri
 		}
 
 		if err := s.EndGameWithOptions(ctx, roomID, &EndGameOptions{
-			AllowedStatus: int(domain.RoomStatusInterrupted),
+			AllowedStatus: int(room.RoomStatusInterrupted),
 			EndReason:     message.ReasonReplacementTimeout,
 			SessionID:     meta.CurrentSessionID,
 			ActualRounds:  int(meta.CurrentRound),

@@ -11,23 +11,26 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/common/trace"
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/push"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	roomDom "github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/scheduler"
 	"github.com/cashparty/backend/settlement/dto"
 	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
 type RoomAppService struct {
-	repo               domain.RoomRepository
-	dbRepo             domain.DBRepository
+	repo               repository.RoomRepository
+	dbRepo             repository.DBRepository
 	userService        *UserService
-	broadcaster        domain.Broadcaster
-	publisher          domain.RoomEventPublisher
+	broadcaster        events.Broadcaster
+	publisher          events.RoomEventPublisher
 	scheduler          *scheduler.TimeoutScheduler
 	settlementService  *settlementService.BalanceQueryService
 	balanceService     *settlementService.BalanceService
 	resumeGameCallback ResumeGameCallback
-	taskRunner         *async.TaskRunner
+	taskRunner         async.TaskRunner
 }
 
 // ResumeGameCallback 由 GameAppService 注入，用于自动上座补满后恢复中断游戏
@@ -39,15 +42,15 @@ func (s *RoomAppService) SetResumeGameCallback(cb ResumeGameCallback) {
 }
 
 func NewRoomAppService(
-	repo domain.RoomRepository,
-	dbRepo domain.DBRepository,
+	repo repository.RoomRepository,
+	dbRepo repository.DBRepository,
 	userService *UserService,
-	broadcaster domain.Broadcaster,
-	publisher domain.RoomEventPublisher,
+	broadcaster events.Broadcaster,
+	publisher events.RoomEventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
 	settlementSvc *settlementService.BalanceQueryService,
 	balanceSvc *settlementService.BalanceService,
-	taskRunner *async.TaskRunner,
+	taskRunner async.TaskRunner,
 ) *RoomAppService {
 	return &RoomAppService{
 		repo:              repo,
@@ -93,7 +96,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 			return nil, message.NewError(message.CodeRoomNotFound)
 		}
 
-		roomMeta := &domain.RoomMeta{
+		roomMeta := &roomDom.RoomMeta{
 			RoomID:           req.RoomID,
 			RoomNo:           room.RoomNo,
 			ConfigID:         room.ConfigID,
@@ -102,7 +105,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 			MaxPlayers:       room.MaxPlayers,
 			MaxRounds:        room.MaxRounds,
 			MaxSpectators:    room.MaxSpectators,
-			Status:           domain.RoomStatus(room.Status),
+			Status:           roomDom.RoomStatus(room.Status),
 			CurrentRound:     room.CurrentRound,
 			CurrentSessionID: fmt.Sprintf("%d", room.CurrentSessionID),
 		}
@@ -113,7 +116,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 		}
 	}
 
-	spectator := &domain.Spectator{
+	spectator := &roomDom.Spectator{
 		UserID:   req.UserID,
 		Nickname: userInfo.Nickname,
 		Avatar:   userInfo.Avatar,
@@ -129,7 +132,7 @@ func (s *RoomAppService) JoinRoom(ctx context.Context, req *JoinRoomRequest) (*J
 	roomNo := result.RoomNo
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorJoinEvent(roomID, req.UserID, userInfo.Nickname, userInfo.Avatar)); err != nil {
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewSpectatorJoinEvent(roomID, req.UserID, userInfo.Nickname, userInfo.Avatar)); err != nil {
 			logger.Warn("publish spectator_join event failed",
 				"room_id", roomID,
 				"user_id", req.UserID,
@@ -174,7 +177,7 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 	}
 
 	// 游戏进行中（非中断态）不自动上座
-	if meta.Status == domain.RoomStatusPlaying {
+	if meta.Status == roomDom.RoomStatusPlaying {
 		return joinResult, nil
 	}
 
@@ -214,7 +217,7 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 	}
 
 	if s.publisher != nil && autoResult.Player != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReadyEvent(
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReadyEvent(
 			joinResult.RoomID, req.UserID, autoResult.SeatNo,
 			autoResult.Player.Nickname, autoResult.Player.Avatar)); err != nil {
 			logger.Warn("publish player_ready event failed",
@@ -263,7 +266,7 @@ func (s *RoomAppService) handleCountdownAfterSeat(ctx context.Context, roomID st
 			countdownDuration = 3
 		}
 		if s.broadcaster != nil {
-			s.broadcaster.Broadcast(ctx, roomID, message.PushCountdownStart, &message.CountdownStartPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushCountdownStart, &push.CountdownStartPush{
 				RoomID:    roomID,
 				Countdown: int32(countdownDuration),
 			}, "")
@@ -290,7 +293,7 @@ func (s *RoomAppService) handleCountdownAfterSeat(ctx context.Context, roomID st
 // tryAutoSubstitute 座位释放后尝试从排队队列自动替补。
 // 替补前会逐个校验排队者余额，余额不足者被移出队列并通知，继续下一位。
 // 返回替补结果（nil 表示无替补）。
-func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *domain.SubstituteResult {
+func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *repository.SubstituteResult {
 	// 取房间元信息用于余额校验
 	meta, metaErr := s.repo.GetRoomMeta(ctx, roomID)
 	if metaErr != nil || meta == nil {
@@ -320,7 +323,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 				// 余额不足：移出队列并通知
 				s.repo.Dequeue(ctx, roomID, q.UserID)
 				if s.broadcaster != nil {
-					s.broadcaster.BroadcastToUser(ctx, q.UserID, message.PushDequeued, &message.DequeuedPush{
+					s.broadcaster.BroadcastToUser(ctx, q.UserID, message.PushDequeued, &push.DequeuedPush{
 						RoomID:  roomID,
 						UserID:  q.UserID,
 						Reason:  "insufficient_balance",
@@ -349,7 +352,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	if s.publisher != nil && subResult.Player != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewSubstituteEvent(
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewSubstituteEvent(
 			roomID, subResult.SubstituteUserID, subResult.SeatNo,
 			subResult.Player.Nickname, subResult.Player.Avatar)); err != nil {
 			logger.Warn("publish substitute event failed",
@@ -361,7 +364,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, roomID, message.PushSubstitute, &message.SubstitutePush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushSubstitute, &push.SubstitutePush{
 			RoomID: roomID,
 			UserID: subResult.SubstituteUserID,
 			SeatNo: int32(subResult.SeatNo),
@@ -414,7 +417,7 @@ func (s *RoomAppService) Enqueue(ctx context.Context, req *EnqueueRequest) (*Enq
 	}
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar)); err != nil {
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewQueueJoinEvent(req.RoomID, req.UserID, position, nickname, avatar)); err != nil {
 			logger.Warn("publish queue_join event failed",
 				"room_id", req.RoomID,
 				"user_id", req.UserID,
@@ -462,7 +465,7 @@ func (s *RoomAppService) Dequeue(ctx context.Context, req *DequeueRequest) (*Deq
 	}
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, domain.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel")); err != nil {
+		if err := s.publisher.PublishRoomEvent(ctx, events.NewQueueLeaveEvent(req.RoomID, req.UserID, "user_cancel")); err != nil {
 			logger.Warn("publish queue_leave event failed",
 				"room_id", req.RoomID,
 				"user_id", req.UserID,
@@ -491,7 +494,7 @@ func (s *RoomAppService) Dequeue(ctx context.Context, req *DequeueRequest) (*Deq
 }
 
 // TryAutoSubstitute 暴露给其他应用服务调用的替补入口
-func (s *RoomAppService) TryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *domain.SubstituteResult {
+func (s *RoomAppService) TryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *repository.SubstituteResult {
 	return s.tryAutoSubstitute(ctx, roomID, seatNo)
 }
 
@@ -550,7 +553,7 @@ func (s *RoomAppService) LeaveRoom(ctx context.Context, req *LeaveRoomRequest) (
 
 	if spectator != nil {
 		if s.publisher != nil {
-			if err := s.publisher.PublishRoomEvent(ctx, domain.NewSpectatorLeaveEvent(req.RoomID, req.UserID, req.Reason)); err != nil {
+			if err := s.publisher.PublishRoomEvent(ctx, events.NewSpectatorLeaveEvent(req.RoomID, req.UserID, req.Reason)); err != nil {
 				logger.Warn("publish spectator_leave event failed",
 					"room_id", req.RoomID,
 					"user_id", req.UserID,
@@ -630,7 +633,7 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 		nickname = player.Nickname
 		seatNo = player.SeatNo
 		if s.publisher != nil {
-			if err := s.publisher.PublishRoomEvent(ctx, domain.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo)); err != nil {
+			if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo)); err != nil {
 				logger.Warn("publish player_reconnect event failed",
 					"room_id", req.RoomID,
 					"user_id", req.UserID,
@@ -644,7 +647,7 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushPlayerReconnected, &message.PlayerReconnectedPush{
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushPlayerReconnected, &push.PlayerReconnectedPush{
 			UserID:   req.UserID,
 			Nickname: nickname,
 			SeatNo:   seatNo,
@@ -675,15 +678,15 @@ func (s *RoomAppService) BroadcastToUser(ctx context.Context, userID string, msg
 	}
 }
 
-func (s *RoomAppService) GetRoomMeta(ctx context.Context, roomID string) (*domain.RoomMeta, error) {
+func (s *RoomAppService) GetRoomMeta(ctx context.Context, roomID string) (*roomDom.RoomMeta, error) {
 	return s.repo.GetRoomMeta(ctx, roomID)
 }
 
-func (s *RoomAppService) GetPlayer(ctx context.Context, roomID, userID string) (*domain.Player, error) {
+func (s *RoomAppService) GetPlayer(ctx context.Context, roomID, userID string) (*roomDom.Player, error) {
 	return s.repo.GetPlayer(ctx, roomID, userID)
 }
 
-func (s *RoomAppService) GetSpectator(ctx context.Context, roomID, userID string) (*domain.Spectator, error) {
+func (s *RoomAppService) GetSpectator(ctx context.Context, roomID, userID string) (*roomDom.Spectator, error) {
 	return s.repo.GetSpectator(ctx, roomID, userID)
 }
 
@@ -764,7 +767,7 @@ func (s *RoomAppService) GetRoomDetail(ctx context.Context, roomID string) (*Roo
 	return BuildFullRoomState(stateData), nil
 }
 
-func (s *RoomAppService) GetRoomTypeList(ctx context.Context) ([]*domain.RoomTypeItem, error) {
+func (s *RoomAppService) GetRoomTypeList(ctx context.Context) ([]*repository.RoomTypeItem, error) {
 	items, err := s.dbRepo.RoomConfigDBRepo().GetRoomTypeList(ctx)
 	if err != nil {
 		logger.Error("failed to get room type list", "error", err)

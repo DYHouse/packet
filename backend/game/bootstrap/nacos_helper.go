@@ -10,7 +10,7 @@ import (
 
 // initNacos 构造 nacos 客户端。
 // 未启用或创建失败时 Warn 后返回 nil（降级：服务发现不可用，但本地功能正常）。
-func initNacos(cfg *gameconfig.Config) *nacos.Client {
+func initNacos(cfg *gameconfig.Config) nacos.NacosClient {
 	if !cfg.Nacos.Enabled {
 		return nil
 	}
@@ -25,7 +25,7 @@ func initNacos(cfg *gameconfig.Config) *nacos.Client {
 // reloadMainConfigFromNacos 从 nacos 拉取主配置并解析覆盖。
 // 失败时 Warn 后返回 oldCfg（保持现有配置继续运行）。
 // 保留 nacos 运行时配置（不能被远程覆盖）。
-func reloadMainConfigFromNacos(client *nacos.Client, oldCfg *gameconfig.Config) *gameconfig.Config {
+func reloadMainConfigFromNacos(client nacos.NacosClient, oldCfg *gameconfig.Config) *gameconfig.Config {
 	content, err := client.GetConfig(oldCfg.Nacos.ConfigDataID, oldCfg.Nacos.ConfigGroup)
 	if err != nil {
 		logger.Warn("get main config from nacos failed, keep local config",
@@ -47,7 +47,7 @@ func reloadMainConfigFromNacos(client *nacos.Client, oldCfg *gameconfig.Config) 
 
 // loadAlgorithmConfigFromNacos 从 nacos 拉取 algorithm 配置。
 // 返回 (nil, nil) 表示未配置或 nacos 未启用。
-func loadAlgorithmConfigFromNacos(client *nacos.Client, cfg *gameconfig.Config) (*gameconfig.AlgorithmConfig, error) {
+func loadAlgorithmConfigFromNacos(client nacos.NacosClient, cfg *gameconfig.Config) (*gameconfig.AlgorithmConfig, error) {
 	if client == nil || cfg.Nacos.AlgorithmDataID == "" {
 		return nil, nil
 	}

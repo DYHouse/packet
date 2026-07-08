@@ -3,7 +3,7 @@ package mysql
 import (
 	"context"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"gorm.io/gorm"
 )
 
@@ -12,18 +12,18 @@ import (
 // eager init 零成本，且构造后字段只读，天然并发安全。
 type DBRepositoryImpl struct {
 	db                *gorm.DB
-	roomRepo          domain.RoomDBRepository
-	sessionRepo       domain.SessionDBRepository
-	userRepo          domain.UserDBRepository
-	roomConfigRepo    domain.RoomConfigDBRepository
-	roundRepo         domain.RoundDBRepository
-	historyRepo       domain.HistoryDBRepository
-	packetRepo        domain.PacketDBRepository
-	grabRecordRepo    domain.GrabRecordRepository
-	specialRewardRepo domain.SpecialRewardRepository
+	roomRepo          repository.RoomDBRepository
+	sessionRepo       repository.SessionDBRepository
+	userRepo          repository.UserDBRepository
+	roomConfigRepo    repository.RoomConfigDBRepository
+	roundRepo         repository.RoundDBRepository
+	historyRepo       repository.HistoryDBRepository
+	packetRepo        repository.PacketDBRepository
+	grabRecordRepo    repository.GrabRecordRepository
+	specialRewardRepo repository.SpecialRewardRepository
 }
 
-func NewDBRepository(db *gorm.DB) domain.DBRepository {
+func NewDBRepository(db *gorm.DB) repository.DBRepository {
 	return &DBRepositoryImpl{
 		db:                db,
 		roomRepo:          NewGormRoomRepository(db),
@@ -38,19 +38,21 @@ func NewDBRepository(db *gorm.DB) domain.DBRepository {
 	}
 }
 
-func (r *DBRepositoryImpl) RoomDBRepo() domain.RoomDBRepository             { return r.roomRepo }
-func (r *DBRepositoryImpl) SessionDBRepo() domain.SessionDBRepository       { return r.sessionRepo }
-func (r *DBRepositoryImpl) UserDBRepo() domain.UserDBRepository             { return r.userRepo }
-func (r *DBRepositoryImpl) RoomConfigDBRepo() domain.RoomConfigDBRepository { return r.roomConfigRepo }
-func (r *DBRepositoryImpl) RoundDBRepo() domain.RoundDBRepository           { return r.roundRepo }
-func (r *DBRepositoryImpl) HistoryDBRepo() domain.HistoryDBRepository       { return r.historyRepo }
-func (r *DBRepositoryImpl) PacketDBRepo() domain.PacketDBRepository         { return r.packetRepo }
-func (r *DBRepositoryImpl) GrabRecordRepo() domain.GrabRecordRepository     { return r.grabRecordRepo }
-func (r *DBRepositoryImpl) SpecialRewardRepo() domain.SpecialRewardRepository {
+func (r *DBRepositoryImpl) RoomDBRepo() repository.RoomDBRepository       { return r.roomRepo }
+func (r *DBRepositoryImpl) SessionDBRepo() repository.SessionDBRepository { return r.sessionRepo }
+func (r *DBRepositoryImpl) UserDBRepo() repository.UserDBRepository       { return r.userRepo }
+func (r *DBRepositoryImpl) RoomConfigDBRepo() repository.RoomConfigDBRepository {
+	return r.roomConfigRepo
+}
+func (r *DBRepositoryImpl) RoundDBRepo() repository.RoundDBRepository       { return r.roundRepo }
+func (r *DBRepositoryImpl) HistoryDBRepo() repository.HistoryDBRepository   { return r.historyRepo }
+func (r *DBRepositoryImpl) PacketDBRepo() repository.PacketDBRepository     { return r.packetRepo }
+func (r *DBRepositoryImpl) GrabRecordRepo() repository.GrabRecordRepository { return r.grabRecordRepo }
+func (r *DBRepositoryImpl) SpecialRewardRepo() repository.SpecialRewardRepository {
 	return r.specialRewardRepo
 }
 
-func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx domain.Transaction) error) error {
+func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx repository.Transaction) error) error {
 	return r.db.WithContext(ctx).Transaction(func(gormTx *gorm.DB) error {
 		tx := NewGormTransaction(gormTx)
 		return fn(tx)
@@ -61,13 +63,13 @@ func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx domai
 // 避免事务内 lazy init 竞态（虽然事务通常单 goroutine 使用，但保持与 DBRepositoryImpl 一致）。
 type GormTransactionImpl struct {
 	db                *gorm.DB
-	roomRepo          domain.RoomDBRepository
-	sessionRepo       domain.SessionDBRepository
-	userRepo          domain.UserDBRepository
-	roundRepo         domain.RoundDBRepository
-	packetRepo        domain.PacketDBRepository
-	grabRecordRepo    domain.GrabRecordRepository
-	specialRewardRepo domain.SpecialRewardRepository
+	roomRepo          repository.RoomDBRepository
+	sessionRepo       repository.SessionDBRepository
+	userRepo          repository.UserDBRepository
+	roundRepo         repository.RoundDBRepository
+	packetRepo        repository.PacketDBRepository
+	grabRecordRepo    repository.GrabRecordRepository
+	specialRewardRepo repository.SpecialRewardRepository
 }
 
 func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
@@ -83,12 +85,14 @@ func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
 	}
 }
 
-func (t *GormTransactionImpl) RoomDBRepo() domain.RoomDBRepository         { return t.roomRepo }
-func (t *GormTransactionImpl) SessionDBRepo() domain.SessionDBRepository   { return t.sessionRepo }
-func (t *GormTransactionImpl) UserDBRepo() domain.UserDBRepository         { return t.userRepo }
-func (t *GormTransactionImpl) RoundDBRepo() domain.RoundDBRepository       { return t.roundRepo }
-func (t *GormTransactionImpl) PacketDBRepo() domain.PacketDBRepository     { return t.packetRepo }
-func (t *GormTransactionImpl) GrabRecordRepo() domain.GrabRecordRepository { return t.grabRecordRepo }
-func (t *GormTransactionImpl) SpecialRewardRepo() domain.SpecialRewardRepository {
+func (t *GormTransactionImpl) RoomDBRepo() repository.RoomDBRepository       { return t.roomRepo }
+func (t *GormTransactionImpl) SessionDBRepo() repository.SessionDBRepository { return t.sessionRepo }
+func (t *GormTransactionImpl) UserDBRepo() repository.UserDBRepository       { return t.userRepo }
+func (t *GormTransactionImpl) RoundDBRepo() repository.RoundDBRepository     { return t.roundRepo }
+func (t *GormTransactionImpl) PacketDBRepo() repository.PacketDBRepository   { return t.packetRepo }
+func (t *GormTransactionImpl) GrabRecordRepo() repository.GrabRecordRepository {
+	return t.grabRecordRepo
+}
+func (t *GormTransactionImpl) SpecialRewardRepo() repository.SpecialRewardRepository {
 	return t.specialRewardRepo
 }

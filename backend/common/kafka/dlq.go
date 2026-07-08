@@ -19,7 +19,7 @@ type DLQEnvelope struct {
 }
 
 // sendToDLQ 将原始消息与处理错误包装为 DLQEnvelope 投递到死信队列。
-func sendToDLQ(ctx context.Context, producer *Producer, dlqTopic string, msg Message, handlerErr error) error {
+func sendToDLQ(ctx context.Context, producer KafkaProducer, dlqTopic string, msg Message, handlerErr error) error {
 	envelope := DLQEnvelope{
 		OriginalTopic:     msg.Topic,
 		OriginalPartition: msg.Partition,

@@ -12,19 +12,31 @@ import (
 	"time"
 )
 
-type Signer struct {
+// Signer 签名器接口，支持 mock 测试。
+// 负责对外 API 请求的 HMAC-SHA256 签名生成与校验。
+type Signer interface {
+	MerchantID() string
+	SignGET(params map[string]string) (ts int64, sign string)
+	SignPOST(body []byte) (ts int64, sign string)
+	VerifyGET(params map[string]string, ts int64, sign string) bool
+	VerifyPOST(body []byte, ts int64, sign string) bool
+}
+
+// signer 签名器实现
+type signer struct {
 	merchantID     string
 	merchantSecret string
 }
 
-func NewSigner(merchantID, merchantSecret string) *Signer {
-	return &Signer{
+// NewSigner 创建签名器。
+func NewSigner(merchantID, merchantSecret string) Signer {
+	return &signer{
 		merchantID:     merchantID,
 		merchantSecret: merchantSecret,
 	}
 }
 
-func (s *Signer) MerchantID() string {
+func (s *signer) MerchantID() string {
 	return s.merchantID
 }
 
@@ -90,7 +102,7 @@ func buildSignStr(paramsJSON, merchantID string, ts int64) (string, error) {
 	return paramsJSON + suffix, nil
 }
 
-func (s *Signer) SignGET(params map[string]string) (ts int64, sign string) {
+func (s *signer) SignGET(params map[string]string) (ts int64, sign string) {
 	ts = currentTimeSeconds()
 
 	paramsJSON, err := buildSortedJSON(params)
@@ -109,7 +121,7 @@ func (s *Signer) SignGET(params map[string]string) (ts int64, sign string) {
 	return ts, sign
 }
 
-func (s *Signer) SignPOST(body []byte) (ts int64, sign string) {
+func (s *signer) SignPOST(body []byte) (ts int64, sign string) {
 	ts = currentTimeSeconds()
 
 	signStr, err := buildSignStr(string(body), s.merchantID, ts)
@@ -121,19 +133,19 @@ func (s *Signer) SignPOST(body []byte) (ts int64, sign string) {
 	return ts, sign
 }
 
-func (s *Signer) VerifyGET(params map[string]string, ts int64, sign string) bool {
+func (s *signer) VerifyGET(params map[string]string, ts int64, sign string) bool {
 	_, expectedSign := s.signGETWithTS(params, ts)
 	// 使用 hmac.Equal 防止时序攻击（规约 §14 安全规范）
 	return hmac.Equal([]byte(sign), []byte(expectedSign))
 }
 
-func (s *Signer) VerifyPOST(body []byte, ts int64, sign string) bool {
+func (s *signer) VerifyPOST(body []byte, ts int64, sign string) bool {
 	expectedSign := s.signPOSTWithTS(body, ts)
 	// 使用 hmac.Equal 防止时序攻击（规约 §14 安全规范）
 	return hmac.Equal([]byte(sign), []byte(expectedSign))
 }
 
-func (s *Signer) signGETWithTS(params map[string]string, ts int64) (int64, string) {
+func (s *signer) signGETWithTS(params map[string]string, ts int64) (int64, string) {
 	paramsJSON, err := buildSortedJSON(params)
 	if err != nil {
 		paramsJSON = ""
@@ -148,7 +160,7 @@ func (s *Signer) signGETWithTS(params map[string]string, ts int64) (int64, strin
 	return ts, sign
 }
 
-func (s *Signer) signPOSTWithTS(body []byte, ts int64) string {
+func (s *signer) signPOSTWithTS(body []byte, ts int64) string {
 	signStr, err := buildSignStr(string(body), s.merchantID, ts)
 	if err != nil {
 		signStr, _ = buildSignStr("", s.merchantID, ts)
@@ -156,7 +168,7 @@ func (s *Signer) signPOSTWithTS(body []byte, ts int64) string {
 	return s.computeHMACSHA256(signStr)
 }
 
-func (s *Signer) computeHMACSHA256(data string) string {
+func (s *signer) computeHMACSHA256(data string) string {
 	h := hmac.New(sha256.New, []byte(s.merchantSecret))
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))

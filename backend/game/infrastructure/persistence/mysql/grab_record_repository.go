@@ -3,7 +3,7 @@ package mysql
 import (
 	"context"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -13,7 +13,7 @@ type gormGrabRecordRepository struct {
 }
 
 // NewGormGrabRecordRepository 创建抢包记录数据库仓储实例。
-func NewGormGrabRecordRepository(db *gorm.DB) domain.GrabRecordRepository {
+func NewGormGrabRecordRepository(db *gorm.DB) repository.GrabRecordRepository {
 	return &gormGrabRecordRepository{db: db}
 }
 

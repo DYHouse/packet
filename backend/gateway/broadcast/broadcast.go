@@ -12,7 +12,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/gateway"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/gateway/connection"
 )
 
@@ -27,7 +27,7 @@ type roomUsersCacheEntry struct {
 
 type BroadcastService struct {
 	manager  *connection.Manager
-	redis    *cRedis.Client
+	redis    cRedis.RedisClient
 	consumer broadcast.Consumer
 
 	ctx    context.Context
@@ -40,7 +40,7 @@ type BroadcastService struct {
 
 func NewBroadcastService(
 	manager *connection.Manager,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	cfg *config.BroadcastConfig,
 	kafkaBrokers []string,
 	kafkaGroupID string,
@@ -154,8 +154,8 @@ func (s *BroadcastService) GetRoomUsers(ctx context.Context, roomID string) ([]s
 	}
 
 	pipe := s.redis.Pipeline()
-	playersCmd := pipe.HGetAll(ctx, gateway.RoomPlayersKey(roomID))
-	spectatorsCmd := pipe.HGetAll(ctx, gateway.RoomSpectatorsKey(roomID))
+	playersCmd := pipe.HGetAll(ctx, rediskeys.RoomPlayersKey(roomID))
+	spectatorsCmd := pipe.HGetAll(ctx, rediskeys.RoomSpectatorsKey(roomID))
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {

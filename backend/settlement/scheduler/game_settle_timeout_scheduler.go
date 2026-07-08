@@ -21,7 +21,7 @@ type GameSettleTimeoutScheduler struct {
 	limit               int
 }
 
-func NewGameSettleTimeoutScheduler(roundSettlementRepo domain.RoundSettlementRepository, gameSettleSvc *service.GameSettleReportingService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleTimeoutScheduler {
+func NewGameSettleTimeoutScheduler(roundSettlementRepo domain.RoundSettlementRepository, gameSettleSvc *service.GameSettleReportingService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleTimeoutScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "game_settle_timeout",
 		Interval:     cfg.Interval,

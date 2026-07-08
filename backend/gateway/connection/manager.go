@@ -10,10 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/gateway"
+	"github.com/cashparty/backend/common/rediskeys"
+	"github.com/cashparty/backend/game/domain/push"
 	connScripts "github.com/cashparty/backend/gateway/connection/scripts"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,7 +48,7 @@ type Manager struct {
 	localConnections sync.Map
 	userConnections  sync.Map
 	config           *ManagerConfig
-	redis            *cRedis.Client
+	redis            cRedis.RedisClient
 	nodeID           string
 	eventCallback    EventCallback
 	connectionCount  int64
@@ -55,7 +57,7 @@ type Manager struct {
 	wg               sync.WaitGroup
 }
 
-func NewManager(config *ManagerConfig, redis *cRedis.Client, nodeID string) *Manager {
+func NewManager(config *ManagerConfig, redis cRedis.RedisClient, nodeID string) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if config == nil {
@@ -122,7 +124,7 @@ func (m *Manager) registerInRedis(conn *Connection) (needKick bool, oldConnID, o
 		return false, "", ""
 	}
 
-	key := gateway.GatewayConnKey(conn.UserID)
+	key := rediskeys.GatewayConnKey(conn.UserID)
 	result, err := connScripts.RegisterConnectionScript.Run(m.ctx, m.redis,
 		[]string{key},
 		conn.ConnID, m.nodeID, conn.Platform, conn.DeviceID, time.Now().Unix(),
@@ -155,10 +157,10 @@ func (m *Manager) kickLocalConnection(connID string) {
 	}
 	c := conn.(*Connection)
 
-	pushMsg := message.NewPushMessage(message.PushKicked, &message.KickedPush{
+	pushMsg := message.NewPushMessage(message.PushKicked, &push.KickedPush{
 		UserID:  c.UserID,
 		Reason:  message.ReasonLoginElsewhere,
-		Message: message.GetKickMessage(message.ReasonLoginElsewhere),
+		Message: i18n.GetKickMessage(message.ReasonLoginElsewhere),
 	})
 	data, err := pushMsg.ToJSON()
 	if err != nil {
@@ -183,7 +185,7 @@ func (m *Manager) publishKickNotification(userID, oldConnID, oldNodeID string) {
 		return
 	}
 
-	channel := gateway.GatewayKickKey(oldNodeID)
+	channel := rediskeys.GatewayKickKey(oldNodeID)
 	kickMsg := KickMessage{
 		UserID: userID,
 		ConnID: oldConnID,
@@ -216,7 +218,7 @@ func (m *Manager) subscribeKickChannel() {
 		return
 	}
 
-	channel := gateway.GatewayKickKey(m.nodeID)
+	channel := rediskeys.GatewayKickKey(m.nodeID)
 	backoff := time.Second
 
 	for {
@@ -315,7 +317,7 @@ func (m *Manager) deleteConnectionMapping(userID string) {
 	if m.redis == nil {
 		return
 	}
-	key := gateway.GatewayConnKey(userID)
+	key := rediskeys.GatewayConnKey(userID)
 	m.redis.Del(m.ctx, key)
 }
 
@@ -323,7 +325,7 @@ func (m *Manager) GetPlayerRoom(userID string) string {
 	if m.redis == nil {
 		return ""
 	}
-	key := gateway.PlayerRoomKey(userID)
+	key := rediskeys.PlayerRoomKey(userID)
 	roomID, _ := m.redis.Get(m.ctx, key).Result()
 	return roomID
 }
@@ -332,7 +334,7 @@ func (m *Manager) RenewConnectionTTL(userID string) {
 	if m.redis == nil {
 		return
 	}
-	key := gateway.GatewayConnKey(userID)
+	key := rediskeys.GatewayConnKey(userID)
 	m.redis.Expire(m.ctx, key, m.config.ConnRedisTTL)
 }
 

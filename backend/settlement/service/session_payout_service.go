@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/cashparty/backend/api/platform"
@@ -24,7 +25,8 @@ type SessionPayoutService struct {
 	userIDConvert  *UserIDConvertService
 	callMgr        *PlatformCallManager
 	robotChecker   RobotChecker
-	virtualBalance *VirtualBalanceService
+	virtualBalance domain.VirtualBalanceService
+	exceptionMgr   *ExceptionManager
 }
 
 func NewSessionPayoutService(
@@ -35,7 +37,8 @@ func NewSessionPayoutService(
 	userIDConvert *UserIDConvertService,
 	callMgr *PlatformCallManager,
 	robotChecker RobotChecker,
-	virtualBalance *VirtualBalanceService,
+	virtualBalance domain.VirtualBalanceService,
+	exceptionMgr *ExceptionManager,
 ) *SessionPayoutService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -49,6 +52,7 @@ func NewSessionPayoutService(
 		callMgr:        callMgr,
 		robotChecker:   robotChecker,
 		virtualBalance: virtualBalance,
+		exceptionMgr:   exceptionMgr,
 	}
 }
 
@@ -104,7 +108,14 @@ func (s *SessionPayoutService) creditSessionPayout(ctx context.Context, sessionI
 		Status:       dto.BillStatusProcessing,
 		Remark:       fmt.Sprintf("会话级抢红包/奖励入账,局ID:%d,入账:%d", sessionID, payOut),
 	}
-	bill.IsRobot = s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID)
+	if s.robotChecker == nil {
+		return fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("check robot failed: %w", err)
+	}
+	bill.IsRobot = isRobot
 
 	if err := s.billRepo.CreateBill(ctx, bill); err != nil {
 		return fmt.Errorf("create session credit bill failed: %w", err)
@@ -133,7 +144,14 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 	}
 
 	// 机器人虚拟通道
-	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, bill.UserID) {
+	if s.robotChecker == nil {
+		return fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, bill.UserID)
+	if err != nil {
+		return fmt.Errorf("check robot failed: %w", err)
+	}
+	if isRobot {
 		if err := s.virtualBalance.Credit(ctx, bill.UserID, bill.Amount); err != nil {
 			s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual credit failed: %w", err)
@@ -193,10 +211,16 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 
 	balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
 	if err != nil {
+		// ParseAmount 失败：平台可能已实际入账但响应余额无法解析。
+		// 资金安全要求 fail-closed：标记账单为 Failed 并创建异常记录供人工对账，不得标记为 Success。
 		logger.Error("parse balance amount failed after successful credit, mark bill as failed",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
 		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
 			logger.Error("update bill to failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
+		}
+		detail := fmt.Sprintf("会话派奖 ParseAmount 解析失败,平台可能已入账但余额无法解析,需人工对账, bill_id: %d, raw_amount: %s, error: %s", bill.ID, result.Data.Balance.Amount, err.Error())
+		if excErr := s.createExceptionRecord(ctx, bill, model.ExceptionTypeCreditRetryExceed, detail); excErr != nil {
+			logger.Error("create exception record for parse amount failure failed", "bill_id", bill.ID, "error", excErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
@@ -205,7 +229,7 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 				Status:   model.CallLogStatusSuccess,
 			})
 		}
-		return fmt.Errorf("parse balance amount failed: %w", err)
+		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
 	}
 
 	if callLog != nil {
@@ -217,4 +241,26 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 	}
 
 	return s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
+}
+
+// createExceptionRecord 创建异常记录并关联到账单，供人工对账。
+func (s *SessionPayoutService) createExceptionRecord(ctx context.Context, bill *model.BillRecord, exceptionType model.ExceptionType, detail string) error {
+	exception := &model.ExceptionRecord{
+		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(bill.ID, strconv.Itoa(int(exceptionType))),
+		ExceptionType:   exceptionType,
+		BillID:          bill.ID,
+		RoundTraceID:    bill.RoundTraceID,
+		RoundID:         bill.RoundID,
+		BillType:        bill.BillType,
+		UserID:          bill.UserID,
+		Amount:          bill.Amount,
+		Status:          model.ExceptionStatusPending,
+		ExceptionDetail: detail,
+	}
+
+	if err := s.exceptionMgr.Create(ctx, exception); err != nil {
+		return err
+	}
+
+	return s.billRepo.UpdateBillExceptionID(ctx, bill.ID, exception.ID)
 }

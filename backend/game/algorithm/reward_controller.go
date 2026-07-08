@@ -8,15 +8,16 @@ import (
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/reward"
 )
 
 type RewardController struct {
 	config    *RewardControlConfig
-	cacheRepo domain.RewardCacheRepository
+	cacheRepo repository.RewardCacheRepository
 }
 
-func NewRewardController(config *RewardControlConfig, cacheRepo domain.RewardCacheRepository) *RewardController {
+func NewRewardController(config *RewardControlConfig, cacheRepo repository.RewardCacheRepository) *RewardController {
 	return &RewardController{
 		config:    config,
 		cacheRepo: cacheRepo,
@@ -43,13 +44,13 @@ func (c *RewardController) DetermineRewardType(
 			ctx, roomID, sessionID, currentRoundNo, maxRounds, roomConfig,
 		); rewardType != RewardTypeNone {
 			logger.Info("guarantee reward triggered", "room_id", roomID, "reward_type", rewardType)
-			return rewardType, domain.TriggerTypeGuarantee
+			return rewardType, reward.TriggerTypeGuarantee
 		}
 	}
 
 	if roomConfig.ProbabilityEnabled && c.isProbabilityAllowed(ctx) {
 		if rewardType := c.checkProbability(roomConfig); rewardType != RewardTypeNone {
-			return rewardType, domain.TriggerTypeProbability
+			return rewardType, reward.TriggerTypeProbability
 		}
 	}
 
@@ -67,29 +68,29 @@ func (c *RewardController) checkGuarantee(
 	logger.Info("checkGuarantee", "room_id", roomID, "session_id", sessionID, "remaining_rounds", remainingRounds, "guarantee_straight", config.GuaranteeStraight, "guarantee_leopard", config.GuaranteeLeopard)
 
 	if config.GuaranteeStraight {
-		straightWon, _ := c.cacheRepo.GetCycleWon(ctx, roomID, sessionID, domain.RewardCycleStraight)
+		straightWon, _ := c.cacheRepo.GetCycleWon(ctx, roomID, sessionID, repository.RewardCycleStraight)
 
 		logger.Info("straight check", "straight_won", straightWon)
 
 		if straightWon == 0 {
 			if c.shouldTriggerGuarantee(remainingRounds) {
-				c.cacheRepo.SetCycleWon(ctx, roomID, sessionID, domain.RewardCycleStraight, 24*time.Hour)
+				c.cacheRepo.SetCycleWon(ctx, roomID, sessionID, repository.RewardCycleStraight, 24*time.Hour)
 				logger.Info("straight guarantee triggered", "room_id", roomID, "remaining_rounds", remainingRounds)
-				return domain.RewardTypeStraight
+				return reward.RewardTypeStraight
 			}
 		}
 	}
 
 	if config.GuaranteeLeopard {
-		leopardWon, _ := c.cacheRepo.GetCycleWon(ctx, roomID, sessionID, domain.RewardCycleLeopard)
+		leopardWon, _ := c.cacheRepo.GetCycleWon(ctx, roomID, sessionID, repository.RewardCycleLeopard)
 
 		logger.Info("leopard check", "leopard_won", leopardWon)
 
 		if leopardWon == 0 {
 			if c.shouldTriggerGuarantee(remainingRounds) {
-				c.cacheRepo.SetCycleWon(ctx, roomID, sessionID, domain.RewardCycleLeopard, 24*time.Hour)
+				c.cacheRepo.SetCycleWon(ctx, roomID, sessionID, repository.RewardCycleLeopard, 24*time.Hour)
 				logger.Info("leopard guarantee triggered", "room_id", roomID, "remaining_rounds", remainingRounds)
-				return domain.RewardTypeLeopard
+				return reward.RewardTypeLeopard
 			}
 		}
 	}
@@ -129,12 +130,12 @@ func (c *RewardController) checkProbability(config *RoomRewardConfig) int {
 	randVal := c.randomFloat()
 
 	if randVal < config.LeopardProbability {
-		return domain.RewardTypeLeopard
+		return reward.RewardTypeLeopard
 	}
 
 	randVal -= config.LeopardProbability
 	if randVal < config.StraightProbability {
-		return domain.RewardTypeStraight
+		return reward.RewardTypeStraight
 	}
 
 	return RewardTypeNone

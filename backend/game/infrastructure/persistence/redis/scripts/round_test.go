@@ -15,7 +15,7 @@ import (
 // setupMiniRedis 创建一个 miniredis 实例并返回包装后的 cRedis.Client 和 context。
 // 如果 miniredis 不可用则跳过测试。
 // packet_test.go / room_seat_test.go / round_test.go / penalty_test.go / queue_test.go 共用。
-func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, *cRedis.Client, context.Context) {
+func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, cRedis.RedisClient, context.Context) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {

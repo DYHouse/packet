@@ -19,7 +19,7 @@ type SettlementCheckScheduler struct {
 	failedFirstRoundLookback   time.Duration
 }
 
-func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *SettlementCheckScheduler {
+func NewSettlementCheckScheduler(settlementCheck *service.SettlementCheckService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *SettlementCheckScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "settlement_check",
 		Interval:     cfg.Interval,

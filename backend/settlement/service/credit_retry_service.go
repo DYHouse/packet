@@ -11,10 +11,10 @@ import (
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"github.com/cashparty/backend/settlement/model"
 )
 
@@ -37,7 +37,7 @@ func DefaultCreditRetryConfig() *CreditRetryConfig {
 type CreditRetryService struct {
 	billRepo      domain.BillRepository
 	platform      platform.Client
-	redis         *cRedis.Client
+	redis         cRedis.RedisClient
 	traceIDGen    *TraceIDGenerator
 	cfg           *config.PlatformConfig
 	lockCfg       *config.LockConfig
@@ -50,7 +50,7 @@ type CreditRetryService struct {
 func NewCreditRetryService(
 	billRepo domain.BillRepository,
 	platform platform.Client,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
@@ -83,8 +83,8 @@ func (s *CreditRetryService) GetRetryableCredits(ctx context.Context, limit int)
 }
 
 func (s *CreditRetryService) RetryCredit(ctx context.Context, billID int64) error {
-	lockKey := redis.BillRetryLockKey(billID)
-	return lock.WithRedisLock(ctx, s.redis, lockKey, int(s.lockCfg.CreditRetryLockTTL.Seconds()), func() error {
+	lockKey := rediskeys.BillRetryLockKey(billID)
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.CreditRetryLockTTL.Seconds()), func() error {
 		return s.doRetryCredit(ctx, billID)
 	})
 }
@@ -166,10 +166,16 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 
 	balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
 	if err != nil {
+		// ParseAmount 失败：平台可能已实际入账但响应余额无法解析。
+		// 资金安全要求 fail-closed：标记账单为 Failed 并创建异常记录供人工对账，不得标记为 Success。
 		logger.Error("parse balance amount failed after successful credit, mark bill as failed",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
 		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
 			logger.Error("update bill to failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
+		}
+		detail := fmt.Sprintf("入账 ParseAmount 解析失败,平台可能已入账但余额无法解析,需人工对账, bill_id: %d, raw_amount: %s, error: %s", bill.ID, result.Data.Balance.Amount, err.Error())
+		if excErr := s.createExceptionRecord(ctx, bill, model.ExceptionTypeCreditRetryExceed, detail); excErr != nil {
+			logger.Error("create exception record for parse amount failure failed", "bill_id", bill.ID, "error", excErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
@@ -178,7 +184,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 				Status:   model.CallLogStatusSuccess,
 			})
 		}
-		return fmt.Errorf("parse balance amount failed: %w", err)
+		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
 	}
 
 	if callLog != nil {

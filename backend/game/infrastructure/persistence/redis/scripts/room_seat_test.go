@@ -13,10 +13,10 @@ import (
 
 // 本文件复用 packet_test.go 中的 setupMiniRedis / must / resultArr / codeOf
 // 以及 round_test.go 中的 resultCode 辅助函数。
-// setupMiniRedis 返回 3 个值：(*miniredis.Miniredis, *cRedis.Client, context.Context)
+// setupMiniRedis 返回 3 个值：(*miniredis.Miniredis, cRedis.RedisClient, context.Context)
 
 // createRoom 在 Redis 中创建房间哈希数据，作为各脚本测试的前置条件。
-func createRoom(t *testing.T, c *cRedis.Client, ctx context.Context, roomID string, status, maxPlayers, maxSpectators int) {
+func createRoom(t *testing.T, c cRedis.RedisClient, ctx context.Context, roomID string, status, maxPlayers, maxSpectators int) {
 	t.Helper()
 	must(t, c.HSet(ctx, rediskeys.RoomHashKey(roomID),
 		"room_no", "R"+roomID,
@@ -28,7 +28,7 @@ func createRoom(t *testing.T, c *cRedis.Client, ctx context.Context, roomID stri
 }
 
 // addSpectator 把用户加入房间观众集合，seatNo 指定其当前选座。
-func addSpectator(t *testing.T, c *cRedis.Client, ctx context.Context, roomID, userID string, seatNo int) {
+func addSpectator(t *testing.T, c cRedis.RedisClient, ctx context.Context, roomID, userID string, seatNo int) {
 	t.Helper()
 	data := fmt.Sprintf(`{"user_id":%q,"nickname":"alice","avatar":"a.png","seat_no":%d,"is_robot":false}`, userID, seatNo)
 	must(t, c.HSet(ctx, rediskeys.RoomSpectatorsKey(roomID), userID, data).Err())
@@ -294,7 +294,7 @@ func TestLeaveRoom(t *testing.T) {
 // luaPlayerReady
 // KEYS: [roomHashKey, playersKey, spectatorsKey]
 // ARGV: [userID, now]
-// 注: 成功返回 code=1（历史语义），非 LuaErrRoomNotFound
+// 注: 成功返回 code=0(LuaErrSuccess)
 // ============================================================================
 
 func TestPlayerReady(t *testing.T) {
@@ -315,9 +315,9 @@ func TestPlayerReady(t *testing.T) {
 
 		args := []interface{}{userID, time.Now().Unix()}
 		arr := resultArr(t, PlayerReady.Run(ctx, c, keys(roomID), args...))
-		// 成功返回 code=1（本脚本历史语义）
-		if code := codeOf(t, arr); code != 1 {
-			t.Errorf("expected code 1 (success), got %d", code)
+		// 成功返回 code=0(LuaErrSuccess)
+		if code := codeOf(t, arr); code != domain.LuaErrSuccess {
+			t.Errorf("expected code %d (success), got %d", domain.LuaErrSuccess, code)
 		}
 	})
 

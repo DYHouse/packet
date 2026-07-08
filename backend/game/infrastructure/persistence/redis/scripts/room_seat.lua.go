@@ -326,8 +326,8 @@ return {0, 'success', seatNo, newStatus}  -- LuaErrSuccess
 // LuaTryStartGame 尝试开始游戏(倒计时结束时由调度器调用)
 // KEYS: [roomHashKey]
 // ARGV: [now]
-// 返回: {code, message}  code: 0=未启动(状态/倒计时未到/已启动), 1=启动成功
-// 注: 本脚本 code 为状态标志,非 lua_codes.go 错误码
+// 返回: {code, message}  code: 0=启动成功(LuaErrSuccess), 1=未启动(状态/倒计时未到/已启动)
+// 注: 本脚本 code 为状态标志,非 lua_codes.go 错误码(0=success 全局约定)
 const luaTryStartGame = `
 local roomHashKey = KEYS[1]
 
@@ -335,36 +335,35 @@ local now = tonumber(ARGV[1])
 
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status ~= 2 then
-	return {0, 'status not countdown'}
+	return {1, 'status not countdown'}
 end
 
 local endTime = tonumber(redis.call('HGET', roomHashKey, 'countdown_end_time') or 0)
 if endTime == 0 then
-	return {0, 'no countdown'}
+	return {1, 'no countdown'}
 end
 
 if now < endTime then
-	return {0, 'countdown not finished'}
+	return {1, 'countdown not finished'}
 end
 
 local startedAt = redis.call('HGET', roomHashKey, 'started_at') or 0
 if startedAt ~= 0 and startedAt ~= '0' then
-	return {0, 'game already started'}
+	return {1, 'game already started'}
 end
 
 redis.call('HSET', roomHashKey, 'started_at', now)
 
 redis.call('HDEL', roomHashKey, 'countdown_end_time')
 
-return {1, 'success'}
+return {0, 'success'}  -- LuaErrSuccess
 `
 
 // LuaPlayerReady 玩家准备
 // KEYS: [roomHashKey, playersKey, spectatorsKey]
 // ARGV: [userID, now]
 // 返回: {code, playerCount, maxPlayers, shouldStartCountdown, countdownEndTime, currentRound, playerData, message}
-// 错误码: LuaErrRoomNotFound(1,房间不存在/status==0), LuaErrNoSeatSelected(12), LuaErrNotInRoom(14)
-// 注: 本脚本最终成功返回 code=1(历史语义,非 LuaErrRoomNotFound)
+// 错误码: LuaErrSuccess(0), LuaErrRoomNotFound(1,房间不存在/status==0), LuaErrNoSeatSelected(12), LuaErrNotInRoom(14)
 const luaPlayerReady = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -449,7 +448,7 @@ elseif status == 4 then
 end
 
 return {
-	1,
+	0,
 	playerCount,
 	maxPlayers,
 	shouldStartCountdown,
@@ -457,15 +456,15 @@ return {
 	currentRound,
 	cjson.encode(player),
 	'success'
-}  -- code=1 表示成功(本脚本历史语义)
+}  -- LuaErrSuccess
 `
 
 // LuaHandleSeatTimeout 处理座位超时
 // KEYS: [roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey, userRoomKey]
 // ARGV: [userID]
 // 返回: {code, seatNo, message}
-// code: 0=失败(房间不存在), 1=成功踢出, 2=用户已不是观众
-// 注: 本脚本 code 为状态标志,非 lua_codes.go 错误码
+// code: 0=成功踢出(LuaErrSuccess), 1=失败(房间不存在), 2=用户已不是观众
+// 注: 本脚本 code 为状态标志,非 lua_codes.go 错误码(0=success 全局约定)
 const luaHandleSeatTimeout = `
 local roomHashKey = KEYS[1]
 local playersKey = KEYS[2]
@@ -479,7 +478,7 @@ local userID = ARGV[1]
 -- 1. 检查房间状态
 local status = tonumber(redis.call('HGET', roomHashKey, 'status') or 0)
 if status == 0 then
-	return {0, 0, 'room not found'}
+	return {1, 0, 'room not found'}
 end
 
 -- 2. 检查用户是否是观众
@@ -509,7 +508,7 @@ end
 -- 6. 清除用户与房间的关联
 redis.call('DEL', userRoomKey)
 
-return {1, seatNo, 'success'}
+return {0, seatNo, 'success'}  -- LuaErrSuccess
 `
 
 // LuaAutoSeatAndReady 自动选座并准备（合并 LuaSelectSeat + LuaPlayerReady 为单原子脚本）

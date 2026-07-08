@@ -1,19 +1,12 @@
 package dto
 
-import "time"
+import (
+	"time"
 
-const (
-	BillTypeFirstRoundDeduct  = 2
-	BillTypeGrabPacket        = 3
-	BillTypeLaterRoundDeduct  = 4
-	BillTypeCommission        = 7
-	BillTypePenaltyIncome     = 8
-	BillTypeSystemPacket      = 9
-	BillTypePenaltyDistribute = 10
-	BillTypeSystemReward      = 11
-	BillTypeSessionCredit     = 12
-	BillTypeGameSettle        = 13
+	"github.com/cashparty/backend/settlement/domain"
 )
+
+// DTO 层特有常量（流程控制 / 追踪标识），不属于领域层。
 
 const (
 	TraceTypePenaltyDeduct = "PENALTY_DED"
@@ -28,72 +21,88 @@ const (
 	CreditRetryMaxDelay        = 5 * time.Minute
 )
 
+// 以下常量已迁入 settlement/domain，此处保留为兼容别名（const 重导出），
+// 确保现有调用方零修改即可编译。新代码应直接引用 domain 层常量。
+
 const (
-	BillStatusProcessing = 0
-	BillStatusSuccess    = 1
-	BillStatusFailed     = 2
-	BillStatusRefunded   = 3
+	BillTypeFirstRoundDeduct  = domain.BillTypeFirstRoundDeduct
+	BillTypeGrabPacket        = domain.BillTypeGrabPacket
+	BillTypeLaterRoundDeduct  = domain.BillTypeLaterRoundDeduct
+	BillTypeCommission        = domain.BillTypeCommission
+	BillTypePenaltyIncome     = domain.BillTypePenaltyIncome
+	BillTypeSystemPacket      = domain.BillTypeSystemPacket
+	BillTypePenaltyDistribute = domain.BillTypePenaltyDistribute
+	BillTypeSystemReward      = domain.BillTypeSystemReward
+	BillTypeSessionCredit     = domain.BillTypeSessionCredit
+	BillTypeGameSettle        = domain.BillTypeGameSettle
 )
 
 const (
-	DeductSceneFirstRoundShare = 1
-	DeductSceneLaterRoundMin   = 2
-	DeductSceneSystemPacket    = 3
+	BillStatusProcessing = domain.BillStatusProcessing
+	BillStatusSuccess    = domain.BillStatusSuccess
+	BillStatusFailed     = domain.BillStatusFailed
+	BillStatusRefunded   = domain.BillStatusRefunded
 )
 
 const (
-	RoundStatusDeducting = 0
-	RoundStatusDeducted  = 1
-	RoundStatusSettling  = 2
-	RoundStatusSuccess   = 3
-	RoundStatusPartial   = 4
-	RoundStatusFailed    = 5
-	RoundStatusCredited  = 6
+	DeductSceneFirstRoundShare = domain.DeductSceneFirstRoundShare
+	DeductSceneLaterRoundMin   = domain.DeductSceneLaterRoundMin
+	DeductSceneSystemPacket    = domain.DeductSceneSystemPacket
 )
 
 const (
-	ReconcileStatusPending  = 0
-	ReconcileStatusSuccess  = 1
-	ReconcileStatusAbnormal = 2
+	RoundStatusDeducting = domain.RoundStatusDeducting
+	RoundStatusDeducted  = domain.RoundStatusDeducted
+	RoundStatusSettling  = domain.RoundStatusSettling
+	RoundStatusSuccess   = domain.RoundStatusSuccess
+	RoundStatusPartial   = domain.RoundStatusPartial
+	RoundStatusFailed    = domain.RoundStatusFailed
+	RoundStatusCredited  = domain.RoundStatusCredited
 )
 
 const (
-	RefundStatusNone       = 0
-	RefundStatusPending    = 1
-	RefundStatusApproved   = 2
-	RefundStatusRefunded   = 3
-	RefundStatusRejected   = 4
-	RefundStatusProcessing = 5
+	ReconcileStatusPending  = domain.ReconcileStatusPending
+	ReconcileStatusSuccess  = domain.ReconcileStatusSuccess
+	ReconcileStatusAbnormal = domain.ReconcileStatusAbnormal
 )
 
 const (
-	RefundTypeFirstRoundFail = 1
-	RefundTypeOther          = 2
+	RefundStatusNone       = domain.RefundStatusNone
+	RefundStatusPending    = domain.RefundStatusPending
+	RefundStatusApproved   = domain.RefundStatusApproved
+	RefundStatusRefunded   = domain.RefundStatusRefunded
+	RefundStatusRejected   = domain.RefundStatusRejected
+	RefundStatusProcessing = domain.RefundStatusProcessing
 )
 
 const (
-	ReconcileTypeScheduled = 1
-	ReconcileTypeAbnormal  = 2
-	ReconcileTypeManual    = 3
+	RefundTypeFirstRoundFail = domain.RefundTypeFirstRoundFail
+	RefundTypeOther          = domain.RefundTypeOther
 )
 
 const (
-	ReconcileScopeSession = 1
-	ReconcileScopeRound   = 2
-	ReconcileScopeBill    = 3
+	ReconcileTypeScheduled = domain.ReconcileTypeScheduled
+	ReconcileTypeAbnormal  = domain.ReconcileTypeAbnormal
+	ReconcileTypeManual    = domain.ReconcileTypeManual
+)
+
+const (
+	ReconcileScopeSession = domain.ReconcileScopeSession
+	ReconcileScopeRound   = domain.ReconcileScopeRound
+	ReconcileScopeBill    = domain.ReconcileScopeBill
 )
 
 // GameSettleStatus — 游戏级结算状态（记录在 RoundSettlement 上）
 const (
-	GameSettleStatusNone     = 0
-	GameSettleStatusSettling = 1
-	GameSettleStatusSuccess  = 2
-	GameSettleStatusFailed   = 3
+	GameSettleStatusNone     = domain.GameSettleStatusNone
+	GameSettleStatusSettling = domain.GameSettleStatusSettling
+	GameSettleStatusSuccess  = domain.GameSettleStatusSuccess
+	GameSettleStatusFailed   = domain.GameSettleStatusFailed
 )
 
 // BillGameSettleStatus — 单笔 Bill 的游戏级结算标记
 const (
-	BillGameSettleNone       = 0
-	BillGameSettleSettled    = 1
-	BillGameSettleProcessing = 2
+	BillGameSettleNone       = domain.BillGameSettleNone
+	BillGameSettleSettled    = domain.BillGameSettleSettled
+	BillGameSettleProcessing = domain.BillGameSettleProcessing
 )

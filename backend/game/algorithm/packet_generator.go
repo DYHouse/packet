@@ -8,20 +8,21 @@ import (
 	"math/big"
 	"sync/atomic"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/reward"
 )
 
 type PacketGenerator struct {
 	config            atomic.Pointer[Config]
-	packetCache       domain.PacketCacheRepository
-	rewardCache       domain.RewardCacheRepository
+	packetCache       repository.PacketCacheRepository
+	rewardCache       repository.RewardCacheRepository
 	straightGenerator atomic.Pointer[StraightGenerator]
 	leopardGenerator  atomic.Pointer[LeopardGenerator]
 	rewardController  atomic.Pointer[RewardController]
-	roomRepo          domain.RoomRepository
+	roomRepo          repository.RoomRepository
 }
 
-func NewPacketGenerator(config *Config, packetCache domain.PacketCacheRepository, rewardCache domain.RewardCacheRepository, roomRepo domain.RoomRepository) *PacketGenerator {
+func NewPacketGenerator(config *Config, packetCache repository.PacketCacheRepository, rewardCache repository.RewardCacheRepository, roomRepo repository.RoomRepository) *PacketGenerator {
 	g := &PacketGenerator{
 		packetCache: packetCache,
 		rewardCache: rewardCache,
@@ -72,7 +73,7 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 	var genErr error
 
 	switch rewardType {
-	case domain.RewardTypeStraight:
+	case reward.RewardTypeStraight:
 		result, genErr = straightGen.Generate(ctx, req, traceID)
 		if genErr != nil {
 			result, genErr = g.generateNormalPackets(config, req, traceID)
@@ -80,7 +81,7 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 				result.RewardType = RewardTypeNone
 			}
 		}
-	case domain.RewardTypeLeopard:
+	case reward.RewardTypeLeopard:
 		result, genErr = leopardGen.Generate(ctx, req, traceID)
 		if genErr != nil {
 			result, genErr = g.generateNormalPackets(config, req, traceID)

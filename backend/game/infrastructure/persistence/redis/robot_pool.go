@@ -6,41 +6,42 @@ import (
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 )
 
 // RobotPoolService 机器人账号池服务
 type RobotPoolService struct {
-	redis *cRedis.Client
+	redis cRedis.RedisClient
 }
 
 // NewRobotPoolService 创建机器人账号池服务实例
-func NewRobotPoolService(redis *cRedis.Client) *RobotPoolService {
+func NewRobotPoolService(redis cRedis.RedisClient) *RobotPoolService {
 	return &RobotPoolService{redis: redis}
 }
 
 // AddToAvailablePool 添加到可用账号池
 func (s *RobotPoolService) AddToAvailablePool(ctx context.Context, userID int64) error {
-	return s.redis.SAdd(ctx, RobotPoolAvailableKey(), converter.FormatID(userID)).Err()
+	return s.redis.SAdd(ctx, rediskeys.RobotPoolAvailableKey(), converter.FormatID(userID)).Err()
 }
 
 // RemoveFromAvailablePool 从可用账号池移除
 func (s *RobotPoolService) RemoveFromAvailablePool(ctx context.Context, userID int64) error {
-	return s.redis.SRem(ctx, RobotPoolAvailableKey(), converter.FormatID(userID)).Err()
+	return s.redis.SRem(ctx, rediskeys.RobotPoolAvailableKey(), converter.FormatID(userID)).Err()
 }
 
 // GetAvailableCount 获取可用账号池数量
 func (s *RobotPoolService) GetAvailableCount(ctx context.Context) (int64, error) {
-	return s.redis.SCard(ctx, RobotPoolAvailableKey()).Result()
+	return s.redis.SCard(ctx, rediskeys.RobotPoolAvailableKey()).Result()
 }
 
 // IsAvailable 检查是否在可用池中
 func (s *RobotPoolService) IsAvailable(ctx context.Context, userID int64) (bool, error) {
-	return s.redis.SIsMember(ctx, RobotPoolAvailableKey(), converter.FormatID(userID)).Result()
+	return s.redis.SIsMember(ctx, rediskeys.RobotPoolAvailableKey(), converter.FormatID(userID)).Result()
 }
 
 // GetAvailableRobots 获取所有可用机器人ID
 func (s *RobotPoolService) GetAvailableRobots(ctx context.Context) ([]int64, error) {
-	members, err := s.redis.SMembers(ctx, RobotPoolAvailableKey()).Result()
+	members, err := s.redis.SMembers(ctx, rediskeys.RobotPoolAvailableKey()).Result()
 	if err != nil {
 		return nil, err
 	}

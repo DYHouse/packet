@@ -13,35 +13,38 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/common/utils"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 )
 
 type GrabService struct {
-	redis       *cRedis.Client
+	redis       cRedis.RedisClient
+	packetCache repository.PacketCacheRepository
 	grabTimeout int64
 	sendTimeout int64
 	redisTTL    config.RedisTTLConfig
 }
 
-func NewGrabService(redis *cRedis.Client, grabTimeout, sendTimeout time.Duration, redisTTL config.RedisTTLConfig) *GrabService {
+func NewGrabService(redis cRedis.RedisClient, packetCache repository.PacketCacheRepository, grabTimeout, sendTimeout time.Duration, redisTTL config.RedisTTLConfig) *GrabService {
 	return &GrabService{
 		redis:       redis,
+		packetCache: packetCache,
 		grabTimeout: int64(grabTimeout.Seconds()),
 		sendTimeout: int64(sendTimeout.Seconds()),
 		redisTTL:    redisTTL,
 	}
 }
 
-func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, packetID string) (*domain.GrabResult, error) {
+func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, packetID string) (*round.GrabResult, error) {
 	keys := []string{
-		redis.RoundAvailablePacketsKey(roundID),
-		redis.UserGrabbedKey(roundID, userID),
-		redis.RoundGrabbersKey(roundID),
-		redis.RoundStateKey(roundID),
-		redis.RoomPlayersKey(roomID),
-		redis.PacketInfoKey(packetID),
-		redis.PacketAvailableKey(packetID),
+		rediskeys.RoundAvailablePacketsKey(roundID),
+		rediskeys.UserGrabbedKey(roundID, userID),
+		rediskeys.RoundGrabbersKey(roundID),
+		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.PacketInfoKey(packetID),
+		rediskeys.PacketAvailableKey(packetID),
 	}
 
 	args := []interface{}{
@@ -66,7 +69,7 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 		return nil, luaErr
 	}
 
-	result := &domain.GrabResult{
+	result := &round.GrabResult{
 		PacketID: converter.ParseString(res[1]),
 		Amount:   converter.ParseInt64(res[2]),
 		Position: converter.ParseInt(res[3]),
@@ -87,7 +90,7 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 
 // GetAvailablePacketID 查询可用红包ID供机器人使用
 func (s *GrabService) GetAvailablePacketID(ctx context.Context, roomID, roundID string) (string, error) {
-	packetIDs, err := s.redis.LRange(ctx, redis.RoundAvailablePacketsKey(roundID), 0, -1).Result()
+	packetIDs, err := s.packetCache.GetAvailablePacketIDs(ctx, roundID)
 	if err != nil {
 		logger.Error("get available packet ids failed", "error", err, "room_id", roomID, "round_id", roundID)
 		return "", err
@@ -101,13 +104,13 @@ func (s *GrabService) GetAvailablePacketID(ctx context.Context, roomID, roundID 
 // RobotGrabPacket atomically picks a random available packet and grabs it
 // for the robot in a single Lua call, avoiding the race condition between
 // GetAvailablePacketID and GrabPacket.
-func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, userID string) (*domain.GrabResult, error) {
+func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, userID string) (*round.GrabResult, error) {
 	keys := []string{
-		redis.RoundAvailablePacketsKey(roundID),
-		redis.UserGrabbedKey(roundID, userID),
-		redis.RoundGrabbersKey(roundID),
-		redis.RoundStateKey(roundID),
-		redis.RoomPlayersKey(roomID),
+		rediskeys.RoundAvailablePacketsKey(roundID),
+		rediskeys.UserGrabbedKey(roundID, userID),
+		rediskeys.RoundGrabbersKey(roundID),
+		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoomPlayersKey(roomID),
 	}
 
 	args := []interface{}{
@@ -137,7 +140,7 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		return nil, luaErr
 	}
 
-	result := &domain.GrabResult{
+	result := &round.GrabResult{
 		PacketID: converter.ParseString(res[1]),
 		Amount:   converter.ParseInt64(res[2]),
 		Position: converter.ParseInt(res[3]),
@@ -156,13 +159,13 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 	return result, nil
 }
 
-func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string) (int, []domain.DistributeResult, error) {
+func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string) (int, []round.DistributeResult, error) {
 	keys := []string{
-		redis.RoundAvailablePacketsKey(roundID),
-		redis.RoundGrabbersKey(roundID),
-		redis.RoundStateKey(roundID),
-		redis.RoomPlayersKey(roomID),
-		redis.RoomHashKey(roomID),
+		rediskeys.RoundAvailablePacketsKey(roundID),
+		rediskeys.RoundGrabbersKey(roundID),
+		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomHashKey(roomID),
 	}
 
 	args := []interface{}{
@@ -190,11 +193,11 @@ func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string
 	distributedCount := converter.ParseInt(res[1])
 	resultsRaw := res[2]
 
-	var results []domain.DistributeResult
+	var results []round.DistributeResult
 	if arr, ok := resultsRaw.([]interface{}); ok {
 		for _, item := range arr {
 			if tuple, ok := item.([]interface{}); ok && len(tuple) >= 3 {
-				results = append(results, domain.DistributeResult{
+				results = append(results, round.DistributeResult{
 					UserID:   converter.ParseString(tuple[0]),
 					Amount:   converter.ParseInt64(tuple[1]),
 					Position: int32(converter.ParseInt(tuple[2])),
@@ -212,18 +215,18 @@ func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string
 	return distributedCount, results, nil
 }
 
-func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, senderID, senderType string, totalAmount, commission, actualAmount int64, packetAmounts []int64, roundNo int, scenario domain.SendScenario, rewardType int, rewardAmount int64) (string, []string, error) {
+func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, senderID, senderType string, totalAmount, commission, actualAmount int64, packetAmounts []int64, roundNo int, scenario round.SendScenario, rewardType int, rewardAmount int64) (string, []string, error) {
 	amountsJSON, err := json.Marshal(packetAmounts)
 	if err != nil {
 		return "", nil, err
 	}
 
 	keys := []string{
-		redis.RoomHashKey(roomID),
-		redis.RoomPlayersKey(roomID),
-		redis.RoundStateKey(roundID),
-		redis.RoundAvailablePacketsKey(roundID),
-		redis.RoundGrabbersKey(roundID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoundAvailablePacketsKey(roundID),
+		rediskeys.RoundGrabbersKey(roundID),
 	}
 
 	args := []interface{}{

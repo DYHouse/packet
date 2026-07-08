@@ -20,7 +20,7 @@ type GameSettleRetryScheduler struct {
 	gameSettleSvc       *service.GameSettleReportingService
 }
 
-func NewGameSettleRetryScheduler(roundSettlementRepo domain.RoundSettlementRepository, settlementQueryRepo domain.SettlementQueryRepository, gameSettleSvc *service.GameSettleReportingService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleRetryScheduler {
+func NewGameSettleRetryScheduler(roundSettlementRepo domain.RoundSettlementRepository, settlementQueryRepo domain.SettlementQueryRepository, gameSettleSvc *service.GameSettleReportingService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleRetryScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "game_settle_retry",
 		Interval:     cfg.Interval,

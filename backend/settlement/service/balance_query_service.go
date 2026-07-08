@@ -21,7 +21,7 @@ type BalanceQueryService struct {
 	cfg                 *config.PlatformConfig
 	userIDConvert       *UserIDConvertService
 	robotChecker        RobotChecker
-	virtualBalance      *VirtualBalanceService
+	virtualBalance      domain.VirtualBalanceService
 }
 
 // NewBalanceQueryService 构造 BalanceQueryService 实例。
@@ -32,7 +32,7 @@ func NewBalanceQueryService(
 	cfg *config.PlatformConfig,
 	userIDConvert *UserIDConvertService,
 	robotChecker RobotChecker,
-	virtualBalance *VirtualBalanceService,
+	virtualBalance domain.VirtualBalanceService,
 ) *BalanceQueryService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -67,7 +67,14 @@ func (s *BalanceQueryService) GetRoundSettlement(ctx context.Context, roundID in
 
 func (s *BalanceQueryService) CheckBalance(ctx context.Context, userID int64, requiredAmount int64) (int64, bool, error) {
 	// 机器人虚拟通道
-	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
+	if s.robotChecker == nil {
+		return 0, false, fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, userID)
+	if err != nil {
+		return 0, false, fmt.Errorf("check robot failed: %w", err)
+	}
+	if isRobot {
 		balance, err := s.virtualBalance.GetBalance(ctx, userID)
 		if err != nil {
 			return 0, false, fmt.Errorf("get robot virtual balance failed: %w", err)
@@ -97,7 +104,14 @@ func (s *BalanceQueryService) CheckBalance(ctx context.Context, userID int64, re
 
 func (s *BalanceQueryService) GetUserBalance(ctx context.Context, userID int64) (int64, error) {
 	// 机器人虚拟通道
-	if s.robotChecker != nil && s.robotChecker.IsRobot(ctx, userID) {
+	if s.robotChecker == nil {
+		return 0, fmt.Errorf("robot checker is nil")
+	}
+	isRobot, err := s.robotChecker.IsRobot(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("check robot failed: %w", err)
+	}
+	if isRobot {
 		return s.virtualBalance.GetBalance(ctx, userID)
 	}
 

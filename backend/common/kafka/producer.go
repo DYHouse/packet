@@ -9,7 +9,17 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-type Producer struct {
+// KafkaProducer Kafka 生产者接口，支持 mock 测试。
+type KafkaProducer interface {
+	Brokers() []string
+	GetWriter(topic string) *kafka.Writer
+	Send(ctx context.Context, topic string, key, value []byte) error
+	SendBatch(ctx context.Context, topic string, messages []Message) error
+	Close() error
+}
+
+// producer Kafka 生产者实现
+type producer struct {
 	mu      sync.RWMutex
 	writers map[string]*kafka.Writer
 	cfg     ProducerConfig
@@ -17,7 +27,7 @@ type Producer struct {
 
 // NewProducer 创建 Kafka 生产者。brokers 为空时返回 error。
 // 用户传入的字段优先于默认值（零值字段使用默认值填充）。
-func NewProducer(cfg ProducerConfig) (*Producer, error) {
+func NewProducer(cfg ProducerConfig) (KafkaProducer, error) {
 	if len(cfg.Brokers) == 0 {
 		return nil, fmt.Errorf("kafka producer config: brokers must not be empty")
 	}
@@ -39,17 +49,17 @@ func NewProducer(cfg ProducerConfig) (*Producer, error) {
 		cfg.RequiredAcks = def.RequiredAcks
 	}
 
-	return &Producer{
+	return &producer{
 		writers: make(map[string]*kafka.Writer),
 		cfg:     cfg,
 	}, nil
 }
 
-func (p *Producer) Brokers() []string {
+func (p *producer) Brokers() []string {
 	return p.cfg.Brokers
 }
 
-func (p *Producer) GetWriter(topic string) *kafka.Writer {
+func (p *producer) GetWriter(topic string) *kafka.Writer {
 	p.mu.RLock()
 	if w, ok := p.writers[topic]; ok {
 		p.mu.RUnlock()
@@ -78,7 +88,7 @@ func (p *Producer) GetWriter(topic string) *kafka.Writer {
 	return w
 }
 
-func (p *Producer) Send(ctx context.Context, topic string, key, value []byte) error {
+func (p *producer) Send(ctx context.Context, topic string, key, value []byte) error {
 	w := p.GetWriter(topic)
 	err := w.WriteMessages(ctx, kafka.Message{
 		Key:   key,
@@ -91,7 +101,7 @@ func (p *Producer) Send(ctx context.Context, topic string, key, value []byte) er
 	return nil
 }
 
-func (p *Producer) SendBatch(ctx context.Context, topic string, messages []Message) error {
+func (p *producer) SendBatch(ctx context.Context, topic string, messages []Message) error {
 	w := p.GetWriter(topic)
 	err := w.WriteMessages(ctx, messages...)
 	if err != nil {
@@ -101,7 +111,7 @@ func (p *Producer) SendBatch(ctx context.Context, topic string, messages []Messa
 	return nil
 }
 
-func (p *Producer) Close() error {
+func (p *producer) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

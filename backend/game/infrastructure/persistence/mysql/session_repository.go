@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -14,7 +14,7 @@ type gormSessionRepository struct {
 	db *gorm.DB
 }
 
-func NewGormSessionRepository(db *gorm.DB) domain.SessionDBRepository {
+func NewGormSessionRepository(db *gorm.DB) repository.SessionDBRepository {
 	return &gormSessionRepository{db: db}
 }
 

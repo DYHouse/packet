@@ -10,23 +10,23 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/common/rediskeys"
+	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
 type PenaltyService struct {
-	redis             *cRedis.Client
-	policy            *domain.PenaltyPolicy
+	redis             cRedis.RedisClient
+	policy            *round.PenaltyPolicy
 	settlementService *settlementService.PenaltySettlementService
 	redisTTL          config.RedisTTLConfig
 }
 
-func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settlementService *settlementService.PenaltySettlementService, redisTTL config.RedisTTLConfig) *PenaltyService {
+func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, settlementService *settlementService.PenaltySettlementService, redisTTL config.RedisTTLConfig) *PenaltyService {
 	if policy == nil {
-		policy = domain.DefaultPenaltyPolicy()
+		policy = round.DefaultPenaltyPolicy()
 	}
 	return &PenaltyService{
 		redis:             redis,
@@ -36,13 +36,13 @@ func NewPenaltyService(redis *cRedis.Client, policy *domain.PenaltyPolicy, settl
 	}
 }
 
-func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string, penaltyType domain.PenaltyType, roomFee int64, sessionID int64, currentRound int) (*domain.PenaltyResult, error) {
+func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string, penaltyType round.PenaltyType, roomFee int64, sessionID int64, currentRound int) (*round.PenaltyResult, error) {
 	keys := []string{
-		redis.PenaltyCountKey(roomID, userID),
-		redis.RoomHashKey(roomID),
-		redis.RoomPlayersKey(roomID),
-		redis.RoundStateKey(roomID),
-		redis.PenaltyRecordKey(roomID, userID),
+		rediskeys.PenaltyCountKey(roomID, userID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoundStateKey(roomID),
+		rediskeys.PenaltyRecordKey(roomID, userID),
 	}
 
 	args := []interface{}{
@@ -100,7 +100,7 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 		"kick_required", kickRequired,
 	)
 
-	return &domain.PenaltyResult{
+	return &round.PenaltyResult{
 		Applied:      true,
 		Amount:       amount,
 		Count:        count,
@@ -111,10 +111,10 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 	}, nil
 }
 
-func (s *PenaltyService) DistributePenalty(ctx context.Context, roomID string, penaltyAmount int64, excludeUserIDs []string) (*domain.PenaltyDistribution, error) {
+func (s *PenaltyService) DistributePenalty(ctx context.Context, roomID string, penaltyAmount int64, excludeUserIDs []string) (*round.PenaltyDistribution, error) {
 	keys := []string{
-		redis.RoomHashKey(roomID),
-		redis.RoomPlayersKey(roomID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
 	}
 
 	excludeJSON, _ := json.Marshal(excludeUserIDs)
@@ -154,7 +154,7 @@ func (s *PenaltyService) DistributePenalty(ctx context.Context, roomID string, p
 		"recipient_count", recipientCount,
 	)
 
-	return &domain.PenaltyDistribution{
+	return &round.PenaltyDistribution{
 		RoomID:        roomID,
 		TotalAmount:   penaltyAmount,
 		ShareAmount:   shareAmount,

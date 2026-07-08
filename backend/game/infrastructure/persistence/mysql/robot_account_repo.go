@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -15,7 +15,7 @@ type robotAccountRepository struct {
 }
 
 // NewRobotAccountRepository 创建机器人账户仓库实例
-func NewRobotAccountRepository(db *gorm.DB) domain.RobotAccountRepository {
+func NewRobotAccountRepository(db *gorm.DB) repository.RobotAccountRepository {
 	return &robotAccountRepository{db: db}
 }
 

@@ -21,7 +21,7 @@ type RefundProcessScheduler struct {
 	offset          int
 }
 
-func NewRefundProcessScheduler(refundSvc *service.RefundService, refundAuditRepo domain.RefundAuditRepository, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *RefundProcessScheduler {
+func NewRefundProcessScheduler(refundSvc *service.RefundService, refundAuditRepo domain.RefundAuditRepository, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *RefundProcessScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "refund_process",
 		Interval:     cfg.Interval,

@@ -105,62 +105,65 @@ func (m *refundAuditRepository) UpdateRefundAuditToPendingForRetry(ctx context.C
 	return nil
 }
 
-func (m *refundAuditRepository) UpdateRefundSuccessInTransaction(ctx context.Context, refundID int64, refundFromStatus, billFromStatus int, platformTransID string, refundedAt time.Time) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Refunded。
-		// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
-		result := tx.Model(&model.RefundAudit{}).
-			Where("id = ? AND status = ?", refundID, refundFromStatus).
-			Updates(map[string]interface{}{
-				"status":            dto.RefundStatusRefunded,
-				"refunded_at":       refundedAt,
-				"platform_trans_id": platformTransID,
-			})
-		if result.Error != nil {
-			return fmt.Errorf("update refund audit to refunded failed: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
-			// 退款单已不是 refundFromStatus（已被其他事务处理），视为幂等成功
-			return nil
-		}
-
-		var refund model.RefundAudit
-		if err := tx.Where("id = ?", refundID).First(&refund).Error; err != nil {
-			return fmt.Errorf("get refund audit failed: %w", err)
-		}
-
-		// 乐观锁：bill 只允许从 billFromStatus 转换到 Refunded。
-		// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
-		billResult := tx.Model(&model.BillRecord{}).
-			Where("id = ? AND status = ?", refund.BillID, billFromStatus).
-			Updates(map[string]interface{}{
-				"refund_status":   dto.RefundStatusRefunded,
-				"refund_amount":   refund.RefundAmount,
-				"refund_order_no": refund.RefundOrderNo,
-				"status":          dto.BillStatusRefunded,
-			})
-		if billResult.Error != nil {
-			return fmt.Errorf("update bill to refunded failed: %w", billResult.Error)
-		}
-		if billResult.RowsAffected == 0 {
-			// 账单已不是 billFromStatus（已被其他事务处理），视为幂等成功
-			return nil
-		}
-
+// UpdateRefundSuccess 原子地更新退款审核为 Refunded 并同步账单为 Refunded。
+// 事务边界由 AppService 通过 DBRepository.WithTransaction 编排：在事务回调内通过
+// tx.RefundAuditRepo() 获取的子 repo，其 m.db 即为事务连接，refund_audit 与 bill_record
+// 的更新自动纳入同一事务。
+func (m *refundAuditRepository) UpdateRefundSuccess(ctx context.Context, refundID int64, refundFromStatus, billFromStatus int, platformTransID string, refundedAt time.Time) error {
+	// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Refunded。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
+		Where("id = ? AND status = ?", refundID, refundFromStatus).
+		Updates(map[string]interface{}{
+			"status":            dto.RefundStatusRefunded,
+			"refunded_at":       refundedAt,
+			"platform_trans_id": platformTransID,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update refund audit to refunded failed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// 退款单已不是 refundFromStatus（已被其他事务处理），视为幂等成功
 		return nil
-	})
+	}
+
+	var refund model.RefundAudit
+	if err := m.db.WithContext(ctx).Where("id = ?", refundID).First(&refund).Error; err != nil {
+		return fmt.Errorf("get refund audit failed: %w", err)
+	}
+
+	// 乐观锁：bill 只允许从 billFromStatus 转换到 Refunded。
+	// 调用方应检查 RowsAffected == 0 表示已被其他事务处理。
+	billResult := m.db.WithContext(ctx).Model(&model.BillRecord{}).
+		Where("id = ? AND status = ?", refund.BillID, billFromStatus).
+		Updates(map[string]interface{}{
+			"refund_status":   dto.RefundStatusRefunded,
+			"refund_amount":   refund.RefundAmount,
+			"refund_order_no": refund.RefundOrderNo,
+			"status":          dto.BillStatusRefunded,
+		})
+	if billResult.Error != nil {
+		return fmt.Errorf("update bill to refunded failed: %w", billResult.Error)
+	}
+	if billResult.RowsAffected == 0 {
+		// 账单已不是 billFromStatus（已被其他事务处理），视为幂等成功
+		return nil
+	}
+
+	return nil
 }
 
-// CreateRefundAuditAndUpdateBillRefundStatusInTransaction 在传入的 tx 内原子地创建 refund_audit 并更新 bill 的 refund_status，
-// 防止只创建 refund_audit 但未更新 bill refund_status 造成数据不一致。
-func (m *refundAuditRepository) CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ctx context.Context, tx *gorm.DB, refundAudit *model.RefundAudit, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
-	if err := tx.Create(refundAudit).Error; err != nil {
+// CreateRefundAuditAndUpdateBillRefundStatus 创建退款审核并更新账单 refund_status。
+// 事务边界由 AppService 通过 DBRepository.WithTransaction 编排：在事务回调内通过
+// tx.RefundAuditRepo() 获取的子 repo，其 m.db 即为事务连接，两步操作自动纳入同一事务。
+func (m *refundAuditRepository) CreateRefundAuditAndUpdateBillRefundStatus(ctx context.Context, refundAudit *model.RefundAudit, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
+	if err := m.db.WithContext(ctx).Create(refundAudit).Error; err != nil {
 		return fmt.Errorf("create refund audit and update bill refund status failed: %w", err)
 	}
 
 	// 乐观锁：只允许从 fromRefundStatus 转换，防止并发覆盖。
 	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
-	result := tx.Model(&model.BillRecord{}).
+	result := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Where("id = ? AND refund_status = ?", billID, fromRefundStatus).
 		Updates(map[string]interface{}{
 			"refund_status":   toRefundStatus,
@@ -176,21 +179,13 @@ func (m *refundAuditRepository) CreateRefundAuditAndUpdateBillRefundStatusInTran
 	return nil
 }
 
-// CreateRefundAuditAndUpdateBillRefundStatus 是 CreateRefundAuditAndUpdateBillRefundStatusInTransaction 的自管理事务版本，
-// 内部用 m.db.Transaction 开事务并委托给 InTransaction 方法。
-// 用于 service 层调用，避免 service 层直接持有 *gorm.DB 开事务。
-func (m *refundAuditRepository) CreateRefundAuditAndUpdateBillRefundStatus(ctx context.Context, refundAudit *model.RefundAudit, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return m.CreateRefundAuditAndUpdateBillRefundStatusInTransaction(ctx, tx, refundAudit, billID, fromRefundStatus, toRefundStatus, refundOrderNo)
-	})
-}
-
-// RejectRefundInTransaction 在传入的 tx 内原子地拒绝 refund_audit 并更新 bill 的 refund_status，
-// 防止只更新 refund_audit 但未更新 bill refund_status 造成数据不一致。
-func (m *refundAuditRepository) RejectRefundInTransaction(ctx context.Context, tx *gorm.DB, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
+// RejectRefund 拒绝退款审核并更新账单 refund_status。
+// 事务边界由 AppService 通过 DBRepository.WithTransaction 编排：在事务回调内通过
+// tx.RefundAuditRepo() 获取的子 repo，其 m.db 即为事务连接，两步操作自动纳入同一事务。
+func (m *refundAuditRepository) RejectRefund(ctx context.Context, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
 	// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Rejected，防止并发覆盖。
 	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
-	result := tx.Model(&model.RefundAudit{}).
+	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
 		Where("id = ? AND status = ?", refundID, refundFromStatus).
 		Updates(map[string]interface{}{
 			"status":         dto.RefundStatusRejected,
@@ -198,7 +193,7 @@ func (m *refundAuditRepository) RejectRefundInTransaction(ctx context.Context, t
 			"approve_remark": errMsg,
 		})
 	if result.Error != nil {
-		return fmt.Errorf("reject refund in transaction failed: %w", result.Error)
+		return fmt.Errorf("reject refund failed: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		// 退款单已不是 refundFromStatus（已被其他事务处理），视为幂等成功
@@ -207,28 +202,19 @@ func (m *refundAuditRepository) RejectRefundInTransaction(ctx context.Context, t
 
 	// 乐观锁：bill 只允许从 billFromRefundStatus 转换，防止并发覆盖。
 	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
-	billResult := tx.Model(&model.BillRecord{}).
+	billResult := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Where("id = ? AND refund_status = ?", billID, billFromRefundStatus).
 		Updates(map[string]interface{}{
 			"refund_status": billToRefundStatus,
 		})
 	if billResult.Error != nil {
-		return fmt.Errorf("reject refund in transaction failed: %w", billResult.Error)
+		return fmt.Errorf("reject refund failed: %w", billResult.Error)
 	}
 	if billResult.RowsAffected == 0 {
 		// 账单已不是 billFromRefundStatus（已被其他事务处理），视为幂等成功
 		return nil
 	}
 	return nil
-}
-
-// RejectRefund 是 RejectRefundInTransaction 的自管理事务版本，
-// 内部用 m.db.Transaction 开事务并委托给 InTransaction 方法。
-// 用于 service 层调用，避免 service 层直接持有 *gorm.DB 开事务。
-func (m *refundAuditRepository) RejectRefund(ctx context.Context, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return m.RejectRefundInTransaction(ctx, tx, refundID, refundFromStatus, billID, billFromRefundStatus, billToRefundStatus, errMsg)
-	})
 }
 
 func (m *refundAuditRepository) GetRefundsByStatus(ctx context.Context, status int, limit int, offset int) ([]*model.RefundAudit, error) {

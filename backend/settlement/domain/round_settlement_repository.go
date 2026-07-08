@@ -18,7 +18,8 @@ type RoundSettlementRepository interface {
 	UpdateRoundSettlementStatus(ctx context.Context, traceID string, status int, errMsg string) error
 	// GetRoundSettlementByRoundID 根据回合 id 查询结算记录
 	GetRoundSettlementByRoundID(ctx context.Context, roundID int64) (*model.RoundSettlement, error)
-	// CreateRoundSettlementAndBills 在单事务内创建回合结算与配对账单
+	// CreateRoundSettlementAndBills 创建回合结算与配对账单。事务边界由 AppService 通过
+	// DBRepository.WithTransaction 编排，调用方应在事务回调内通过 tx.RoundSettlementRepo() 调用本方法。
 	CreateRoundSettlementAndBills(ctx context.Context, settlement *model.RoundSettlement, bills []*model.BillRecord) error
 	// UpdateRoundSettlementDeductSuccess 乐观锁更新扣款成功计数与时间（deducted_at 未设置时才更新）
 	UpdateRoundSettlementDeductSuccess(ctx context.Context, roundTraceID string, successCount int, deductedAt time.Time) error

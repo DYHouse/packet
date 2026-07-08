@@ -14,7 +14,7 @@ import (
 )
 
 type RedisPubSubConsumer struct {
-	redis   *cRedis.Client
+	redis   cRedis.RedisClient
 	channel string
 	handler MessageHandler
 	ctx     context.Context
@@ -22,7 +22,7 @@ type RedisPubSubConsumer struct {
 	done    chan struct{}
 }
 
-func NewRedisPubSubConsumer(redis *cRedis.Client, channel string, handler MessageHandler) *RedisPubSubConsumer {
+func NewRedisPubSubConsumer(redis cRedis.RedisClient, channel string, handler MessageHandler) *RedisPubSubConsumer {
 	if channel == "" {
 		channel = BroadcastChannelGateway
 	}

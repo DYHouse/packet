@@ -9,11 +9,11 @@ import (
 )
 
 type KafkaBroadcaster struct {
-	producer *kafka.Producer
+	producer kafka.KafkaProducer
 	topic    string
 }
 
-func NewKafkaBroadcaster(producer *kafka.Producer, topic string) *KafkaBroadcaster {
+func NewKafkaBroadcaster(producer kafka.KafkaProducer, topic string) *KafkaBroadcaster {
 	if topic == "" {
 		topic = kafka.TopicGatewayBroadcast
 	}

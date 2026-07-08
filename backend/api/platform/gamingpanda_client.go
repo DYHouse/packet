@@ -18,7 +18,7 @@ import (
 type GamingPandaClient struct {
 	baseURL    string
 	httpClient *http.Client
-	signer     *signature.Signer
+	signer     signature.Signer
 	gameID     int
 	gameCode   string
 	gameName   string

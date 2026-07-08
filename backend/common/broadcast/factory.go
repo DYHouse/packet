@@ -19,11 +19,11 @@ const BroadcastChannelGateway = "cashparty:gateway:broadcast"
 
 type BroadcastFactory struct {
 	config   *config.BroadcastConfig
-	producer *kafka.Producer
-	redis    *cRedis.Client
+	producer kafka.KafkaProducer
+	redis    cRedis.RedisClient
 }
 
-func NewBroadcastFactory(cfg *config.BroadcastConfig, producer *kafka.Producer, redis *cRedis.Client) *BroadcastFactory {
+func NewBroadcastFactory(cfg *config.BroadcastConfig, producer kafka.KafkaProducer, redis cRedis.RedisClient) *BroadcastFactory {
 	return &BroadcastFactory{
 		config:   cfg,
 		producer: producer,

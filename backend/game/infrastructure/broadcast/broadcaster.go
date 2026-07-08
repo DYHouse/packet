@@ -14,7 +14,7 @@ type GameBroadcaster struct {
 	broadcaster broadcast.Broadcaster
 }
 
-func NewGameBroadcaster(cfg *config.BroadcastConfig, producer *kafka.Producer, redis *cRedis.Client) *GameBroadcaster {
+func NewGameBroadcaster(cfg *config.BroadcastConfig, producer kafka.KafkaProducer, redis cRedis.RedisClient) *GameBroadcaster {
 	factory := broadcast.NewBroadcastFactory(cfg, producer, redis)
 
 	return &GameBroadcaster{

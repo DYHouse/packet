@@ -7,7 +7,7 @@ import (
 // luaRegisterConnection 注册用户连接信息并在检测到旧连接(不同 connID)时返回旧连接信息以便踢出。
 // 同一 connID 重复注册视为幂等成功,不触发踢旧逻辑。
 //
-// KEYS[1] = 用户连接 hash key( gateway.GatewayConnKey(userID) )
+// KEYS[1] = 用户连接 hash key( rediskeys.GatewayConnKey(userID) )
 // ARGV[1] = 新 conn_id
 // ARGV[2] = 新 node_id
 // ARGV[3] = platform

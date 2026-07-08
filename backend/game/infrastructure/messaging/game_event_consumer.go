@@ -11,28 +11,28 @@ import (
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/common/trace"
-	"github.com/cashparty/backend/game/domain"
-	redisKeys "github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
 	"github.com/google/uuid"
 )
 
 // GameEventHandlerInterface 抽象游戏事件处理逻辑，供 GameEventConsumer 调用。
 // 实现方位于 application 层（如 application.GameEventHandler），consumer 仅做消息解析与转发。
 type GameEventHandlerInterface interface {
-	HandleGameEvent(ctx context.Context, event *domain.GameEvent) error
+	HandleGameEvent(ctx context.Context, event *events.GameEvent) error
 }
 
 // GameEventConsumer 仅负责消息解析、Redis 幂等抢占与错误回报。
 // 业务编排逻辑已迁移至 application.GameEventHandler（通过 handler 字段注入）。
 type GameEventConsumer struct {
-	redis    *cRedis.Client
+	redis    cRedis.RedisClient
 	handler  GameEventHandlerInterface
 	consumer *kafka.Consumer
 }
 
 func NewGameEventConsumer(
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	handler GameEventHandlerInterface,
 	cfg kafka.ConsumerConfig,
 ) (*GameEventConsumer, error) {
@@ -69,7 +69,7 @@ func (c *GameEventConsumer) HandleEvent(ctx context.Context, msg kafka.Message) 
 		}
 	}()
 
-	var event domain.GameEvent
+	var event events.GameEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		logger.Error("unmarshal game event failed", "error", err)
 		return fmt.Errorf("unmarshal event failed: %w", err)
@@ -128,7 +128,7 @@ func (c *GameEventConsumer) tryAcquire(ctx context.Context, traceID string) (boo
 		return true, "", nil
 	}
 	token := uuid.New().String()
-	key := redisKeys.GameEventProcessedKey(traceID)
+	key := rediskeys.GameEventProcessedKey(traceID)
 	ok, err := c.redis.SetNX(ctx, key, token, 7*24*time.Hour).Result()
 	if err != nil {
 		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
@@ -145,6 +145,6 @@ func (c *GameEventConsumer) releaseAcquire(ctx context.Context, traceID string, 
 	if c.redis == nil {
 		return nil
 	}
-	key := redisKeys.GameEventProcessedKey(traceID)
+	key := rediskeys.GameEventProcessedKey(traceID)
 	return lockScripts.ReleaseLockScript.Run(ctx, c.redis, []string{key}, token).Err()
 }

@@ -3,7 +3,7 @@ package algorithm
 import (
 	"context"
 
-	"github.com/cashparty/backend/game/domain"
+	"github.com/cashparty/backend/game/domain/reward"
 )
 
 type LeopardGenerator struct {
@@ -39,7 +39,7 @@ func (g *LeopardGenerator) Generate(ctx context.Context, req *GenerateRequest, t
 
 	return &GenerateResult{
 		PacketAmounts: amounts,
-		RewardType:    domain.RewardTypeLeopard,
+		RewardType:    reward.RewardTypeLeopard,
 		RewardAmount:  rewardAmount,
 		TraceID:       traceID,
 	}, nil

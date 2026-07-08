@@ -14,10 +14,10 @@ type ConsumerFactory struct {
 	config       *config.BroadcastConfig
 	kafkaBrokers []string
 	kafkaGroupID string
-	redis        *cRedis.Client
+	redis        cRedis.RedisClient
 }
 
-func NewConsumerFactory(cfg *config.BroadcastConfig, kafkaBrokers []string, kafkaGroupID string, redis *cRedis.Client) *ConsumerFactory {
+func NewConsumerFactory(cfg *config.BroadcastConfig, kafkaBrokers []string, kafkaGroupID string, redis cRedis.RedisClient) *ConsumerFactory {
 	return &ConsumerFactory{
 		config:       cfg,
 		kafkaBrokers: kafkaBrokers,

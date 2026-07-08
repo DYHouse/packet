@@ -25,13 +25,13 @@ import (
 type Application struct {
 	Container  *Container
 	cfg        *gatewayConfig.Config
-	nacos      *nacos.Client
+	nacos      nacos.NacosClient
 	cancel     context.CancelFunc
 	nodeID     string
 	errChan    chan error
-	appCtx     context.Context   // 新增
-	taskRunner *async.TaskRunner // 新增
-	wg         sync.WaitGroup    // 新增：跟踪 BroadcastSvc/Server goroutine
+	appCtx     context.Context  // 新增
+	taskRunner async.TaskRunner // 新增
+	wg         sync.WaitGroup   // 新增：跟踪 BroadcastSvc/Server goroutine
 }
 
 func NewApplication(cfgPath, routerPath string) (*Application, error) {
@@ -274,7 +274,7 @@ func Run() {
 	}
 }
 
-func initNacos(cfg *gatewayConfig.Config) (*nacos.Client, error) {
+func initNacos(cfg *gatewayConfig.Config) (nacos.NacosClient, error) {
 	if !cfg.Nacos.Enabled {
 		return nil, nil
 	}
@@ -287,7 +287,7 @@ func initNacos(cfg *gatewayConfig.Config) (*nacos.Client, error) {
 	return nacosClient, nil
 }
 
-func reloadMainConfigFromNacos(nacosClient *nacos.Client, cfg *gatewayConfig.Config) *gatewayConfig.Config {
+func reloadMainConfigFromNacos(nacosClient nacos.NacosClient, cfg *gatewayConfig.Config) *gatewayConfig.Config {
 	content, err := nacosClient.GetConfig(cfg.Nacos.ConfigDataID, cfg.Nacos.ConfigGroup)
 	if err != nil {
 		logger.Warn("failed to get config from nacos, using local config", "error", err)
@@ -311,7 +311,7 @@ func initLogger(cfg *gatewayConfig.Config) {
 	})
 }
 
-func initRedis(cfg *gatewayConfig.Config) (*cRedis.Client, error) {
+func initRedis(cfg *gatewayConfig.Config) (cRedis.RedisClient, error) {
 	redisClient, err := cRedis.NewClient(&config.RedisConfig{
 		Addr:     cfg.Redis.Addr,
 		Password: cfg.Redis.Password,
@@ -332,7 +332,7 @@ func initRedis(cfg *gatewayConfig.Config) (*cRedis.Client, error) {
 	return redisClient, nil
 }
 
-func loadRouterConfig(nacosClient *nacos.Client, cfg *gatewayConfig.Config, routerPath string) (*router.RouterConfig, error) {
+func loadRouterConfig(nacosClient nacos.NacosClient, cfg *gatewayConfig.Config, routerPath string) (*router.RouterConfig, error) {
 	if nacosClient != nil && cfg.Nacos.RouterDataID != "" {
 		routerContent, err := nacosClient.GetConfig(cfg.Nacos.RouterDataID, cfg.Nacos.RouterGroup)
 		if err != nil {

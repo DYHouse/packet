@@ -6,15 +6,19 @@ import (
 
 	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/common/rediskeys"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/push"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/scheduler"
-	settlementService "github.com/cashparty/backend/settlement/service"
+	settlementApplication "github.com/cashparty/backend/settlement/application"
 )
 
 // GameEndCallback is invoked from endGameWithOptions after a game ends. It is
@@ -28,7 +32,7 @@ type EndGameOptions struct {
 	EndReason     string
 	SessionID     string
 	ActualRounds  int
-	FinalResults  []*domain.FinalResult
+	FinalResults  []*events.FinalResult
 }
 
 type ResumeGameRequest struct {
@@ -43,39 +47,39 @@ type ResumeGameRequest struct {
 //   - game_lifecycle_timeout.go：超时处理（OnGrabTimeout/OnSendTimeout/OnReplaceTimeout）
 //   - game_lifecycle_endgame.go：游戏结束（HandleDeductFailure/EndGameWithOptions/handleKickAndReplace）
 type GameLifecycleService struct {
-	repo              domain.RoomRepository
-	broadcaster       domain.Broadcaster
-	eventPublisher    domain.GameEventPublisher
-	scheduler         *scheduler.TimeoutScheduler
-	redis             *cRedis.Client
-	lockCfg           *config.LockConfig
-	timeoutCfg        *config.TimeoutConfig
-	redisTTL          config.RedisTTLConfig
-	penaltyService    *PenaltyService
-	settlementService *settlementService.PenaltySettlementService
-	grabService       *GrabService
-	taskRunner        *async.TaskRunner
-	idGen             idgen.IDGenerator
-	gameEndCallback   GameEndCallback
-	roomAppService    *RoomAppService
-	packetInitiator   PacketInitiator
-	roundSettler      RoundSettler
+	repo             repository.RoomRepository
+	broadcaster      events.Broadcaster
+	eventPublisher   events.GameEventPublisher
+	scheduler        *scheduler.TimeoutScheduler
+	redis            cRedis.RedisClient
+	lockCfg          *config.LockConfig
+	timeoutCfg       *config.TimeoutConfig
+	redisTTL         config.RedisTTLConfig
+	penaltyService   *PenaltyService
+	settleAppService *settlementApplication.SettleAppService
+	grabService      *GrabService
+	taskRunner       async.TaskRunner
+	idGen            idgen.IDGenerator
+	gameEndCallback  GameEndCallback
+	roomAppService   *RoomAppService
+	packetInitiator  PacketInitiator
+	roundSettler     RoundSettler
 }
 
 // NewGameLifecycleService 创建游戏生命周期服务。
 func NewGameLifecycleService(
-	repo domain.RoomRepository,
-	broadcaster domain.Broadcaster,
-	eventPublisher domain.GameEventPublisher,
+	repo repository.RoomRepository,
+	broadcaster events.Broadcaster,
+	eventPublisher events.GameEventPublisher,
 	schedulerInst *scheduler.TimeoutScheduler,
-	redisClient *cRedis.Client,
+	redisClient cRedis.RedisClient,
 	lockCfg *config.LockConfig,
 	timeoutCfg *config.TimeoutConfig,
 	redisTTL config.RedisTTLConfig,
 	penaltyService *PenaltyService,
-	settlementSvc *settlementService.PenaltySettlementService,
+	settleAppSvc *settlementApplication.SettleAppService,
 	grabService *GrabService,
-	taskRunner *async.TaskRunner,
+	taskRunner async.TaskRunner,
 	idGen idgen.IDGenerator,
 ) *GameLifecycleService {
 	if lockCfg == nil {
@@ -83,19 +87,19 @@ func NewGameLifecycleService(
 		config.SetLockDefaults(lockCfg)
 	}
 	return &GameLifecycleService{
-		repo:              repo,
-		broadcaster:       broadcaster,
-		eventPublisher:    eventPublisher,
-		scheduler:         schedulerInst,
-		redis:             redisClient,
-		lockCfg:           lockCfg,
-		timeoutCfg:        timeoutCfg,
-		redisTTL:          redisTTL,
-		penaltyService:    penaltyService,
-		settlementService: settlementSvc,
-		grabService:       grabService,
-		taskRunner:        taskRunner,
-		idGen:             idGen,
+		repo:             repo,
+		broadcaster:      broadcaster,
+		eventPublisher:   eventPublisher,
+		scheduler:        schedulerInst,
+		redis:            redisClient,
+		lockCfg:          lockCfg,
+		timeoutCfg:       timeoutCfg,
+		redisTTL:         redisTTL,
+		penaltyService:   penaltyService,
+		settleAppService: settleAppSvc,
+		grabService:      grabService,
+		taskRunner:       taskRunner,
+		idGen:            idGen,
 	}
 }
 
@@ -120,7 +124,7 @@ func (s *GameLifecycleService) SetRoundSettler(r RoundSettler) {
 	s.roundSettler = r
 }
 
-func (s *GameLifecycleService) startGameCore(ctx context.Context, roomID string, meta *domain.RoomMeta) string {
+func (s *GameLifecycleService) startGameCore(ctx context.Context, roomID string, meta *room.RoomMeta) string {
 	sessionID, err := s.idGen.GenerateString()
 	if err != nil {
 		logger.Error("generate session id failed",
@@ -140,7 +144,7 @@ func (s *GameLifecycleService) startGameCore(ctx context.Context, roomID string,
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, roomID, message.PushGameStart, &message.GameStartPush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushGameStart, &push.GameStartPush{
 			RoomID:       roomID,
 			CurrentRound: 1,
 			MaxRounds:    int32(meta.MaxRounds),
@@ -153,9 +157,9 @@ func (s *GameLifecycleService) startGameCore(ctx context.Context, roomID string,
 	}
 
 	if s.eventPublisher != nil && stateData != nil {
-		players := make([]*domain.PlayerInfo, 0, len(stateData.Players))
+		players := make([]*events.PlayerInfo, 0, len(stateData.Players))
 		for _, p := range stateData.Players {
-			players = append(players, &domain.PlayerInfo{
+			players = append(players, &events.PlayerInfo{
 				UserID:   p.UserID,
 				Nickname: p.Nickname,
 				Avatar:   p.Avatar,
@@ -170,13 +174,13 @@ func (s *GameLifecycleService) startGameCore(ctx context.Context, roomID string,
 				"error", err,
 			)
 		}
-		event := &domain.GameEvent{
+		event := &events.GameEvent{
 			EventHeader: message.NewEventHeader(traceID),
 			RoomID:      roomID,
 			SessionID:   sessionID,
-			EventType:   domain.GameEventSessionStart,
+			EventType:   events.GameEventSessionStart,
 		}
-		_ = event.SetPayload(&domain.SessionStartData{
+		_ = event.SetPayload(&events.SessionStartData{
 			RoomNo:     meta.RoomNo,
 			ConfigID:   meta.ConfigID,
 			ConfigName: meta.ConfigName,
@@ -204,7 +208,7 @@ func (s *GameLifecycleService) startGameCore(ctx context.Context, roomID string,
 
 // StartGame 启动游戏：执行 TryStartGame Lua 脚本抢占启动权，成功后启动首轮。
 func (s *GameLifecycleService) StartGame(ctx context.Context, roomID string) {
-	roomHashKey := redis.RoomHashKey(roomID)
+	roomHashKey := rediskeys.RoomHashKey(roomID)
 	now := time.Now().Unix()
 
 	result, err := scripts.TryStartGame.Run(ctx, s.redis, []string{roomHashKey}, now).Result()
@@ -217,7 +221,7 @@ func (s *GameLifecycleService) StartGame(ctx context.Context, roomID string) {
 	}
 
 	if resultArray, ok := result.([]interface{}); ok && len(resultArray) >= 1 {
-		if success, ok := resultArray[0].(int64); !ok || success != 1 {
+		if success, ok := resultArray[0].(int64); !ok || success != 0 {
 			logger.Info("game start skipped, already started by another instance",
 				"room_id", roomID,
 				"reason", resultArray[1],
@@ -256,11 +260,11 @@ func (s *GameLifecycleService) ResumeGame(ctx context.Context, req *ResumeGameRe
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushGameResumed, &message.GameResumedPush{
+		s.broadcaster.Broadcast(ctx, req.RoomID, message.PushGameResumed, &push.GameResumedPush{
 			RoomID:       req.RoomID,
 			CurrentRound: int32(req.CurrentRound),
 			NextSenderID: "0",
-			Message:      message.GetErrorMsg(message.CodeGameResumed),
+			Message:      i18n.GetErrorMsg(message.CodeGameResumed),
 		}, "")
 	}
 

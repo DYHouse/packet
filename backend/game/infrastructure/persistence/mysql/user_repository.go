@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -14,7 +14,7 @@ type gormUserRepository struct {
 	db *gorm.DB
 }
 
-func NewGormUserRepository(db *gorm.DB) domain.UserDBRepository {
+func NewGormUserRepository(db *gorm.DB) repository.UserDBRepository {
 	return &gormUserRepository{db: db}
 }
 

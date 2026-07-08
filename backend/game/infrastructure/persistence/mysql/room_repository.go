@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/cashparty/backend/common/message"
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -14,7 +14,7 @@ type gormRoomRepository struct {
 	db *gorm.DB
 }
 
-func NewGormRoomRepository(db *gorm.DB) domain.RoomDBRepository {
+func NewGormRoomRepository(db *gorm.DB) repository.RoomDBRepository {
 	return &gormRoomRepository{db: db}
 }
 

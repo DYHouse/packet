@@ -51,7 +51,7 @@ func (s *Script) Src() string { return s.src }
 // 当 useEvalSHA=true 时走 goredis.NewScript 的 EVALSHA + NOSCRIPT fallback 路径；
 // 当 useEvalSHA=false 时回退到 Client.Eval（每次发送整段源码）。
 // 两种路径返回相同的 *redis.Cmd，调用方无感知。
-func (s *Script) Run(ctx context.Context, c *Client, keys []string, args ...interface{}) *redis.Cmd {
+func (s *Script) Run(ctx context.Context, c RedisClient, keys []string, args ...interface{}) *redis.Cmd {
 	if useEvalSHA.Load() {
 		return s.script.Run(ctx, c.Raw(), keys, args...)
 	}

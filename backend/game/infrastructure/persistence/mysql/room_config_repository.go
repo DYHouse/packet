@@ -3,7 +3,7 @@ package mysql
 import (
 	"context"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"gorm.io/gorm"
 )
 
@@ -11,12 +11,12 @@ type gormRoomConfigRepository struct {
 	db *gorm.DB
 }
 
-func NewGormRoomConfigRepository(db *gorm.DB) domain.RoomConfigDBRepository {
+func NewGormRoomConfigRepository(db *gorm.DB) repository.RoomConfigDBRepository {
 	return &gormRoomConfigRepository{db: db}
 }
 
-func (r *gormRoomConfigRepository) GetRoomTypeList(ctx context.Context) ([]*domain.RoomTypeItem, error) {
-	var items []*domain.RoomTypeItem
+func (r *gormRoomConfigRepository) GetRoomTypeList(ctx context.Context) ([]*repository.RoomTypeItem, error) {
+	var items []*repository.RoomTypeItem
 
 	query := `
 		SELECT rc.id, rc.name, rc.room_fee, rc.max_rounds,

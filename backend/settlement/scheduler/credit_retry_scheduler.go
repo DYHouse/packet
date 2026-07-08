@@ -18,7 +18,7 @@ type CreditRetryScheduler struct {
 	limit       int
 }
 
-func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis *cRedis.Client, cfg commonconfig.SettlementSchedulerSubConfig) *CreditRetryScheduler {
+func NewCreditRetryScheduler(creditRetry *service.CreditRetryService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *CreditRetryScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "credit_retry",
 		Interval:     cfg.Interval,

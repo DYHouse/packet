@@ -45,7 +45,7 @@ func Init(nodeID int64) error {
 // 适用于多实例生产环境（nacos 配置 node_id: 0 触发）。
 // 返回 NodeAllocator 供调用方在退出时调用 Release。
 // 必须传入 appCtx 派生的 context，禁止使用 context.Background()（规约 §6）。
-func InitWithAutoAlloc(ctx context.Context, redis *cRedis.Client) (*NodeAllocator, error) {
+func InitWithAutoAlloc(ctx context.Context, redis cRedis.RedisClient) (*NodeAllocator, error) {
 	var initErr error
 	var allocator *NodeAllocator
 	initOnce.Do(func() {

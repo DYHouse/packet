@@ -2,7 +2,8 @@ package application
 
 import (
 	"github.com/cashparty/backend/common/currency"
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/domain/room"
 )
 
 type RoomState struct {
@@ -58,7 +59,7 @@ type SeatInfo struct {
 	IsRobot  bool   `json:"is_robot"`
 }
 
-func BuildRoomState(meta *domain.RoomMeta) *RoomState {
+func BuildRoomState(meta *room.RoomMeta) *RoomState {
 	if meta == nil {
 		return nil
 	}
@@ -76,7 +77,7 @@ func BuildRoomState(meta *domain.RoomMeta) *RoomState {
 	}
 }
 
-func BuildPlayerInfo(p *domain.Player) *PlayerInfo {
+func BuildPlayerInfo(p *room.Player) *PlayerInfo {
 	if p == nil {
 		return nil
 	}
@@ -90,7 +91,7 @@ func BuildPlayerInfo(p *domain.Player) *PlayerInfo {
 	}
 }
 
-func BuildSpectatorInfo(s *domain.Spectator) *SpectatorInfo {
+func BuildSpectatorInfo(s *room.Spectator) *SpectatorInfo {
 	if s == nil {
 		return nil
 	}
@@ -102,13 +103,13 @@ func BuildSpectatorInfo(s *domain.Spectator) *SpectatorInfo {
 	}
 }
 
-func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
+func BuildFullRoomState(stateData *repository.RoomStateData) *RoomState {
 	if stateData == nil {
 		return nil
 	}
 
 	players := make([]*PlayerInfo, 0, len(stateData.Players))
-	playerSeatMap := make(map[int]*domain.Player, len(stateData.Players))
+	playerSeatMap := make(map[int]*room.Player, len(stateData.Players))
 	for _, p := range stateData.Players {
 		players = append(players, &PlayerInfo{
 			UserID:   p.UserID,
@@ -124,7 +125,7 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 	}
 
 	spectators := make([]*SpectatorInfo, 0, len(stateData.Spectators))
-	spectatorMap := make(map[string]*domain.Spectator, len(stateData.Spectators))
+	spectatorMap := make(map[string]*room.Spectator, len(stateData.Spectators))
 	for _, s := range stateData.Spectators {
 		spectators = append(spectators, &SpectatorInfo{
 			UserID:   s.UserID,
@@ -137,7 +138,7 @@ func BuildFullRoomState(stateData *domain.RoomStateData) *RoomState {
 
 	maxPlayers := stateData.MaxPlayers
 	if maxPlayers <= 0 {
-		maxPlayers = domain.MaxPlayers
+		maxPlayers = room.MaxPlayers
 	}
 
 	seats := make([]*SeatInfo, 0, maxPlayers)

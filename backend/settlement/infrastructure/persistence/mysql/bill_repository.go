@@ -143,27 +143,26 @@ func (m *billRepository) GetBillsByRoundID(ctx context.Context, roundID int64) (
 	return bills, err
 }
 
-func (m *billRepository) CreateBillsInTransaction(ctx context.Context, bills []*model.BillRecord) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, bill := range bills {
-			if err := tx.Create(bill).Error; err != nil {
-				return fmt.Errorf("create bill failed: %w", err)
-			}
+// CreateBills 批量创建账单。事务边界由 AppService 通过 DBRepository.WithTransaction 编排：
+// 在事务回调内通过 tx.BillRepo() 获取的子 repo，其 m.db 即为事务连接，本方法的多次 Create 自动纳入同一事务。
+func (m *billRepository) CreateBills(ctx context.Context, bills []*model.BillRecord) error {
+	for _, bill := range bills {
+		if err := m.db.WithContext(ctx).Create(bill).Error; err != nil {
+			return fmt.Errorf("create bill failed: %w", err)
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
-func (m *billRepository) CreateBillsPairInTransaction(ctx context.Context, bill1 *model.BillRecord, bill2 *model.BillRecord) error {
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(bill1).Error; err != nil {
-			return fmt.Errorf("create bill failed: %w", err)
-		}
-		if err := tx.Create(bill2).Error; err != nil {
-			return fmt.Errorf("create bill failed: %w", err)
-		}
-		return nil
-	})
+// CreateBillsPair 创建两条配对账单。事务边界同 CreateBills。
+func (m *billRepository) CreateBillsPair(ctx context.Context, bill1 *model.BillRecord, bill2 *model.BillRecord) error {
+	if err := m.db.WithContext(ctx).Create(bill1).Error; err != nil {
+		return fmt.Errorf("create bill failed: %w", err)
+	}
+	if err := m.db.WithContext(ctx).Create(bill2).Error; err != nil {
+		return fmt.Errorf("create bill failed: %w", err)
+	}
+	return nil
 }
 
 func (m *billRepository) GetBillsByBatchID(ctx context.Context, batchID string) ([]*model.BillRecord, error) {

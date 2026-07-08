@@ -3,7 +3,7 @@ package mysql
 import (
 	"context"
 
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	"gorm.io/gorm"
 )
@@ -13,7 +13,7 @@ type gormSpecialRewardRepository struct {
 }
 
 // NewGormSpecialRewardRepository 创建特殊奖励数据库仓储实例。
-func NewGormSpecialRewardRepository(db *gorm.DB) domain.SpecialRewardRepository {
+func NewGormSpecialRewardRepository(db *gorm.DB) repository.SpecialRewardRepository {
 	return &gormSpecialRewardRepository{db: db}
 }
 

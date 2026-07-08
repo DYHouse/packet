@@ -6,6 +6,10 @@ import "context"
 // 收敛所有虚拟余额 Redis 操作到 settlement 层，消除 game 与 settlement 双写隐式耦合。
 // 接口方法签名与原 game 层 VirtualBalanceService 完全一致，确保行为不变。
 type VirtualBalanceService interface {
+	// Deduct 虚拟扣款（Lua 原子操作）
+	// 通过 luaDeductBalance 脚本原子执行 "扣减 → 余额检查 → 回滚 → 标记 dirty"，
+	// 消除原 Go 代码三步之间的竞态。
+	Deduct(ctx context.Context, userID int64, amount int64) error
 	// Credit 虚拟入账（原子操作）
 	Credit(ctx context.Context, userID int64, amount int64) error
 	// GetBalance 查询虚拟余额

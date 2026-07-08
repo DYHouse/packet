@@ -26,13 +26,13 @@ const maxTimestampSkew = 5 * time.Minute
 const nonceTTL = 10 * time.Minute
 
 type SignatureMiddleware struct {
-	signer *signature.Signer
-	redis  *cRedis.Client
+	signer signature.Signer
+	redis  cRedis.RedisClient
 }
 
 // NewSignatureMiddleware 创建签名校验中间件。
 // redis 参数用于 nonce 防重放，若为 nil 则跳过 nonce 检查（仅校验签名与时间戳窗口）。
-func NewSignatureMiddleware(merchantID, merchantSecret string, redis *cRedis.Client) *SignatureMiddleware {
+func NewSignatureMiddleware(merchantID, merchantSecret string, redis cRedis.RedisClient) *SignatureMiddleware {
 	return &SignatureMiddleware{
 		signer: signature.NewSigner(merchantID, merchantSecret),
 		redis:  redis,

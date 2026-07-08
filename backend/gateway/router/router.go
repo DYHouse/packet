@@ -12,6 +12,7 @@ import (
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/common/trace"
 	"github.com/cashparty/backend/gateway/connection"
+	"github.com/cashparty/backend/gateway/protocol"
 	commonPb "github.com/cashparty/backend/proto/common"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/metadata"
@@ -68,7 +69,7 @@ func (r *MessageRouter) RemoveRoute(cmd string) {
 }
 
 func (r *MessageRouter) Route(ctx context.Context, conn *connection.Connection, rawMessage []byte) {
-	var req message.Request
+	var req protocol.Request
 	if err := json.Unmarshal(rawMessage, &req); err != nil {
 		if conn != nil {
 			logger.Warn("failed to parse message", "conn_id", conn.ConnID, "error", err)
@@ -141,13 +142,13 @@ func (r *MessageRouter) getServiceName(cmd string) string {
 	return ""
 }
 
-func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string, conn *connection.Connection, req *message.Request) *message.Response {
+func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string, conn *connection.Connection, req *protocol.Request) *protocol.Response {
 	client, err := r.serviceDiscovery.GetClient(serviceName)
 	if err != nil {
 		logger.Error("failed to get service client",
 			"service", serviceName,
 			"error", err)
-		return message.NewErrorResponse(req.Cmd, req.RequestID, message.CodeSystemError)
+		return protocol.NewErrorResponse(req.Cmd, req.RequestID, message.CodeSystemError)
 	}
 
 	userID := ""
@@ -179,7 +180,7 @@ func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string
 			"service", serviceName,
 			"cmd", req.Cmd,
 			"error", err)
-		return message.NewErrorResponse(req.Cmd, req.RequestID, message.CodeSystemError)
+		return protocol.NewErrorResponse(req.Cmd, req.RequestID, message.CodeSystemError)
 	}
 
 	logger.Debug("[Gateway<-Server] received response",
@@ -199,7 +200,7 @@ func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string
 		}
 	}
 
-	return &message.Response{
+	return &protocol.Response{
 		Cmd:       resp.Cmd,
 		RequestID: resp.RequestId,
 		Code:      int(resp.Code),
@@ -209,19 +210,19 @@ func (r *MessageRouter) forwardToService(ctx context.Context, serviceName string
 	}
 }
 
-func (r *MessageRouter) handleLocalCommand(conn *connection.Connection, req *message.Request) *message.Response {
+func (r *MessageRouter) handleLocalCommand(conn *connection.Connection, req *protocol.Request) *protocol.Response {
 	switch req.Cmd {
 	case message.CmdPing:
 		conn.UpdateHeartbeat()
-		return message.NewSuccessResponse("pong", req.RequestID, &message.PingResponse{
+		return protocol.NewSuccessResponse("pong", req.RequestID, &protocol.PingResponse{
 			ServerTime: time.Now().UnixMilli(),
 		})
 	default:
-		return message.NewErrorResponse(req.Cmd, req.RequestID, message.CodeUnknownCommand)
+		return protocol.NewErrorResponse(req.Cmd, req.RequestID, message.CodeUnknownCommand)
 	}
 }
 
-func (r *MessageRouter) sendResponse(conn *connection.Connection, resp *message.Response) {
+func (r *MessageRouter) sendResponse(conn *connection.Connection, resp *protocol.Response) {
 	if conn == nil {
 		logger.Debug("server-initiated notification, skip sending response", "cmd", resp.Cmd)
 		return
@@ -239,7 +240,7 @@ func (r *MessageRouter) sendResponse(conn *connection.Connection, resp *message.
 }
 
 func (r *MessageRouter) sendError(conn *connection.Connection, cmd, requestID string, code int) {
-	resp := message.NewErrorResponse(cmd, requestID, code)
+	resp := protocol.NewErrorResponse(cmd, requestID, code)
 	r.sendResponse(conn, resp)
 }
 

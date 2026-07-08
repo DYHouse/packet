@@ -10,7 +10,7 @@ import (
 
 	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 )
 
 type TimeoutType string
@@ -43,7 +43,7 @@ type Config struct {
 type TimeoutHandler func(ctx context.Context, roomID string, data string)
 
 type TimeoutScheduler struct {
-	redis          *cRedis.Client
+	redis          cRedis.RedisClient
 	handlers       map[TimeoutType]TimeoutHandler
 	configs        map[TimeoutType]TimeoutConfig
 	handlerTimeout time.Duration
@@ -53,7 +53,7 @@ type TimeoutScheduler struct {
 	handlerWg      sync.WaitGroup // 跟踪 handler goroutine 退出，确保 Stop 时等待 handler 完成
 }
 
-func NewTimeoutScheduler(redis *cRedis.Client, cfg *Config) *TimeoutScheduler {
+func NewTimeoutScheduler(redis cRedis.RedisClient, cfg *Config) *TimeoutScheduler {
 	checkInterval := cfg.CheckInterval
 	if checkInterval == 0 {
 		checkInterval = 1 * time.Second
@@ -208,7 +208,7 @@ func (s *TimeoutScheduler) ClearAllUserTimeouts(ctx context.Context, roomID, use
 }
 
 func (s *TimeoutScheduler) getTimeoutKey(timeoutType TimeoutType) string {
-	return redis.TimeoutKey(string(timeoutType))
+	return rediskeys.TimeoutKey(string(timeoutType))
 }
 
 func (s *TimeoutScheduler) runChecker(timeoutType TimeoutType, config TimeoutConfig) {

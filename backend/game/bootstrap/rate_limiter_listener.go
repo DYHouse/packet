@@ -10,7 +10,7 @@ import (
 
 // registerRateLimiterListener 注册限流配置的 nacos 热更新监听。
 // 失败时 Warn 但不阻塞启动；运行期 panic 会被 recover 兜底。
-func registerRateLimiterListener(nacosClient *nacos.Client, cfg *gameconfig.Config, container *Container) {
+func registerRateLimiterListener(nacosClient nacos.NacosClient, cfg *gameconfig.Config, container *Container) {
 	if cfg.Nacos.RateLimiterDataID == "" {
 		return
 	}

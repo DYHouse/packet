@@ -5,19 +5,23 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/i18n"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain"
-	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/push"
+	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/scheduler"
 )
 
 // HandleDeductFailure 处理扣款失败：广播中断事件并异步结束游戏。
 // 实现 DeductFailureHandler 接口，供 PacketOrchestrator 跨 Service 调用。
-func (s *GameLifecycleService) HandleDeductFailure(ctx context.Context, roomID string, meta *domain.RoomMeta, reason string, err error) {
+func (s *GameLifecycleService) HandleDeductFailure(ctx context.Context, roomID string, meta *room.RoomMeta, reason string, err error) {
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(ctx, roomID, message.PushGameInterrupted, &message.GameInterruptedPush{
+		s.broadcaster.Broadcast(ctx, roomID, message.PushGameInterrupted, &push.GameInterruptedPush{
 			RoomID: roomID,
 			Reason: reason,
 		}, "")
@@ -34,7 +38,7 @@ func (s *GameLifecycleService) HandleDeductFailure(ctx context.Context, roomID s
 
 	if err := s.taskRunner.Submit("end_game_on_deduct_failure", 15*time.Second, func(ctx context.Context) {
 		if err := s.EndGameWithOptions(ctx, roomID, &EndGameOptions{
-			AllowedStatus: int(domain.RoomStatusPlaying),
+			AllowedStatus: int(room.RoomStatusPlaying),
 			EndReason:     reason,
 			SessionID:     sessionID,
 			ActualRounds:  actualRounds,
@@ -55,17 +59,17 @@ func (s *GameLifecycleService) HandleDeductFailure(ctx context.Context, roomID s
 func (s *GameLifecycleService) EndGameWithOptions(ctx context.Context, roomID string, opts *EndGameOptions) error {
 	if opts == nil {
 		opts = &EndGameOptions{
-			AllowedStatus: int(domain.RoomStatusPlaying),
+			AllowedStatus: int(room.RoomStatusPlaying),
 			EndReason:     message.ReasonNormalEnd,
 		}
 	}
 
 	keys := []string{
-		redis.RoomHashKey(roomID),
-		redis.RoomPlayersKey(roomID),
-		redis.RoomSpectatorsKey(roomID),
-		redis.RoomSeatsKey(roomID),
-		redis.RoomSeatOwnerKey(roomID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
 	}
 
 	args := []interface{}{
@@ -90,11 +94,11 @@ func (s *GameLifecycleService) EndGameWithOptions(ctx context.Context, roomID st
 		return domain.MapLuaError(code)
 	}
 
-	var results []message.GameResult
+	var results []push.GameResult
 	if arr, ok := res[1].([]interface{}); ok {
 		for _, item := range arr {
 			if tuple, ok := item.([]interface{}); ok && len(tuple) >= 2 {
-				results = append(results, message.GameResult{
+				results = append(results, push.GameResult{
 					UserID:   converter.ParseString(tuple[0]),
 					Nickname: converter.ParseString(tuple[1]),
 				})
@@ -124,13 +128,13 @@ func (s *GameLifecycleService) EndGameWithOptions(ctx context.Context, roomID st
 				"error", err,
 			)
 		}
-		sessionEndEvent := &domain.GameEvent{
+		sessionEndEvent := &events.GameEvent{
 			EventHeader: message.NewEventHeader(sessionEndTraceID),
 			RoomID:      roomID,
 			SessionID:   opts.SessionID,
-			EventType:   domain.GameEventSessionEnd,
+			EventType:   events.GameEventSessionEnd,
 		}
-		_ = sessionEndEvent.SetPayload(&domain.SessionEndData{
+		_ = sessionEndEvent.SetPayload(&events.SessionEndData{
 			ActualRounds: opts.ActualRounds,
 			EndReason:    opts.EndReason,
 			FinalResults: opts.FinalResults,
@@ -182,11 +186,11 @@ func (s *GameLifecycleService) handleKickAndReplace(ctx context.Context, roomID,
 	}
 
 	if s.broadcaster != nil {
-		s.broadcaster.BroadcastToUser(ctx, userID, message.PushKicked, &message.KickedPush{
+		s.broadcaster.BroadcastToUser(ctx, userID, message.PushKicked, &push.KickedPush{
 			RoomID:  roomID,
 			UserID:  userID,
 			Reason:  message.ReasonPenaltyKick,
-			Message: message.GetKickMessage(message.ReasonPenaltyKick),
+			Message: i18n.GetKickMessage(message.ReasonPenaltyKick),
 		})
 	}
 
@@ -205,7 +209,7 @@ func (s *GameLifecycleService) handleKickAndReplace(ctx context.Context, roomID,
 				s.broadcaster.Broadcast(ctx, roomID, message.PushRoomState, BuildFullRoomState(stateData), userID)
 			}
 
-			s.broadcaster.Broadcast(ctx, roomID, message.PushWaitReplacement, &message.WaitReplacementPush{
+			s.broadcaster.Broadcast(ctx, roomID, message.PushWaitReplacement, &push.WaitReplacementPush{
 				RoomID:     roomID,
 				VacantSeat: int32(result.SeatNo),
 				LeftUserID: userID,

@@ -8,19 +8,19 @@ import (
 	"github.com/cashparty/backend/common/currency"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
-	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 	settlementDomain "github.com/cashparty/backend/settlement/domain"
 )
 
 // HistoryService 玩家历史记录应用服务
 type HistoryService struct {
-	dbRepo   domain.DBRepository
+	dbRepo   repository.DBRepository
 	billRepo settlementDomain.BillRepository
 }
 
 // NewHistoryService 创建 HistoryService 实例
-func NewHistoryService(dbRepo domain.DBRepository, billRepo settlementDomain.BillRepository) *HistoryService {
+func NewHistoryService(dbRepo repository.DBRepository, billRepo settlementDomain.BillRepository) *HistoryService {
 	return &HistoryService{
 		dbRepo:   dbRepo,
 		billRepo: billRepo,
@@ -223,7 +223,7 @@ func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*Pla
 // playerSessionBillRowToItem 将 PlayerSessionBillRow 转换为 PlayerHistoryItem
 // 数据源来自 game_sessions + bill_record 聚合，不含 session_players 的
 // SeatNo/JoinedAt/LeftAt/Nickname/Avatar 字段，这些字段填零值。
-func playerSessionBillRowToItem(row *domain.PlayerSessionBillRow) PlayerHistoryItem {
+func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHistoryItem {
 	return PlayerHistoryItem{
 		SessionID:     converter.FormatID(row.SessionID),
 		RoomNo:        row.RoomNo,

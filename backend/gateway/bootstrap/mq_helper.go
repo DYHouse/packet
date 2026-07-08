@@ -22,7 +22,7 @@ import (
 // GroupID 使用 per-node 策略：`gateway-broadcast-{nodeID}`。
 func createBroadcastService(
 	cfg *gatewayconfig.Config,
-	redis *cRedis.Client,
+	redis cRedis.RedisClient,
 	manager *connection.Manager,
 	nodeID string,
 ) (*broadcast.BroadcastService, error) {

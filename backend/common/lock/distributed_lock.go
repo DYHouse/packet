@@ -15,11 +15,11 @@ import (
 
 var (
 	redsyncClient *redsync.Redsync
-	redisClient   *cRedis.Client
+	redisClient   cRedis.RedisClient
 	initOnce      sync.Once
 )
 
-func InitLocker(redis *cRedis.Client) {
+func InitLocker(redis cRedis.RedisClient) {
 	initOnce.Do(func() {
 		redisClient = redis
 		pool := goredis.NewPool(redis.Raw())
@@ -151,7 +151,8 @@ func WithLock(ctx context.Context, key string, opts *LockOptions, fn func() erro
 	return fn()
 }
 
-func WithRedisLock(ctx context.Context, client *cRedis.Client, key string, expirySeconds int, fn func() error) error {
+// WithRedisLock 使用包级 redsyncClient 获取分布式锁后执行 fn，无需调用方传入 Redis 客户端。
+func WithRedisLock(ctx context.Context, key string, expirySeconds int, fn func() error) error {
 	opts := &LockOptions{
 		Expiry:           time.Duration(expirySeconds) * time.Second,
 		RetryCount:       3,

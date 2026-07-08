@@ -9,7 +9,7 @@ import (
 )
 
 // newRunner 构造一个具备合理 defaultTTL 的 TaskRunner，用于测试。
-func newRunner(t *testing.T, defaultTTL time.Duration) (*TaskRunner, context.CancelFunc) {
+func newRunner(t *testing.T, defaultTTL time.Duration) (TaskRunner, context.CancelFunc) {
 	t.Helper()
 	rootCtx, cancel := context.WithCancel(context.Background())
 	r := NewTaskRunner(rootCtx, defaultTTL)

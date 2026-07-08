@@ -19,13 +19,13 @@ type Consumer struct {
 	handler MessageHandler
 	cfg     ConsumerConfig
 	topic   string
-	dlq     *Producer
+	dlq     KafkaProducer
 }
 
 // NewConsumer 创建 Kafka 消费者。
 // 校验 Brokers/Topic/GroupID 非空，否则返回 error。
 // 若 cfg.DLQTopic != "" 则 dlq 必须非 nil。
-func NewConsumer(cfg ConsumerConfig, handler MessageHandler, dlq *Producer) (*Consumer, error) {
+func NewConsumer(cfg ConsumerConfig, handler MessageHandler, dlq KafkaProducer) (*Consumer, error) {
 	if len(cfg.Brokers) == 0 {
 		return nil, fmt.Errorf("kafka consumer config: brokers must not be empty")
 	}
@@ -105,7 +105,12 @@ func (c *Consumer) Start(ctx context.Context) error {
 				return nil
 			}
 			logger.Error("kafka fetch message failed", "topic", c.topic, "error", err)
-			time.Sleep(time.Second)
+			// 使用 select 监听 ctx.Done()，避免在优雅关闭期间阻塞 goroutine
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second):
+			}
 			continue
 		}
 

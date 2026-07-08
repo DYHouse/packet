@@ -15,7 +15,7 @@ import (
 
 // RateLimiter 通用限流器,基于 Redis 滑动窗口实现
 type RateLimiter struct {
-	redis    *cRedis.Client
+	redis    cRedis.RedisClient
 	failOpen bool
 	metrics  *Metrics
 }
@@ -31,7 +31,7 @@ func WithFailOpen(failOpen bool) Option {
 }
 
 // NewRateLimiter 创建限流器
-func NewRateLimiter(redis *cRedis.Client, opts ...Option) *RateLimiter {
+func NewRateLimiter(redis cRedis.RedisClient, opts ...Option) *RateLimiter {
 	rl := &RateLimiter{
 		redis:    redis,
 		failOpen: true, // 默认 fail-open
@@ -84,7 +84,7 @@ type UserLimiter struct {
 }
 
 // NewUserLimiter 创建用户限流器
-func NewUserLimiter(redis *cRedis.Client, configs map[string]LimitConfig) *UserLimiter {
+func NewUserLimiter(redis cRedis.RedisClient, configs map[string]LimitConfig) *UserLimiter {
 	return &UserLimiter{
 		limiter: NewRateLimiter(redis),
 		configs: configs,

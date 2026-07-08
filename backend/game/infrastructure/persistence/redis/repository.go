@@ -11,17 +11,20 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/common/redis"
+	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain"
+	repository "github.com/cashparty/backend/game/domain/repository"
+	roomDom "github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	goredis "github.com/redis/go-redis/v9"
 )
 
 type RoomRepository struct {
-	client   *redis.Client
+	client   redis.RedisClient
 	redisTTL config.RedisTTLConfig
 }
 
-func NewRoomRepository(client *redis.Client, redisTTL config.RedisTTLConfig) *RoomRepository {
+func NewRoomRepository(client redis.RedisClient, redisTTL config.RedisTTLConfig) *RoomRepository {
 	return &RoomRepository{client: client, redisTTL: redisTTL}
 }
 
@@ -45,8 +48,8 @@ func parseInt(val interface{}) int {
 	return 0
 }
 
-func (r *RoomRepository) GetRoomMeta(ctx context.Context, roomID string) (*domain.RoomMeta, error) {
-	key := RoomHashKey(roomID)
+func (r *RoomRepository) GetRoomMeta(ctx context.Context, roomID string) (*roomDom.RoomMeta, error) {
+	key := rediskeys.RoomHashKey(roomID)
 	data, err := r.client.HGetAll(ctx, key).Result()
 	if err != nil {
 		return nil, err
@@ -57,16 +60,23 @@ func (r *RoomRepository) GetRoomMeta(ctx context.Context, roomID string) (*domai
 
 	meta := r.parseRoomMeta(roomID, data)
 
-	playersKey := RoomPlayersKey(roomID)
-	spectatorsKey := RoomSpectatorsKey(roomID)
+	playersKey := rediskeys.RoomPlayersKey(roomID)
+	spectatorsKey := rediskeys.RoomSpectatorsKey(roomID)
 	meta.PlayerCount = int(r.client.Raw().HLen(ctx, playersKey).Val())
 	meta.SpectatorCount = int(r.client.Raw().HLen(ctx, spectatorsKey).Val())
 
 	return meta, nil
 }
 
-func (r *RoomRepository) parseRoomMeta(roomID string, data map[string]string) *domain.RoomMeta {
-	meta := &domain.RoomMeta{
+// GetNextSenderID 读取房间哈希中的 next_sender_id 字段。
+// key 不存在或字段不存在时返回空字符串与 nil error。
+func (r *RoomRepository) GetNextSenderID(ctx context.Context, roomID string) (string, error) {
+	key := rediskeys.RoomHashKey(roomID)
+	return r.client.HGet(ctx, key, "next_sender_id").Result()
+}
+
+func (r *RoomRepository) parseRoomMeta(roomID string, data map[string]string) *roomDom.RoomMeta {
+	meta := &roomDom.RoomMeta{
 		RoomID: roomID,
 	}
 
@@ -96,7 +106,7 @@ func (r *RoomRepository) parseRoomMeta(roomID string, data map[string]string) *d
 	}
 	if v, ok := data["status"]; ok {
 		status, _ := strconv.Atoi(v)
-		meta.Status = domain.RoomStatus(status)
+		meta.Status = roomDom.RoomStatus(status)
 	}
 	if v, ok := data["current_round"]; ok {
 		meta.CurrentRound, _ = strconv.Atoi(v)
@@ -116,16 +126,16 @@ func (r *RoomRepository) parseRoomMeta(roomID string, data map[string]string) *d
 	return meta
 }
 
-func (r *RoomRepository) GetPlayers(ctx context.Context, roomID string) (map[string]*domain.Player, error) {
-	key := RoomPlayersKey(roomID)
+func (r *RoomRepository) GetPlayers(ctx context.Context, roomID string) (map[string]*roomDom.Player, error) {
+	key := rediskeys.RoomPlayersKey(roomID)
 	data, err := r.client.HGetAll(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	players := make(map[string]*domain.Player)
+	players := make(map[string]*roomDom.Player)
 	for userID, playerData := range data {
-		var player domain.Player
+		var player roomDom.Player
 		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
 			continue
 		}
@@ -134,28 +144,28 @@ func (r *RoomRepository) GetPlayers(ctx context.Context, roomID string) (map[str
 	return players, nil
 }
 
-func (r *RoomRepository) GetPlayer(ctx context.Context, roomID, userID string) (*domain.Player, error) {
-	key := RoomPlayersKey(roomID)
+func (r *RoomRepository) GetPlayer(ctx context.Context, roomID, userID string) (*roomDom.Player, error) {
+	key := rediskeys.RoomPlayersKey(roomID)
 	data, err := r.client.HGet(ctx, key, userID).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	var player domain.Player
+	var player roomDom.Player
 	if err := json.Unmarshal([]byte(data), &player); err != nil {
 		return nil, err
 	}
 	return &player, nil
 }
 
-func (r *RoomRepository) GetSpectator(ctx context.Context, roomID, userID string) (*domain.Spectator, error) {
-	key := RoomSpectatorsKey(roomID)
+func (r *RoomRepository) GetSpectator(ctx context.Context, roomID, userID string) (*roomDom.Spectator, error) {
+	key := rediskeys.RoomSpectatorsKey(roomID)
 	data, err := r.client.HGet(ctx, key, userID).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	var spectator domain.Spectator
+	var spectator roomDom.Spectator
 	if err := json.Unmarshal([]byte(data), &spectator); err != nil {
 		return nil, err
 	}
@@ -164,11 +174,11 @@ func (r *RoomRepository) GetSpectator(ctx context.Context, roomID, userID string
 
 func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, seatNo int, isRobot bool) error {
 	keys := []string{
-		RoomHashKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomSeatsKey(roomID),
-		RoomSeatOwnerKey(roomID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
 	}
 	args := []interface{}{
 		userID,
@@ -192,11 +202,11 @@ func (r *RoomRepository) SelectSeat(ctx context.Context, roomID, userID string, 
 
 func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) error {
 	keys := []string{
-		RoomHashKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomSeatsKey(roomID),
-		RoomSeatOwnerKey(roomID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
 	}
 	args := []interface{}{
 		userID,
@@ -214,17 +224,17 @@ func (r *RoomRepository) CancelSeat(ctx context.Context, roomID, userID string) 
 	return nil
 }
 
-func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spectator *domain.Spectator) (*domain.JoinResult, error) {
+func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spectator *roomDom.Spectator) (*repository.JoinResult, error) {
 	spectatorData, err := json.Marshal(spectator)
 	if err != nil {
 		return nil, err
 	}
 
 	keys := []string{
-		RoomHashKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomPlayersKey(roomID),
-		PlayerRoomKey(spectator.UserID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.PlayerRoomKey(spectator.UserID),
 	}
 	args := []interface{}{
 		spectator.UserID,
@@ -249,7 +259,7 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 	roomNo := result[2].(string)
 	configID := result[3].(int64)
 
-	return &domain.JoinResult{
+	return &repository.JoinResult{
 		RoomID:   resultRoomID,
 		RoomNo:   roomNo,
 		ConfigID: configID,
@@ -258,12 +268,12 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 
 func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) error {
 	keys := []string{
-		RoomHashKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomSeatsKey(roomID),
-		RoomSeatOwnerKey(roomID),
-		PlayerRoomKey(userID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
+		rediskeys.PlayerRoomKey(userID),
 	}
 	args := []interface{}{
 		userID,
@@ -289,20 +299,20 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 	return nil
 }
 
-func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*domain.KickPlayerResult, error) {
+func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, userID, reason string) (*repository.KickPlayerResult, error) {
 	keys := []string{
-		RoomHashKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomSeatsKey(roomID),
-		RoomSeatOwnerKey(roomID),
-		PlayerRoomKey(userID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
+		rediskeys.PlayerRoomKey(userID),
 	}
 
 	args := []interface{}{
 		userID,
 		reason,
 		time.Now().Unix(),
-		KeyRoundStatePrefix,
+		rediskeys.KeyRoundStatePrefix,
 	}
 
 	result, err := scripts.KickPlayer.Run(ctx, r.client, keys, args...).Slice()
@@ -315,19 +325,19 @@ func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, use
 		return nil, domain.MapLuaError(code)
 	}
 
-	return &domain.KickPlayerResult{
+	return &repository.KickPlayerResult{
 		SeatNo:     parseInt(result[2]),
 		RoomStatus: parseInt(result[3]),
 	}, nil
 }
 
-func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID string, isRobot bool) (*domain.AutoSeatResult, error) {
+func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID string, isRobot bool) (*repository.AutoSeatResult, error) {
 	keys := []string{
-		RoomHashKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomSeatsKey(roomID),
-		RoomSeatOwnerKey(roomID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
 	}
 	args := []interface{}{
 		userID,
@@ -346,7 +356,7 @@ func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID st
 		return nil, domain.MapLuaError(code)
 	}
 
-	autoResult := &domain.AutoSeatResult{
+	autoResult := &repository.AutoSeatResult{
 		SeatNo:               parseInt(result[1]),
 		PlayerCount:          parseInt(result[2]),
 		MaxPlayers:           parseInt(result[3]),
@@ -358,7 +368,7 @@ func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID st
 	if len(result) >= 8 {
 		playerDataStr, ok := result[7].(string)
 		if ok && playerDataStr != "" {
-			var player domain.Player
+			var player roomDom.Player
 			if err := json.Unmarshal([]byte(playerDataStr), &player); err == nil {
 				autoResult.Player = &player
 			}
@@ -370,10 +380,10 @@ func (r *RoomRepository) AutoSeatAndReady(ctx context.Context, roomID, userID st
 
 func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID string) (int, error) {
 	keys := []string{
-		RoomQueueKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomHashKey(roomID),
+		rediskeys.RoomQueueKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomHashKey(roomID),
 	}
 	args := []interface{}{
 		userID,
@@ -396,8 +406,8 @@ func (r *RoomRepository) Enqueue(ctx context.Context, roomID, userID string) (in
 
 func (r *RoomRepository) Dequeue(ctx context.Context, roomID, userID string) error {
 	keys := []string{
-		RoomQueueKey(roomID),
-		RoomHashKey(roomID),
+		rediskeys.RoomQueueKey(roomID),
+		rediskeys.RoomHashKey(roomID),
 	}
 	args := []interface{}{
 		userID,
@@ -416,14 +426,14 @@ func (r *RoomRepository) Dequeue(ctx context.Context, roomID, userID string) err
 	return nil
 }
 
-func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seatNo int) (*domain.SubstituteResult, error) {
+func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seatNo int) (*repository.SubstituteResult, error) {
 	keys := []string{
-		RoomQueueKey(roomID),
-		RoomHashKey(roomID),
-		RoomPlayersKey(roomID),
-		RoomSpectatorsKey(roomID),
-		RoomSeatsKey(roomID),
-		RoomSeatOwnerKey(roomID),
+		rediskeys.RoomQueueKey(roomID),
+		rediskeys.RoomHashKey(roomID),
+		rediskeys.RoomPlayersKey(roomID),
+		rediskeys.RoomSpectatorsKey(roomID),
+		rediskeys.RoomSeatsKey(roomID),
+		rediskeys.RoomSeatOwnerKey(roomID),
 	}
 	args := []interface{}{
 		seatNo,
@@ -444,7 +454,7 @@ func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seat
 		return nil, domain.MapLuaError(code)
 	}
 
-	subResult := &domain.SubstituteResult{
+	subResult := &repository.SubstituteResult{
 		SubstituteUserID:     parseLuaString(result[1]),
 		PlayerCount:          parseInt(result[2]),
 		MaxPlayers:           parseInt(result[3]),
@@ -457,7 +467,7 @@ func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seat
 	if len(result) >= 8 {
 		playerDataStr, ok := result[7].(string)
 		if ok && playerDataStr != "" {
-			var player domain.Player
+			var player roomDom.Player
 			if err := json.Unmarshal([]byte(playerDataStr), &player); err == nil {
 				subResult.Player = &player
 			}
@@ -467,16 +477,16 @@ func (r *RoomRepository) AutoSubstitute(ctx context.Context, roomID string, seat
 	return subResult, nil
 }
 
-func (r *RoomRepository) GetQueueList(ctx context.Context, roomID string) ([]*domain.QueueInfo, error) {
-	queueKey := RoomQueueKey(roomID)
-	spectatorsKey := RoomSpectatorsKey(roomID)
+func (r *RoomRepository) GetQueueList(ctx context.Context, roomID string) ([]*roomDom.QueueInfo, error) {
+	queueKey := rediskeys.RoomQueueKey(roomID)
+	spectatorsKey := rediskeys.RoomSpectatorsKey(roomID)
 
 	members, err := r.client.Raw().ZRangeWithScores(ctx, queueKey, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	queueList := make([]*domain.QueueInfo, 0, len(members))
+	queueList := make([]*roomDom.QueueInfo, 0, len(members))
 	for idx, m := range members {
 		userID, ok := m.Member.(string)
 		if !ok || userID == "" {
@@ -488,12 +498,12 @@ func (r *RoomRepository) GetQueueList(ctx context.Context, roomID string) ([]*do
 			continue
 		}
 
-		var spectator domain.Spectator
+		var spectator roomDom.Spectator
 		if err := json.Unmarshal([]byte(spectatorData), &spectator); err != nil {
 			continue
 		}
 
-		queueList = append(queueList, &domain.QueueInfo{
+		queueList = append(queueList, &roomDom.QueueInfo{
 			UserID:        spectator.UserID,
 			Nickname:      spectator.Nickname,
 			Avatar:        spectator.Avatar,
@@ -506,7 +516,7 @@ func (r *RoomRepository) GetQueueList(ctx context.Context, roomID string) ([]*do
 }
 
 func (r *RoomRepository) RemoveFromQueue(ctx context.Context, roomID, userID string) error {
-	queueKey := RoomQueueKey(roomID)
+	queueKey := rediskeys.RoomQueueKey(roomID)
 	if err := r.client.ZRem(ctx, queueKey, userID).Err(); err != nil {
 		return err
 	}
@@ -531,12 +541,12 @@ func parseLuaInt64(val interface{}) int64 {
 }
 
 func (r *RoomRepository) UpdateRoomSessionID(ctx context.Context, roomID string, sessionID string) error {
-	key := RoomHashKey(roomID)
+	key := rediskeys.RoomHashKey(roomID)
 	return r.client.HSet(ctx, key, "current_session_id", sessionID).Err()
 }
 
-func (r *RoomRepository) InitRoom(ctx context.Context, room *domain.RoomMeta) error {
-	key := RoomHashKey(room.RoomID)
+func (r *RoomRepository) InitRoom(ctx context.Context, room *roomDom.RoomMeta) error {
+	key := rediskeys.RoomHashKey(room.RoomID)
 
 	exists, err := r.client.Exists(ctx, key).Result()
 	if err != nil {
@@ -567,11 +577,11 @@ func (r *RoomRepository) InitRoom(ctx context.Context, room *domain.RoomMeta) er
 	return nil
 }
 
-func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*domain.RoomStateData, error) {
-	roomHashKey := RoomHashKey(roomID)
-	playersKey := RoomPlayersKey(roomID)
-	spectatorsKey := RoomSpectatorsKey(roomID)
-	seatOwnerKey := RoomSeatOwnerKey(roomID)
+func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*repository.RoomStateData, error) {
+	roomHashKey := rediskeys.RoomHashKey(roomID)
+	playersKey := rediskeys.RoomPlayersKey(roomID)
+	spectatorsKey := rediskeys.RoomSpectatorsKey(roomID)
+	seatOwnerKey := rediskeys.RoomSeatOwnerKey(roomID)
 
 	pipe := r.client.Pipeline()
 	metaCmd := pipe.HGetAll(ctx, roomHashKey)
@@ -609,18 +619,18 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 
 	meta := r.parseRoomMeta(roomID, metaData)
 
-	players := make(map[string]*domain.Player)
+	players := make(map[string]*roomDom.Player)
 	for userID, playerData := range playersData {
-		var player domain.Player
+		var player roomDom.Player
 		if err := json.Unmarshal([]byte(playerData), &player); err != nil {
 			continue
 		}
 		players[userID] = &player
 	}
 
-	spectators := make(map[string]*domain.Spectator)
+	spectators := make(map[string]*roomDom.Spectator)
 	for userID, spectatorData := range spectatorsData {
-		var spectator domain.Spectator
+		var spectator roomDom.Spectator
 		if err := json.Unmarshal([]byte(spectatorData), &spectator); err != nil {
 			continue
 		}
@@ -635,7 +645,7 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 
 	queueList, _ := r.GetQueueList(ctx, roomID)
 
-	return &domain.RoomStateData{
+	return &repository.RoomStateData{
 		RoomID:         meta.RoomID,
 		RoomNo:         meta.RoomNo,
 		RoomType:       int(meta.ConfigID),
@@ -655,9 +665,9 @@ func (r *RoomRepository) GetRoomStateData(ctx context.Context, roomID string) (*
 	}, nil
 }
 
-func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string) (map[string]*domain.RoomStateData, error) {
+func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string) (map[string]*repository.RoomStateData, error) {
 	if len(roomIDs) == 0 {
-		return make(map[string]*domain.RoomStateData), nil
+		return make(map[string]*repository.RoomStateData), nil
 	}
 
 	pipe := r.client.Pipeline()
@@ -671,10 +681,10 @@ func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string
 
 	for _, roomID := range roomIDs {
 		cmdsMap[roomID] = roomCmds{
-			meta:       pipe.HGetAll(ctx, RoomHashKey(roomID)),
-			players:    pipe.HGetAll(ctx, RoomPlayersKey(roomID)),
-			spectators: pipe.HGetAll(ctx, RoomSpectatorsKey(roomID)),
-			seatOwners: pipe.HGetAll(ctx, RoomSeatOwnerKey(roomID)),
+			meta:       pipe.HGetAll(ctx, rediskeys.RoomHashKey(roomID)),
+			players:    pipe.HGetAll(ctx, rediskeys.RoomPlayersKey(roomID)),
+			spectators: pipe.HGetAll(ctx, rediskeys.RoomSpectatorsKey(roomID)),
+			seatOwners: pipe.HGetAll(ctx, rediskeys.RoomSeatOwnerKey(roomID)),
 		}
 	}
 
@@ -683,7 +693,7 @@ func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string
 		return nil, err
 	}
 
-	result := make(map[string]*domain.RoomStateData, len(roomIDs))
+	result := make(map[string]*repository.RoomStateData, len(roomIDs))
 	for roomID, cmds := range cmdsMap {
 		metaData, err := cmds.meta.Result()
 		if err != nil {
@@ -705,18 +715,18 @@ func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string
 			continue
 		}
 
-		players := make(map[string]*domain.Player)
+		players := make(map[string]*roomDom.Player)
 		for userID, playerData := range playersData {
-			var player domain.Player
+			var player roomDom.Player
 			if err := json.Unmarshal([]byte(playerData), &player); err != nil {
 				continue
 			}
 			players[userID] = &player
 		}
 
-		spectators := make(map[string]*domain.Spectator)
+		spectators := make(map[string]*roomDom.Spectator)
 		for userID, spectatorData := range spectatorsData {
-			var spectator domain.Spectator
+			var spectator roomDom.Spectator
 			if err := json.Unmarshal([]byte(spectatorData), &spectator); err != nil {
 				continue
 			}
@@ -733,7 +743,7 @@ func (r *RoomRepository) GetRoomSeatsBatch(ctx context.Context, roomIDs []string
 		maxRounds, _ := strconv.Atoi(metaData["max_rounds"])
 		status, _ := strconv.Atoi(metaData["status"])
 
-		result[roomID] = &domain.RoomStateData{
+		result[roomID] = &repository.RoomStateData{
 			RoomID:         roomID,
 			CurrentRound:   currentRound,
 			MaxRounds:      maxRounds,
