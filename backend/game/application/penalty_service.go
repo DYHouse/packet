@@ -13,26 +13,26 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
+	settlementApplication "github.com/cashparty/backend/settlement/application"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
-	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
 type PenaltyService struct {
-	redis             cRedis.RedisClient
-	policy            *round.PenaltyPolicy
-	settlementService *settlementService.PenaltySettlementService
-	redisTTL          config.RedisTTLConfig
+	redis            cRedis.RedisClient
+	policy           *round.PenaltyPolicy
+	settleAppService *settlementApplication.SettleAppService
+	redisTTL         config.RedisTTLConfig
 }
 
-func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, settlementService *settlementService.PenaltySettlementService, redisTTL config.RedisTTLConfig) *PenaltyService {
+func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, settleAppService *settlementApplication.SettleAppService, redisTTL config.RedisTTLConfig) *PenaltyService {
 	if policy == nil {
 		policy = round.DefaultPenaltyPolicy()
 	}
 	return &PenaltyService{
-		redis:             redis,
-		policy:            policy,
-		settlementService: settlementService,
-		redisTTL:          redisTTL,
+		redis:            redis,
+		policy:           policy,
+		settleAppService: settleAppService,
+		redisTTL:         redisTTL,
 	}
 }
 
@@ -83,7 +83,7 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 	}
 
 	var deductErr error
-	if err := s.settlementService.DeductPenaltyToPlatform(ctx, deductReq); err != nil {
+	if err := s.settleAppService.DeductPenaltyToPlatform(ctx, deductReq); err != nil {
 		logger.Error("deduct penalty to platform failed",
 			"room_id", roomID,
 			"user_id", userID,

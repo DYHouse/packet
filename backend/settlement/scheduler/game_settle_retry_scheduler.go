@@ -4,23 +4,19 @@ import (
 	"context"
 
 	commonconfig "github.com/cashparty/backend/common/config"
-	"github.com/cashparty/backend/common/logger"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	csched "github.com/cashparty/backend/common/scheduler"
-	"github.com/cashparty/backend/settlement/domain"
-	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/service"
+	settlementApplication "github.com/cashparty/backend/settlement/application"
 )
 
 type GameSettleRetryScheduler struct {
-	base                *csched.BaseScheduler
-	roundSettlementRepo domain.RoundSettlementRepository
-	settlementQueryRepo domain.SettlementQueryRepository
-	gameSettleSvc       *service.GameSettleReportingService
+	base         *csched.BaseScheduler
+	schedulerApp *settlementApplication.SchedulerAppService
+	limit        int
 }
 
-func NewGameSettleRetryScheduler(roundSettlementRepo domain.RoundSettlementRepository, settlementQueryRepo domain.SettlementQueryRepository, gameSettleSvc *service.GameSettleReportingService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleRetryScheduler {
+func NewGameSettleRetryScheduler(schedulerApp *settlementApplication.SchedulerAppService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *GameSettleRetryScheduler {
 	config := csched.BaseSchedulerConfig{
 		Name:         "game_settle_retry",
 		Interval:     cfg.Interval,
@@ -30,9 +26,8 @@ func NewGameSettleRetryScheduler(roundSettlementRepo domain.RoundSettlementRepos
 	}
 
 	s := &GameSettleRetryScheduler{
-		roundSettlementRepo: roundSettlementRepo,
-		settlementQueryRepo: settlementQueryRepo,
-		gameSettleSvc:       gameSettleSvc,
+		schedulerApp: schedulerApp,
+		limit:        cfg.Limit,
 	}
 	s.base = csched.NewBaseScheduler(config, s.execute, redis)
 	return s
@@ -45,37 +40,7 @@ func (s *GameSettleRetryScheduler) Start(ctx context.Context) error {
 }
 
 func (s *GameSettleRetryScheduler) execute(ctx context.Context) error {
-	// Find games where game settle failed
-	sessionIDs, err := s.roundSettlementRepo.GetFailedGameSettlements(ctx, 100)
-	if err != nil {
-		logger.Error("get failed game settlements failed", "error", err)
-		return err
-	}
-
-	for _, sessionID := range sessionIDs {
-		// Get unsettled users in this game
-		userIDs, err := s.settlementQueryRepo.GetUnsettledUsersBySession(ctx, sessionID)
-		if err != nil {
-			logger.Error("get unsettled users failed", "session_id", sessionID, "error", err)
-			continue
-		}
-
-		allSuccess := true
-		for _, userID := range userIDs {
-			if err := s.gameSettleSvc.RetryPlayerSettle(ctx, sessionID, userID); err != nil {
-				logger.Error("retry player game settle failed", "session_id", sessionID, "user_id", userID, "error", err)
-				allSuccess = false
-			}
-		}
-
-		if allSuccess && len(userIDs) > 0 {
-			if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusFailed, dto.GameSettleStatusSuccess); err != nil {
-				logger.Error("update game settle status by session failed", "session_id", sessionID, "error", err)
-			}
-		}
-	}
-
-	return nil
+	return s.schedulerApp.RetryGameSettle(ctx, s.limit)
 }
 
 func (s *GameSettleRetryScheduler) Stop() {

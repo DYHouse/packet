@@ -11,6 +11,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -19,26 +20,26 @@ import (
 // 抢红包/奖励在 round 级别仅做内部记账（BillRecord），实际资金移动延迟到会话级通过本 Service 完成。
 type SessionPayoutService struct {
 	platform       platform.Client
-	billRepo       domain.BillRepository
+	billRepo       repository.BillRepository
 	traceIDGen     *TraceIDGenerator
 	cfg            *config.PlatformConfig
 	userIDConvert  *UserIDConvertService
-	callMgr        *PlatformCallManager
+	callMgr        repository.PlatformCallLogRepository
 	robotChecker   RobotChecker
 	virtualBalance domain.VirtualBalanceService
-	exceptionMgr   *ExceptionManager
+	exceptionMgr   repository.ExceptionRepository
 }
 
 func NewSessionPayoutService(
 	platformClient platform.Client,
-	billRepo domain.BillRepository,
+	billRepo repository.BillRepository,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	userIDConvert *UserIDConvertService,
-	callMgr *PlatformCallManager,
+	callMgr repository.PlatformCallLogRepository,
 	robotChecker RobotChecker,
 	virtualBalance domain.VirtualBalanceService,
-	exceptionMgr *ExceptionManager,
+	exceptionMgr repository.ExceptionRepository,
 ) *SessionPayoutService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -178,7 +179,7 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
 		CallType:   model.CallTypeCredit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    creditReq,
@@ -200,7 +201,7 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 			logger.Error("increment retry count with next retry time failed", "bill_id", bill.ID, "error", retryErr)
 		}
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
 				Status:       model.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
@@ -223,7 +224,7 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 			logger.Error("create exception record for parse amount failure failed", "bill_id", bill.ID, "error", excErr)
 		}
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:       callLog.ID,
 				RespBody: result,
 				Status:   model.CallLogStatusSuccess,
@@ -233,7 +234,7 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 	}
 
 	if callLog != nil {
-		s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
 			Status:   model.CallLogStatusSuccess,

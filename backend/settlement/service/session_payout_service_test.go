@@ -15,12 +15,12 @@ import (
 // ============================================================================
 
 // newTestSessionPayoutService 构造测试用 SessionPayoutService。
-// 使用 dry-run DB 构造 ExceptionManager 和 PlatformCallManager，无需真实 MySQL。
+// 使用接口桩件构造 ExceptionRepository 和 PlatformCallLogRepository，无需真实 MySQL。
 func newTestSessionPayoutService(t *testing.T, billRepo *mockBillRepo, robotChecker *mockRobotChecker, virtualBalance *mockVirtualBalance, platformClient *mockPlatformClient) *SessionPayoutService {
 	t.Helper()
 	userConvert := newTestUserIDConvert(&domain.PlatformUser{UserID: "platform_user_123"}, nil)
-	callMgr := newTestCallMgr(t)
-	exceptionMgr := newTestExceptionMgr(t)
+	callMgr := newTestCallLogRepo()
+	exceptionMgr := newTestExceptionRepo()
 	return NewSessionPayoutService(platformClient, billRepo, newTestTraceIDGen(), nil, userConvert, callMgr, robotChecker, virtualBalance, exceptionMgr)
 }
 

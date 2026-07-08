@@ -5,25 +5,25 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 	"gorm.io/gorm"
 )
 
-// roundSettlementRepository 实现 domain.RoundSettlementRepository 接口，负责 RoundSettlement 的 CRUD 与状态机更新。
+// roundSettlementRepository 实现 repository.RoundSettlementRepository 接口，负责 RoundSettlement 的 CRUD 与状态机更新。
 // 代码由 BillManager 迁移而来，逻辑保持一致。
 type roundSettlementRepository struct {
 	db *gorm.DB
 }
 
 // NewRoundSettlementRepository 创建 RoundSettlementRepository 实例，返回接口类型。
-func NewRoundSettlementRepository(db *gorm.DB) domain.RoundSettlementRepository {
+func NewRoundSettlementRepository(db *gorm.DB) repository.RoundSettlementRepository {
 	return &roundSettlementRepository{db: db}
 }
 
-// 编译期断言：确保 roundSettlementRepository 实现 domain.RoundSettlementRepository 接口。
-var _ domain.RoundSettlementRepository = (*roundSettlementRepository)(nil)
+// 编译期断言：确保 roundSettlementRepository 实现 repository.RoundSettlementRepository 接口。
+var _ repository.RoundSettlementRepository = (*roundSettlementRepository)(nil)
 
 func (m *roundSettlementRepository) ExistsRoundSettlement(ctx context.Context, roundID int64) (bool, error) {
 	var count int64

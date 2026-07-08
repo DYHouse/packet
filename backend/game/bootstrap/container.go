@@ -26,6 +26,7 @@ import (
 	settlementApplication "github.com/cashparty/backend/settlement/application"
 	settlementConfig "github.com/cashparty/backend/settlement/config"
 	settlementDomain "github.com/cashparty/backend/settlement/domain"
+	settlementRepository "github.com/cashparty/backend/settlement/domain/repository"
 	settlementMysqlRepo "github.com/cashparty/backend/settlement/infrastructure/persistence/mysql"
 	settlementScheduler "github.com/cashparty/backend/settlement/scheduler"
 	settlementService "github.com/cashparty/backend/settlement/service"
@@ -95,17 +96,17 @@ type Container struct {
 
 	// Shared settlement service instances (created in app.go, not recreated)
 	platformClient           platform.Client
-	billRepo                 settlementDomain.BillRepository
-	roundSettlementRepo      settlementDomain.RoundSettlementRepository
-	refundAuditRepo          settlementDomain.RefundAuditRepository
-	settlementQueryRepo      settlementDomain.SettlementQueryRepository
+	billRepo                 settlementRepository.BillRepository
+	roundSettlementRepo      settlementRepository.RoundSettlementRepository
+	refundAuditRepo          settlementRepository.RefundAuditRepository
+	settlementQueryRepo      settlementRepository.SettlementQueryRepository
 	traceIDGen               *settlementService.TraceIDGenerator
 	platformCfg              *settlementConfig.PlatformConfig
 	userIDConvert            *settlementService.UserIDConvertService
-	exceptionMgr             *settlementService.ExceptionManager
+	exceptionMgr             settlementRepository.ExceptionRepository
 	creditRetrySvc           *settlementService.CreditRetryService
 	rewardSettler            *settlementService.RewardSettler
-	callMgr                  *settlementService.PlatformCallManager
+	callMgr                  settlementRepository.PlatformCallLogRepository
 	gameSettleSvc            *settlementService.GameSettleReportingService
 	robotChecker             settlementService.RobotChecker
 	settlementVirtualBalance settlementDomain.VirtualBalanceService
@@ -127,19 +128,19 @@ func NewContainer(
 	packetGenerator *algorithm.PacketGenerator,
 	roomRepo repository.RoomRepository,
 	platformClient platform.Client,
-	billRepo settlementDomain.BillRepository,
-	roundSettlementRepo settlementDomain.RoundSettlementRepository,
-	refundAuditRepo settlementDomain.RefundAuditRepository,
-	settlementQueryRepo settlementDomain.SettlementQueryRepository,
+	billRepo settlementRepository.BillRepository,
+	roundSettlementRepo settlementRepository.RoundSettlementRepository,
+	refundAuditRepo settlementRepository.RefundAuditRepository,
+	settlementQueryRepo settlementRepository.SettlementQueryRepository,
 	traceIDGen *settlementService.TraceIDGenerator,
 	settlementPlatformCfg *settlementConfig.PlatformConfig,
 	userIDConvert *settlementService.UserIDConvertService,
-	exceptionMgr *settlementService.ExceptionManager,
+	exceptionMgr settlementRepository.ExceptionRepository,
 	creditRetrySvc *settlementService.CreditRetryService,
 	deductSvc *settlementService.DeductService,
 	refundSvc *settlementService.RefundService,
 	rewardSettler *settlementService.RewardSettler,
-	callMgr *settlementService.PlatformCallManager,
+	callMgr settlementRepository.PlatformCallLogRepository,
 	gameSettleSvc *settlementService.GameSettleReportingService,
 	robotChecker settlementService.RobotChecker,
 	settlementVirtualBalance settlementDomain.VirtualBalanceService,
@@ -169,7 +170,6 @@ func NewContainer(
 
 	packetCacheRepo := redisRepo.NewPacketCacheRepository(redis)
 	grabService := application.NewGrabService(redis, packetCacheRepo, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
-	penaltyService := application.NewPenaltyService(redis, nil, penaltySettlementSvc, *redisTTL)
 
 	// 从 RateLimiterConfig.Commands 构建 UserLimiter 配置
 	userLimiterConfigs := buildUserLimiterConfigs(rateLimiterCfg)
@@ -193,7 +193,6 @@ func NewContainer(
 		TimeoutScheduler:       timeoutScheduler,
 		SchedulerRegistry:      registry,
 		GrabService:            grabService,
-		PenaltyService:         penaltyService,
 		RoundSettleSvc:         roundSettleSvc,
 		PenaltySettlementSvc:   penaltySettlementSvc,
 		BalanceQuerySvc:        balanceQuerySvc,
@@ -241,7 +240,10 @@ func (c *Container) InitAppServices() {
 		c.BalanceService,
 	)
 
-	c.HistoryService = application.NewHistoryService(c.DBRepo, c.billRepo)
+	// PenaltyService 依赖 SettleAppSvc，故在 SettleAppSvc 创建之后构造。
+	c.PenaltyService = application.NewPenaltyService(c.Redis, nil, c.SettleAppSvc, *c.RedisTTL)
+
+	c.HistoryService = application.NewHistoryService(c.DBRepo)
 
 	c.RoomAppService = application.NewRoomAppService(
 		c.RoomRepo,
@@ -250,8 +252,7 @@ func (c *Container) InitAppServices() {
 		c.Broadcaster,
 		c.EventPublisher,
 		c.TimeoutScheduler,
-		c.BalanceQuerySvc,
-		c.BalanceService,
+		c.SettleAppSvc,
 		c.TaskRunner,
 	)
 
@@ -331,10 +332,9 @@ func (c *Container) InitAppServices() {
 		c.Broadcaster,
 		c.EventPublisher,
 		c.TimeoutScheduler,
-		c.BalanceQuerySvc,
+		c.SettleAppSvc,
 		c.GameAppService,
 		c.Redis,
-		c.BalanceService,
 		c.TimeoutCfg.Ready,
 		c.TaskRunner,
 	)
@@ -422,19 +422,29 @@ func (c *Container) initRobotServices() {
 }
 
 func (c *Container) initSettlementSchedulers() {
-	settlementCheckSvc := settlementService.NewSettlementCheckService(
-		c.billRepo,
-		c.roundSettlementRepo,
-		c.exceptionMgr,
+	// 创建 SchedulerAppService，作为 5 个 scheduler 的统一 Application 层入口。
+	// 各 scheduler 不再直接持有 service/repository，仅通过本 facade 调用用例。
+	schedulerApp := settlementApplication.NewSchedulerAppService(
+		c.creditRetrySvc,
+		c.gameSettleSvc,
 		c.RefundSvc,
-		c.traceIDGen,
+		settlementService.NewSettlementCheckService(
+			c.billRepo,
+			c.roundSettlementRepo,
+			c.exceptionMgr,
+			c.RefundSvc,
+			c.traceIDGen,
+		),
+		c.roundSettlementRepo,
+		c.settlementQueryRepo,
+		c.refundAuditRepo,
 	)
 
-	c.SchedulerRegistry.Register(settlementScheduler.NewCreditRetryScheduler(c.creditRetrySvc, c.Redis, c.SettlementSchedulerCfg.CreditRetry))
-	c.SchedulerRegistry.Register(settlementScheduler.NewRefundProcessScheduler(c.RefundSvc, c.refundAuditRepo, c.Redis, c.SettlementSchedulerCfg.RefundProcess))
-	c.SchedulerRegistry.Register(settlementScheduler.NewSettlementCheckScheduler(settlementCheckSvc, c.Redis, c.SettlementSchedulerCfg.SettlementCheck))
-	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleRetryScheduler(c.roundSettlementRepo, c.settlementQueryRepo, c.gameSettleSvc, c.Redis, c.SettlementSchedulerCfg.GameSettleRetry))
-	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleTimeoutScheduler(c.roundSettlementRepo, c.gameSettleSvc, c.Redis, c.SettlementSchedulerCfg.GameSettleTimeout))
+	c.SchedulerRegistry.Register(settlementScheduler.NewCreditRetryScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.CreditRetry))
+	c.SchedulerRegistry.Register(settlementScheduler.NewRefundProcessScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.RefundProcess))
+	c.SchedulerRegistry.Register(settlementScheduler.NewSettlementCheckScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.SettlementCheck))
+	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleRetryScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.GameSettleRetry))
+	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleTimeoutScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.GameSettleTimeout))
 }
 
 func (c *Container) NewRoomEventConsumer(cfg kafka.ConsumerConfig) (*messaging.RoomEventConsumer, error) {

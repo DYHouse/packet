@@ -9,6 +9,7 @@ import (
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -18,29 +19,29 @@ import (
 // dbRepo 用于含 RPC 用例中对 DB 写入片段编排事务（短事务原则：禁止事务内 RPC）。
 type PenaltySettlementService struct {
 	platform       platform.Client
-	dbRepo         domain.DBRepository
-	billRepo       domain.BillRepository
+	dbRepo         repository.DBRepository
+	billRepo       repository.BillRepository
 	traceIDGen     *TraceIDGenerator
 	cfg            *config.PlatformConfig
 	userIDConvert  *UserIDConvertService
-	callMgr        *PlatformCallManager
+	callMgr        repository.PlatformCallLogRepository
 	robotChecker   RobotChecker
 	virtualBalance domain.VirtualBalanceService
-	exceptionMgr   *ExceptionManager
+	exceptionMgr   repository.ExceptionRepository
 }
 
 // NewPenaltySettlementService 构造 PenaltySettlementService 实例。
 func NewPenaltySettlementService(
 	platformClient platform.Client,
-	dbRepo domain.DBRepository,
-	billRepo domain.BillRepository,
+	dbRepo repository.DBRepository,
+	billRepo repository.BillRepository,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	userIDConvert *UserIDConvertService,
-	callMgr *PlatformCallManager,
+	callMgr repository.PlatformCallLogRepository,
 	robotChecker RobotChecker,
 	virtualBalance domain.VirtualBalanceService,
-	exceptionMgr *ExceptionManager,
+	exceptionMgr repository.ExceptionRepository,
 ) *PenaltySettlementService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -114,7 +115,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 	}
 
 	// 同一事务创建两个 Bill，保证账目配对（含 RPC，事务仅包裹 DB 写入片段）
-	if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		return tx.BillRepo().CreateBillsPair(ctx, playerBill, platformBill)
 	}); err != nil {
 		return fmt.Errorf("create penalty bills failed: %w", err)
@@ -148,7 +149,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
 		CallType:   model.CallTypeDebit,
 		BizOrderNo: playerBill.BizOrderNo,
 		ReqBody:    debitReq,
@@ -161,7 +162,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 	if err != nil {
 		s.billRepo.UpdateBillStatus(ctx, playerBill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
 				Status:       model.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
@@ -180,7 +181,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 			logger.Error("update bill to failed after parse amount error", "bill_id", playerBill.ID, "error", updateErr)
 		}
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:       callLog.ID,
 				RespBody: result,
 				Status:   model.CallLogStatusSuccess,
@@ -197,7 +198,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 	}
 
 	if callLog != nil {
-		s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
 			Status:   model.CallLogStatusSuccess,
@@ -207,7 +208,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 	return nil
 }
 
-func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Context, tx domain.Transaction, req *dto.PenaltyDistributeRequest) error {
+func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Context, tx repository.Transaction, req *dto.PenaltyDistributeRequest) error {
 	roundTraceID := s.traceIDGen.GeneratePenaltyDistTraceID(req.RoomID, req.SessionID)
 	billRepo := tx.BillRepo()
 

@@ -7,6 +7,7 @@ import (
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/model"
 )
 
@@ -16,8 +17,8 @@ import (
 // 不包含 CheckBalanceForReady/CalculateRequiredFee 等业务规则。
 type BalanceQueryService struct {
 	platform            platform.Client
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
+	billRepo            repository.BillRepository
+	roundSettlementRepo repository.RoundSettlementRepository
 	cfg                 *config.PlatformConfig
 	userIDConvert       *UserIDConvertService
 	robotChecker        RobotChecker
@@ -27,8 +28,8 @@ type BalanceQueryService struct {
 // NewBalanceQueryService 构造 BalanceQueryService 实例。
 func NewBalanceQueryService(
 	platformClient platform.Client,
-	billRepo domain.BillRepository,
-	roundSettlementRepo domain.RoundSettlementRepository,
+	billRepo repository.BillRepository,
+	roundSettlementRepo repository.RoundSettlementRepository,
 	cfg *config.PlatformConfig,
 	userIDConvert *UserIDConvertService,
 	robotChecker RobotChecker,

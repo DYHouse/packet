@@ -10,7 +10,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -18,8 +18,8 @@ import (
 // RoundSettleService 负责单局结算相关操作：写 grab/commission BillRecord、触发奖励结算、
 // 委托 GameSettleReportingService 完成会话级结算。从原 SettlementService 拆分而来（P0-10）。
 type RoundSettleService struct {
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
+	billRepo            repository.BillRepository
+	roundSettlementRepo repository.RoundSettlementRepository
 	redis               cRedis.RedisClient
 	traceIDGen          *TraceIDGenerator
 	rewardSettler       *RewardSettler
@@ -30,8 +30,8 @@ type RoundSettleService struct {
 
 // NewRoundSettleService 构造 RoundSettleService 实例。
 func NewRoundSettleService(
-	billRepo domain.BillRepository,
-	roundSettlementRepo domain.RoundSettlementRepository,
+	billRepo repository.BillRepository,
+	roundSettlementRepo repository.RoundSettlementRepository,
 	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	rewardSettler *RewardSettler,
@@ -55,7 +55,7 @@ func NewRoundSettleService(
 	}
 }
 
-func (s *RoundSettleService) SettleRound(ctx context.Context, tx domain.Transaction, req *dto.RoundSettleRequest) error {
+func (s *RoundSettleService) SettleRound(ctx context.Context, tx repository.Transaction, req *dto.RoundSettleRequest) error {
 	roundSettlementRepo := tx.RoundSettlementRepo()
 	settlement, err := roundSettlementRepo.GetRoundSettlementByRoundID(ctx, req.RoundID)
 	if err == nil && settlement != nil && settlement.Status == dto.RoundStatusCredited {
@@ -121,7 +121,7 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, tx domain.Transact
 // 返回 totalSettleAmount/settleUserCount 供 SettleRound 在所有子结算成功后统一标记 round_settlement.status。
 // 不再在此处调用 UpdateRoundSettlementCredited，避免 reward 失败后 status 被提前置位导致重试无法补偿。
 // tx 由 SettleRound 从 AppService 事务回调传入，所有 DB 操作纳入同一事务。
-func (s *RoundSettleService) creditRound(ctx context.Context, tx domain.Transaction, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
+func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Transaction, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
 	billRepo := tx.BillRepo()
 	if settlement.Commission > 0 {
 		if err := s.settleCommission(ctx, tx, settlement); err != nil {
@@ -184,7 +184,7 @@ func (s *RoundSettleService) creditRound(ctx context.Context, tx domain.Transact
 	return totalSettleAmount, settleUserCount, nil
 }
 
-func (s *RoundSettleService) settleCommission(ctx context.Context, tx domain.Transaction, settlement *model.RoundSettlement) error {
+func (s *RoundSettleService) settleCommission(ctx context.Context, tx repository.Transaction, settlement *model.RoundSettlement) error {
 	billRepo := tx.BillRepo()
 	existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeCommission, dto.PlatformAccountID)
 	if err == nil && existingBill != nil {

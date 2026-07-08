@@ -12,11 +12,10 @@ import (
 	"github.com/cashparty/backend/common/lock"
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
+	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-	"gorm.io/gorm/schema"
 )
 
 // ============================================================================
@@ -46,34 +45,8 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// noopDialector 空操作 Dialector，不建立真实 DB 连接。
-// 用于测试场景下构造 DryRun gorm.DB：ExceptionManager/PlatformCallManager
-// 的 Create/Update 操作在 DryRun 模式下仅生成 SQL 不执行，无需 MySQL 实例。
-type noopDialector struct{}
-
-func (noopDialector) Name() string                                          { return "noop" }
-func (noopDialector) Initialize(db *gorm.DB) error                          { return nil }
-func (noopDialector) Migrator(db *gorm.DB) gorm.Migrator                    { return nil }
-func (noopDialector) DataTypeOf(*schema.Field) string                       { return "" }
-func (noopDialector) DefaultValueOf(*schema.Field) clause.Expression        { return nil }
-func (noopDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{}) {}
-func (noopDialector) QuoteTo(clause.Writer, string)                         {}
-func (noopDialector) Explain(string, ...interface{}) string                 { return "" }
-
-// newDryRunDB 创建 dry-run 模式的 gorm.DB，用于 ExceptionManager 和 PlatformCallManager。
-// 使用 noopDialector 避免 MySQL 连接；DryRun 模式下 gorm 生成 SQL 但不执行。
-// 适用于测试中需要构造真实 ExceptionManager/PlatformCallManager 但不依赖 DB 的场景。
-func newDryRunDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(noopDialector{}, &gorm.Config{
-		DryRun:                 true,
-		SkipDefaultTransaction: true,
-	})
-	if err != nil {
-		t.Fatalf("创建 dry-run gorm.DB 失败: %v", err)
-	}
-	return db
-}
+// noopDialector 及 dry-run gorm.DB 辅助已移除：service 层不再持有 *gorm.DB，
+// 异常记录与平台调用日志通过 repository 接口注入，测试改用接口桩件（见下方 mock repo）。
 
 // newTestTraceIDGen 创建带桩件 IDGenerator 的 TraceIDGenerator。
 func newTestTraceIDGen() *TraceIDGenerator {
@@ -81,59 +54,77 @@ func newTestTraceIDGen() *TraceIDGenerator {
 }
 
 // ============================================================================
-// domain.Transaction 桩件
+// repository.Transaction 桩件
 // ============================================================================
 
 // mockTransaction 事务桩件，返回预配置的子 repo。
 // 用于测试 P0-1：service 通过 tx.BillRepo() 等访问子 repo。
 type mockTransaction struct {
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
-	refundAuditRepo     domain.RefundAuditRepository
-	settlementQueryRepo domain.SettlementQueryRepository
+	billRepo            repository.BillRepository
+	roundSettlementRepo repository.RoundSettlementRepository
+	refundAuditRepo     repository.RefundAuditRepository
+	settlementQueryRepo repository.SettlementQueryRepository
 }
 
-func (m *mockTransaction) BillRepo() domain.BillRepository {
+func (m *mockTransaction) BillRepo() repository.BillRepository {
 	return m.billRepo
 }
 
-func (m *mockTransaction) RoundSettlementRepo() domain.RoundSettlementRepository {
+func (m *mockTransaction) RoundSettlementRepo() repository.RoundSettlementRepository {
 	return m.roundSettlementRepo
 }
 
-func (m *mockTransaction) RefundAuditRepo() domain.RefundAuditRepository {
+func (m *mockTransaction) RefundAuditRepo() repository.RefundAuditRepository {
 	return m.refundAuditRepo
 }
 
-func (m *mockTransaction) SettlementQueryRepo() domain.SettlementQueryRepository {
+func (m *mockTransaction) SettlementQueryRepo() repository.SettlementQueryRepository {
 	return m.settlementQueryRepo
 }
 
+func (m *mockTransaction) ExceptionRepo() repository.ExceptionRepository {
+	return nil
+}
+
+func (m *mockTransaction) PlatformCallLogRepo() repository.PlatformCallLogRepository {
+	return nil
+}
+
 // ============================================================================
-// domain.DBRepository 桩件
+// repository.DBRepository 桩件
 // ============================================================================
 
 // mockDBRepository 数据库仓储桩件，WithTransaction 直接调用 fn 并传入 mockTransaction。
 type mockDBRepository struct {
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
-	refundAuditRepo     domain.RefundAuditRepository
-	settlementQueryRepo domain.SettlementQueryRepository
-	tx                  domain.Transaction
+	billRepo            repository.BillRepository
+	roundSettlementRepo repository.RoundSettlementRepository
+	refundAuditRepo     repository.RefundAuditRepository
+	settlementQueryRepo repository.SettlementQueryRepository
+	tx                  repository.Transaction
 	// withTxErr 控制事务回调是否注入错误（模拟事务失败）
 	withTxErr error
 }
 
-func (m *mockDBRepository) BillRepo() domain.BillRepository { return m.billRepo }
-func (m *mockDBRepository) RoundSettlementRepo() domain.RoundSettlementRepository {
+func (m *mockDBRepository) BillRepo() repository.BillRepository { return m.billRepo }
+func (m *mockDBRepository) RoundSettlementRepo() repository.RoundSettlementRepository {
 	return m.roundSettlementRepo
 }
-func (m *mockDBRepository) RefundAuditRepo() domain.RefundAuditRepository { return m.refundAuditRepo }
-func (m *mockDBRepository) SettlementQueryRepo() domain.SettlementQueryRepository {
+func (m *mockDBRepository) RefundAuditRepo() repository.RefundAuditRepository {
+	return m.refundAuditRepo
+}
+func (m *mockDBRepository) SettlementQueryRepo() repository.SettlementQueryRepository {
 	return m.settlementQueryRepo
 }
 
-func (m *mockDBRepository) WithTransaction(_ context.Context, fn func(tx domain.Transaction) error) error {
+func (m *mockDBRepository) ExceptionRepo() repository.ExceptionRepository {
+	return nil
+}
+
+func (m *mockDBRepository) PlatformCallLogRepo() repository.PlatformCallLogRepository {
+	return nil
+}
+
+func (m *mockDBRepository) WithTransaction(_ context.Context, fn func(tx repository.Transaction) error) error {
 	if m.withTxErr != nil {
 		return m.withTxErr
 	}
@@ -150,14 +141,14 @@ func (m *mockDBRepository) WithTransaction(_ context.Context, fn func(tx domain.
 }
 
 // ============================================================================
-// domain.BillRepository 桩件
+// repository.BillRepository 桩件
 // ============================================================================
 
 // mockBillRepo 账单仓储桩件。
 // 通过嵌入 nil 接口满足完整接口契约，仅覆盖测试所需方法。
 // 未覆盖方法若被调用会 panic（测试 bug 预警）。
 type mockBillRepo struct {
-	domain.BillRepository
+	repository.BillRepository
 	mu sync.Mutex
 
 	// 可配置返回值
@@ -284,12 +275,12 @@ func (m *mockBillRepo) GetBillByID(_ context.Context, _ int64) (*model.BillRecor
 }
 
 // ============================================================================
-// domain.RoundSettlementRepository 桩件
+// repository.RoundSettlementRepository 桩件
 // ============================================================================
 
 // mockRoundSettlementRepo 回合结算仓储桩件。
 type mockRoundSettlementRepo struct {
-	domain.RoundSettlementRepository
+	repository.RoundSettlementRepository
 	mu sync.Mutex
 
 	// 可配置返回值
@@ -524,12 +515,12 @@ func (s *stubUserService) GetUserById(_ context.Context, _ string) (*domain.Plat
 }
 
 // ============================================================================
-// domain.RefundAuditRepository 桩件
+// repository.RefundAuditRepository 桩件
 // ============================================================================
 
 // mockRefundAuditRepo 退款审核仓储桩件。
 type mockRefundAuditRepo struct {
-	domain.RefundAuditRepository
+	repository.RefundAuditRepository
 	createRefundAuditErr error
 }
 
@@ -538,12 +529,12 @@ func (m *mockRefundAuditRepo) CreateRefundAuditAndUpdateBillRefundStatus(_ conte
 }
 
 // ============================================================================
-// domain.SettlementQueryRepository 桩件
+// repository.SettlementQueryRepository 桩件
 // ============================================================================
 
 // mockSettlementQueryRepo 结算查询仓储桩件。
 type mockSettlementQueryRepo struct {
-	domain.SettlementQueryRepository
+	repository.SettlementQueryRepository
 	aggregateBetResult     map[int64]int64
 	aggregateBetErr        error
 	aggregatePayOutResult  map[int64]int64
@@ -568,14 +559,54 @@ func (m *mockSettlementQueryRepo) IsPlayerGameSettled(_ context.Context, _ int64
 // 测试辅助构造函数
 // ============================================================================
 
-// newTestExceptionMgr 创建使用 dry-run DB 的 ExceptionManager。
-func newTestExceptionMgr(t *testing.T) *ExceptionManager {
-	return NewExceptionManager(newDryRunDB(t))
+// ============================================================================
+// repository.ExceptionRepository / PlatformCallLogRepository 桩件
+// ============================================================================
+
+// mockExceptionRepo 异常记录仓储桩件，实现 repository.ExceptionRepository。
+// Create 默认返回 nil error，使调用方继续执行后续 DB 操作（如 UpdateBillExceptionID）。
+type mockExceptionRepo struct {
+	createErr error
 }
 
-// newTestCallMgr 创建使用 dry-run DB 的 PlatformCallManager。
-func newTestCallMgr(t *testing.T) *PlatformCallManager {
-	return NewPlatformCallManager(newDryRunDB(t))
+func (m *mockExceptionRepo) Create(_ context.Context, _ *model.ExceptionRecord) error {
+	return m.createErr
+}
+
+// mockPlatformCallLogRepo 平台调用日志仓储桩件，实现 repository.PlatformCallLogRepository。
+// CreateLog 默认返回非 nil 日志（带 ID），使调用方进入 UpdateLog 路径。
+type mockPlatformCallLogRepo struct {
+	createLogErr error
+	updateLogErr error
+}
+
+func (m *mockPlatformCallLogRepo) CreateLog(_ context.Context, _ *dto.CallLogCreateParams) (*model.PlatformCallLog, error) {
+	if m.createLogErr != nil {
+		return nil, m.createLogErr
+	}
+	return &model.PlatformCallLog{ID: 1}, nil
+}
+
+func (m *mockPlatformCallLogRepo) UpdateLog(_ context.Context, _ *dto.CallLogUpdateParams) error {
+	return m.updateLogErr
+}
+
+func (m *mockPlatformCallLogRepo) GetLogByID(_ context.Context, _ int64) (*model.PlatformCallLog, error) {
+	return nil, nil
+}
+
+func (m *mockPlatformCallLogRepo) GetFailedLogs(_ context.Context, _ int) ([]*model.PlatformCallLog, error) {
+	return nil, nil
+}
+
+// newTestExceptionRepo 创建异常记录仓储桩件。
+func newTestExceptionRepo() repository.ExceptionRepository {
+	return &mockExceptionRepo{}
+}
+
+// newTestCallLogRepo 创建平台调用日志仓储桩件。
+func newTestCallLogRepo() repository.PlatformCallLogRepository {
+	return &mockPlatformCallLogRepo{}
 }
 
 // newTestUserIDConvert 创建带桩件 UserService 的 UserIDConvertService。

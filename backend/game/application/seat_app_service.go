@@ -20,23 +20,22 @@ import (
 	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
 	"github.com/cashparty/backend/game/scheduler"
+	settlementApplication "github.com/cashparty/backend/settlement/application"
 	"github.com/cashparty/backend/settlement/dto"
-	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
 type SeatAppService struct {
-	repo              repository.RoomRepository
-	dbRepo            repository.DBRepository
-	broadcaster       events.Broadcaster
-	publisher         events.RoomEventPublisher
-	scheduler         *scheduler.TimeoutScheduler
-	settlementService *settlementService.BalanceQueryService
-	gameService       *GameAppService
-	roomAppService    *RoomAppService
-	redis             cRedis.RedisClient
-	balanceService    *settlementService.BalanceService
-	readyCountdown    time.Duration
-	taskRunner        async.TaskRunner
+	repo             repository.RoomRepository
+	dbRepo           repository.DBRepository
+	broadcaster      events.Broadcaster
+	publisher        events.RoomEventPublisher
+	scheduler        *scheduler.TimeoutScheduler
+	settleAppService *settlementApplication.SettleAppService
+	gameService      *GameAppService
+	roomAppService   *RoomAppService
+	redis            cRedis.RedisClient
+	readyCountdown   time.Duration
+	taskRunner       async.TaskRunner
 }
 
 // SetRoomAppService 注入 RoomAppService（用于 CancelSeat 后触发自动替补）
@@ -50,25 +49,23 @@ func NewSeatAppService(
 	broadcaster events.Broadcaster,
 	publisher events.RoomEventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
-	settlementSvc *settlementService.BalanceQueryService,
+	settleAppSvc *settlementApplication.SettleAppService,
 	gameService *GameAppService,
 	redis cRedis.RedisClient,
-	balanceService *settlementService.BalanceService,
 	readyCountdown time.Duration,
 	taskRunner async.TaskRunner,
 ) *SeatAppService {
 	return &SeatAppService{
-		repo:              repo,
-		dbRepo:            dbRepo,
-		broadcaster:       broadcaster,
-		publisher:         publisher,
-		scheduler:         scheduler,
-		settlementService: settlementSvc,
-		gameService:       gameService,
-		redis:             redis,
-		balanceService:    balanceService,
-		readyCountdown:    readyCountdown,
-		taskRunner:        taskRunner,
+		repo:             repo,
+		dbRepo:           dbRepo,
+		broadcaster:      broadcaster,
+		publisher:        publisher,
+		scheduler:        scheduler,
+		settleAppService: settleAppSvc,
+		gameService:      gameService,
+		redis:            redis,
+		readyCountdown:   readyCountdown,
+		taskRunner:       taskRunner,
 	}
 }
 
@@ -237,9 +234,9 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 		return nil, message.NewError(message.CodeRoomNotFound)
 	}
 
-	if s.balanceService != nil {
+	if s.settleAppService != nil {
 		userIDInt := converter.ParseID(req.UserID)
-		balanceResult, err := s.balanceService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
+		balanceResult, err := s.settleAppService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
 			UserID:     userIDInt,
 			RoomFee:    meta.RoomFee,
 			MaxPlayers: meta.MaxPlayers,

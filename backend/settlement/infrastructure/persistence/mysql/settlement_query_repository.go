@@ -3,25 +3,25 @@ package mysql
 import (
 	"context"
 
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 	"gorm.io/gorm"
 )
 
-// settlementQueryRepository 实现 domain.SettlementQueryRepository 接口，提供按会话聚合的只读查询。
+// settlementQueryRepository 实现 repository.SettlementQueryRepository 接口，提供按会话聚合的只读查询。
 // 代码由 BillManager 迁移而来，逻辑保持一致。
 type settlementQueryRepository struct {
 	db *gorm.DB
 }
 
 // NewSettlementQueryRepository 创建 SettlementQueryRepository 实例，返回接口类型。
-func NewSettlementQueryRepository(db *gorm.DB) domain.SettlementQueryRepository {
+func NewSettlementQueryRepository(db *gorm.DB) repository.SettlementQueryRepository {
 	return &settlementQueryRepository{db: db}
 }
 
-// 编译期断言：确保 settlementQueryRepository 实现 domain.SettlementQueryRepository 接口。
-var _ domain.SettlementQueryRepository = (*settlementQueryRepository)(nil)
+// 编译期断言：确保 settlementQueryRepository 实现 repository.SettlementQueryRepository 接口。
+var _ repository.SettlementQueryRepository = (*settlementQueryRepository)(nil)
 
 // AggregateBetBySession 按玩家聚合该游戏的扣款金额（amount < 0 的 Bill），返回 map[userID]abs(sum(amount))
 func (m *settlementQueryRepository) AggregateBetBySession(ctx context.Context, sessionID int64) (map[int64]int64, error) {

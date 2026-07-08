@@ -1,4 +1,4 @@
-package domain
+package repository
 
 import "context"
 
@@ -10,6 +10,8 @@ type Transaction interface {
 	RoundSettlementRepo() RoundSettlementRepository
 	RefundAuditRepo() RefundAuditRepository
 	SettlementQueryRepo() SettlementQueryRepository
+	ExceptionRepo() ExceptionRepository
+	PlatformCallLogRepo() PlatformCallLogRepository
 }
 
 // DBRepository 数据库仓储接口，提供事务编排能力。
@@ -20,5 +22,7 @@ type DBRepository interface {
 	RoundSettlementRepo() RoundSettlementRepository
 	RefundAuditRepo() RefundAuditRepository
 	SettlementQueryRepo() SettlementQueryRepository
+	ExceptionRepo() ExceptionRepository
+	PlatformCallLogRepo() PlatformCallLogRepository
 	WithTransaction(ctx context.Context, fn func(tx Transaction) error) error
 }

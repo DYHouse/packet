@@ -11,7 +11,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -20,28 +20,28 @@ import (
 // dbRepo 用于跨表事务方法（同时更新 refund_audit 与 bill_record）的事务编排。
 type RefundService struct {
 	platform        platform.Client
-	dbRepo          domain.DBRepository
-	billRepo        domain.BillRepository
-	refundAuditRepo domain.RefundAuditRepository
+	dbRepo          repository.DBRepository
+	billRepo        repository.BillRepository
+	refundAuditRepo repository.RefundAuditRepository
 	redis           cRedis.RedisClient
 	traceIDGen      *TraceIDGenerator
 	cfg             *config.PlatformConfig
 	lockCfg         *config.LockConfig
 	userIDConvert   *UserIDConvertService
-	callMgr         *PlatformCallManager
+	callMgr         repository.PlatformCallLogRepository
 }
 
 func NewRefundService(
 	platformClient platform.Client,
-	dbRepo domain.DBRepository,
-	billRepo domain.BillRepository,
-	refundAuditRepo domain.RefundAuditRepository,
+	dbRepo repository.DBRepository,
+	billRepo repository.BillRepository,
+	refundAuditRepo repository.RefundAuditRepository,
 	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
 	userIDConvert *UserIDConvertService,
-	callMgr *PlatformCallManager,
+	callMgr repository.PlatformCallLogRepository,
 ) *RefundService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -115,7 +115,7 @@ func (s *RefundService) applyForRefundLocked(ctx context.Context, req *dto.Refun
 	}
 
 	// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
-	if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		return tx.RefundAuditRepo().CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
 	}); err != nil {
 		return "", err
@@ -189,7 +189,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
 		CallType:   model.CallTypeCredit,
 		BizOrderNo: refund.RefundOrderNo,
 		ReqBody:    creditReq,
@@ -204,7 +204,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 			logger.Warn("update refund audit to pending for retry failed", "refund_id", refund.ID, "error", retryErr)
 		}
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
 				Status:       model.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
@@ -216,7 +216,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 	platformTransID := refund.RefundOrderNo
 
 	if callLog != nil {
-		s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: creditResult,
 			Status:   model.CallLogStatusSuccess,
@@ -224,7 +224,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 	}
 
 	// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
-	return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		return tx.RefundAuditRepo().UpdateRefundSuccess(ctx, refund.ID, dto.RefundStatusProcessing, dto.BillStatusSuccess, platformTransID, time.Now())
 	})
 }
@@ -251,7 +251,7 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 		}
 
 		// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
-		return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+		return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 			return tx.RefundAuditRepo().RejectRefund(ctx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
 		})
 	})

@@ -13,7 +13,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -35,28 +35,28 @@ func DefaultCreditRetryConfig() *CreditRetryConfig {
 }
 
 type CreditRetryService struct {
-	billRepo      domain.BillRepository
+	billRepo      repository.BillRepository
 	platform      platform.Client
 	redis         cRedis.RedisClient
 	traceIDGen    *TraceIDGenerator
 	cfg           *config.PlatformConfig
 	lockCfg       *config.LockConfig
 	retryCfg      *CreditRetryConfig
-	exceptionMgr  *ExceptionManager
+	exceptionMgr  repository.ExceptionRepository
 	userIDConvert *UserIDConvertService
-	callMgr       *PlatformCallManager
+	callMgr       repository.PlatformCallLogRepository
 }
 
 func NewCreditRetryService(
-	billRepo domain.BillRepository,
+	billRepo repository.BillRepository,
 	platform platform.Client,
 	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
-	exceptionMgr *ExceptionManager,
+	exceptionMgr repository.ExceptionRepository,
 	userIDConvert *UserIDConvertService,
-	callMgr *PlatformCallManager,
+	callMgr repository.PlatformCallLogRepository,
 ) *CreditRetryService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
@@ -142,7 +142,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
 		CallType:   model.CallTypeCredit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    creditReq,
@@ -155,7 +155,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 	if err != nil {
 		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
 				Status:       model.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
@@ -178,7 +178,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 			logger.Error("create exception record for parse amount failure failed", "bill_id", bill.ID, "error", excErr)
 		}
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:       callLog.ID,
 				RespBody: result,
 				Status:   model.CallLogStatusSuccess,
@@ -188,7 +188,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 	}
 
 	if callLog != nil {
-		s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
 			Status:   model.CallLogStatusSuccess,

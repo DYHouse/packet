@@ -16,8 +16,8 @@ import (
 	repository "github.com/cashparty/backend/game/domain/repository"
 	roomDom "github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/scheduler"
+	settlementApplication "github.com/cashparty/backend/settlement/application"
 	"github.com/cashparty/backend/settlement/dto"
-	settlementService "github.com/cashparty/backend/settlement/service"
 )
 
 type RoomAppService struct {
@@ -27,8 +27,7 @@ type RoomAppService struct {
 	broadcaster        events.Broadcaster
 	publisher          events.RoomEventPublisher
 	scheduler          *scheduler.TimeoutScheduler
-	settlementService  *settlementService.BalanceQueryService
-	balanceService     *settlementService.BalanceService
+	settleAppService   *settlementApplication.SettleAppService
 	resumeGameCallback ResumeGameCallback
 	taskRunner         async.TaskRunner
 }
@@ -48,20 +47,18 @@ func NewRoomAppService(
 	broadcaster events.Broadcaster,
 	publisher events.RoomEventPublisher,
 	scheduler *scheduler.TimeoutScheduler,
-	settlementSvc *settlementService.BalanceQueryService,
-	balanceSvc *settlementService.BalanceService,
+	settleAppSvc *settlementApplication.SettleAppService,
 	taskRunner async.TaskRunner,
 ) *RoomAppService {
 	return &RoomAppService{
-		repo:              repo,
-		dbRepo:            dbRepo,
-		userService:       userService,
-		broadcaster:       broadcaster,
-		publisher:         publisher,
-		scheduler:         scheduler,
-		settlementService: settlementSvc,
-		balanceService:    balanceSvc,
-		taskRunner:        taskRunner,
+		repo:             repo,
+		dbRepo:           dbRepo,
+		userService:      userService,
+		broadcaster:      broadcaster,
+		publisher:        publisher,
+		scheduler:        scheduler,
+		settleAppService: settleAppSvc,
+		taskRunner:       taskRunner,
 	}
 }
 
@@ -186,8 +183,8 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 	if err != nil {
 		return joinResult, nil
 	}
-	if s.balanceService != nil {
-		balanceResult, balErr := s.balanceService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
+	if s.settleAppService != nil {
+		balanceResult, balErr := s.settleAppService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
 			UserID:     userInfo.ID,
 			RoomFee:    meta.RoomFee,
 			MaxPlayers: meta.MaxPlayers,
@@ -303,7 +300,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	// 余额校验：逐个检查排队者，余额不足者移出队列并通知
-	if s.balanceService != nil {
+	if s.settleAppService != nil {
 		queueList, _ := s.repo.GetQueueList(ctx, roomID)
 		for _, q := range queueList {
 			if q == nil {
@@ -313,7 +310,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 			if err != nil {
 				continue
 			}
-			balanceResult, balErr := s.balanceService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
+			balanceResult, balErr := s.settleAppService.CheckBalanceForReady(ctx, &dto.BalanceCheckRequest{
 				UserID:     userInfo.ID,
 				RoomFee:    meta.RoomFee,
 				MaxPlayers: meta.MaxPlayers,
@@ -504,7 +501,7 @@ func (s *RoomAppService) AutoMatchAndJoin(ctx context.Context, req *AutoMatchReq
 		return nil, message.NewError(message.CodeUserNotFound)
 	}
 
-	balance, _, err := s.settlementService.CheckBalance(ctx, userInfo.ID, 0)
+	balance, _, err := s.settleAppService.CheckBalance(ctx, userInfo.ID, 0)
 	if err != nil {
 		logger.Error("failed to check balance", "user_id", req.UserID, "error", err)
 		return nil, message.NewError(message.CodePlatformAPIError)

@@ -5,25 +5,25 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 	"gorm.io/gorm"
 )
 
-// billRepository 实现 domain.BillRepository 接口，负责 BillRecord 的 CRUD 与状态机更新。
+// billRepository 实现 repository.BillRepository 接口，负责 BillRecord 的 CRUD 与状态机更新。
 // 代码由 BillManager 迁移而来，逻辑保持一致。
 type billRepository struct {
 	db *gorm.DB
 }
 
 // NewBillRepository 创建 BillRepository 实例，返回接口类型。
-func NewBillRepository(db *gorm.DB) domain.BillRepository {
+func NewBillRepository(db *gorm.DB) repository.BillRepository {
 	return &billRepository{db: db}
 }
 
-// 编译期断言：确保 billRepository 实现 domain.BillRepository 接口。
-var _ domain.BillRepository = (*billRepository)(nil)
+// 编译期断言：确保 billRepository 实现 repository.BillRepository 接口。
+var _ repository.BillRepository = (*billRepository)(nil)
 
 func (m *billRepository) CreateBill(ctx context.Context, bill *model.BillRecord) error {
 	if err := m.db.WithContext(ctx).Create(bill).Error; err != nil {

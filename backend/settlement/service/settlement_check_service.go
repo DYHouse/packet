@@ -7,23 +7,23 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
 
 type SettlementCheckService struct {
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
-	exceptionMgr        *ExceptionManager
+	billRepo            repository.BillRepository
+	roundSettlementRepo repository.RoundSettlementRepository
+	exceptionMgr        repository.ExceptionRepository
 	refundSvc           *RefundService
 	traceIDGen          *TraceIDGenerator
 }
 
 func NewSettlementCheckService(
-	billRepo domain.BillRepository,
-	roundSettlementRepo domain.RoundSettlementRepository,
-	exceptionMgr *ExceptionManager,
+	billRepo repository.BillRepository,
+	roundSettlementRepo repository.RoundSettlementRepository,
+	exceptionMgr repository.ExceptionRepository,
 	refundSvc *RefundService,
 	traceIDGen *TraceIDGenerator,
 ) *SettlementCheckService {

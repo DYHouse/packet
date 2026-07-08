@@ -12,7 +12,7 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain/reward"
 	"github.com/cashparty/backend/settlement/config"
-	settlementDomain "github.com/cashparty/backend/settlement/domain"
+	settlementRepository "github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -22,30 +22,30 @@ import (
 // 资金移动由 SessionPayoutService 通过 platform.Credit 完成。
 type GameSettleReportingService struct {
 	platform            platform.Client
-	billRepo            settlementDomain.BillRepository
-	roundSettlementRepo settlementDomain.RoundSettlementRepository
-	settlementQueryRepo settlementDomain.SettlementQueryRepository
+	billRepo            settlementRepository.BillRepository
+	roundSettlementRepo settlementRepository.RoundSettlementRepository
+	settlementQueryRepo settlementRepository.SettlementQueryRepository
 	redis               cRedis.RedisClient
 	traceIDGen          *TraceIDGenerator
 	cfg                 *config.PlatformConfig
 	lockCfg             *config.LockConfig
 	userIDConvert       *UserIDConvertService
-	callMgr             *PlatformCallManager
+	callMgr             settlementRepository.PlatformCallLogRepository
 	robotChecker        RobotChecker
 	sessionPayoutSvc    *SessionPayoutService
 }
 
 func NewGameSettleReportingService(
 	platformClient platform.Client,
-	billRepo settlementDomain.BillRepository,
-	roundSettlementRepo settlementDomain.RoundSettlementRepository,
-	settlementQueryRepo settlementDomain.SettlementQueryRepository,
+	billRepo settlementRepository.BillRepository,
+	roundSettlementRepo settlementRepository.RoundSettlementRepository,
+	settlementQueryRepo settlementRepository.SettlementQueryRepository,
 	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
 	userIDConvert *UserIDConvertService,
-	callMgr *PlatformCallManager,
+	callMgr settlementRepository.PlatformCallLogRepository,
 	robotChecker RobotChecker,
 	sessionPayoutSvc *SessionPayoutService,
 ) *GameSettleReportingService {
@@ -269,7 +269,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 		ActualBetAmount: platform.FormatAmount(betAmount),
 	}
 
-	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
 		CallType:   model.CallTypeSettle,
 		BizOrderNo: bizOrderNo,
 		ReqBody:    settleReq,
@@ -288,7 +288,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 		// RPC failed — revert to None so it can be retried
 		_ = s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleProcessing, dto.BillGameSettleNone)
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
 				Status:       model.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
@@ -303,7 +303,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 	}
 
 	if callLog != nil {
-		s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
 			Status:   model.CallLogStatusSuccess,

@@ -160,9 +160,9 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	// 解除 settlement 对 game/model 的反向依赖（Phase 1.1）。
 	userSaverAdapter := adapter.NewUserSaverAdapter(userSvc)
 	userIDConvert := settlementService.NewUserIDConvertService(userSaverAdapter)
-	exceptionMgr := settlementService.NewExceptionManager(db)
+	exceptionMgr := settlementMysqlRepo.NewExceptionRepository(db)
 
-	callMgr := settlementService.NewPlatformCallManager(db)
+	callMgr := settlementMysqlRepo.NewPlatformCallLogRepository(db)
 	creditRetrySvc := settlementService.NewCreditRetryService(billRepo, platformClient, redisClient, traceIDGen, platformCfg, &cfg.Lock, exceptionMgr, userIDConvert, callMgr)
 
 	// Robot checker and settlement-layer virtual balance service (shared with

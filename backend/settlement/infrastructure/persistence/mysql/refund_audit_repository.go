@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 	"gorm.io/gorm"
 )
 
-// refundAuditRepository 实现 domain.RefundAuditRepository 接口，负责 RefundAudit 的 CRUD 与状态机更新。
+// refundAuditRepository 实现 repository.RefundAuditRepository 接口，负责 RefundAudit 的 CRUD 与状态机更新。
 // 代码由 BillManager 迁移而来，逻辑保持一致。
 // 部分跨表事务方法（同时更新 RefundAudit 与 BillRecord）也归属在此仓储下。
 type refundAuditRepository struct {
@@ -19,12 +19,12 @@ type refundAuditRepository struct {
 }
 
 // NewRefundAuditRepository 创建 RefundAuditRepository 实例，返回接口类型。
-func NewRefundAuditRepository(db *gorm.DB) domain.RefundAuditRepository {
+func NewRefundAuditRepository(db *gorm.DB) repository.RefundAuditRepository {
 	return &refundAuditRepository{db: db}
 }
 
-// 编译期断言：确保 refundAuditRepository 实现 domain.RefundAuditRepository 接口。
-var _ domain.RefundAuditRepository = (*refundAuditRepository)(nil)
+// 编译期断言：确保 refundAuditRepository 实现 repository.RefundAuditRepository 接口。
+var _ repository.RefundAuditRepository = (*refundAuditRepository)(nil)
 
 func (m *refundAuditRepository) GetRefundAuditByOrderNo(ctx context.Context, refundOrderNo string) (*model.RefundAudit, error) {
 	var refund model.RefundAudit

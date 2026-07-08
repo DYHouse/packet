@@ -15,6 +15,7 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
 	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
@@ -23,17 +24,17 @@ const defaultMaxConcurrentDeduct = 20
 
 type DeductService struct {
 	platform            platform.Client
-	dbRepo              domain.DBRepository
-	billRepo            domain.BillRepository
-	roundSettlementRepo domain.RoundSettlementRepository
-	refundAuditRepo     domain.RefundAuditRepository
+	dbRepo              repository.DBRepository
+	billRepo            repository.BillRepository
+	roundSettlementRepo repository.RoundSettlementRepository
+	refundAuditRepo     repository.RefundAuditRepository
 	redis               cRedis.RedisClient
 	traceIDGen          *TraceIDGenerator
 	cfg                 *config.PlatformConfig
 	lockCfg             *config.LockConfig
 	creditRetrySvc      *CreditRetryService
 	userIDConvert       *UserIDConvertService
-	callMgr             *PlatformCallManager
+	callMgr             repository.PlatformCallLogRepository
 	maxConcurrentDeduct int
 	robotChecker        RobotChecker
 	virtualBalance      domain.VirtualBalanceService
@@ -41,17 +42,17 @@ type DeductService struct {
 
 func NewDeductService(
 	platformClient platform.Client,
-	dbRepo domain.DBRepository,
-	billRepo domain.BillRepository,
-	roundSettlementRepo domain.RoundSettlementRepository,
-	refundAuditRepo domain.RefundAuditRepository,
+	dbRepo repository.DBRepository,
+	billRepo repository.BillRepository,
+	roundSettlementRepo repository.RoundSettlementRepository,
+	refundAuditRepo repository.RefundAuditRepository,
 	redis cRedis.RedisClient,
 	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
 	creditRetrySvc *CreditRetryService,
 	userIDConvert *UserIDConvertService,
-	callMgr *PlatformCallManager,
+	callMgr repository.PlatformCallLogRepository,
 	robotChecker RobotChecker,
 	virtualBalance domain.VirtualBalanceService,
 ) *DeductService {
@@ -154,7 +155,7 @@ func (s *DeductService) DeductForFirstRound(ctx context.Context, req *dto.FirstR
 
 		// 事务仅包裹 DB 写入片段（短事务原则：禁止事务内 RPC）。
 		// executeBatchDeduct 含 platform.Debit RPC，在事务外执行。
-		if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+		if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 			return tx.RoundSettlementRepo().CreateRoundSettlementAndBills(ctx, settlement, bills)
 		}); err != nil {
 			return fmt.Errorf("create round settlement and bills failed: %w", err)
@@ -298,7 +299,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 		GameName: s.cfg.GameName,
 	}
 
-	callLog, callLogErr := s.callMgr.CreateLog(ctx, &CallLogCreateParams{
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
 		CallType:   model.CallTypeDebit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    debitReq,
@@ -312,7 +313,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
 				Status:       model.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
@@ -332,7 +333,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 		}
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
-			s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:       callLog.ID,
 				RespBody: result,
 				Status:   model.CallLogStatusSuccess,
@@ -346,7 +347,7 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *model.Bil
 	}
 
 	if callLog != nil {
-		s.callMgr.UpdateLog(ctx, &CallLogUpdateParams{
+		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
 			Status:   model.CallLogStatusSuccess,
@@ -385,7 +386,7 @@ func (s *DeductService) handleFirstRoundDeductFailure(ctx context.Context, round
 			}
 
 			// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
-			if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+			if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 				return tx.RefundAuditRepo().CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
 			}); err != nil {
 				logger.Error("create refund audit and update bill refund status failed", "user_id", userID, "batch_id", batchID, "error", err)
@@ -486,7 +487,7 @@ func (s *DeductService) DeductForLaterRound(ctx context.Context, req *dto.LaterR
 
 // DeductForSystemPacket 系统红包扣款。tx 由 SettleAppService 的 WithTransaction 回调传入，
 // 所有 DB 操作（幂等检查 + CreateRoundSettlementAndBills）纳入同一事务。
-func (s *DeductService) DeductForSystemPacket(ctx context.Context, tx domain.Transaction, req *dto.SystemPacketDeductRequest) error {
+func (s *DeductService) DeductForSystemPacket(ctx context.Context, tx repository.Transaction, req *dto.SystemPacketDeductRequest) error {
 	billRepo := tx.BillRepo()
 	exists, err := billRepo.ExistsByRoundAndType(ctx, req.RoundID, dto.BillTypeSystemPacket)
 	if err != nil {
@@ -614,7 +615,7 @@ func (s *DeductService) deductSingleUser(ctx context.Context, req *dto.SingleDed
 
 		// 事务仅包裹 DB 写入片段（短事务原则：禁止事务内 RPC）。
 		// executeSingleDeduct 含 platform.Debit RPC，在事务外执行。
-		if err := s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+		if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 			return tx.RoundSettlementRepo().CreateRoundSettlementAndBills(ctx, settlement, []*model.BillRecord{bill})
 		}); err != nil {
 			return fmt.Errorf("create round settlement and bill failed: %w", err)

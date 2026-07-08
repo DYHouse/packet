@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
 )
 
 type RewardSettler struct {
-	billRepo     domain.BillRepository
+	billRepo     repository.BillRepository
 	traceIDGen   *TraceIDGenerator
 	robotChecker RobotChecker
 }
 
-func NewRewardSettler(billRepo domain.BillRepository, traceIDGen *TraceIDGenerator, robotChecker RobotChecker) *RewardSettler {
+func NewRewardSettler(billRepo repository.BillRepository, traceIDGen *TraceIDGenerator, robotChecker RobotChecker) *RewardSettler {
 	return &RewardSettler{
 		billRepo:     billRepo,
 		traceIDGen:   traceIDGen,
@@ -25,7 +25,7 @@ func NewRewardSettler(billRepo domain.BillRepository, traceIDGen *TraceIDGenerat
 
 // SettleReward 创建系统奖励 BillRecord。tx 由 SettleRound 从 AppService 事务回调传入，
 // 所有 DB 操作纳入同一事务。
-func (s *RewardSettler) SettleReward(ctx context.Context, tx domain.Transaction, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) error {
+func (s *RewardSettler) SettleReward(ctx context.Context, tx repository.Transaction, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) error {
 	if settlement.RewardType == 0 || settlement.RewardAmount == 0 {
 		return nil
 	}

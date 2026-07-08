@@ -14,8 +14,8 @@ import (
 // ============================================================================
 
 // newTestDeductService 构造测试用 DeductService。
-// 使用 dry-run DB 构造 ExceptionManager 和 PlatformCallManager，无需真实 MySQL。
-// creditRetrySvc 为真实实例（CreateDebitFailedException 需调用 ExceptionManager.Create）。
+// 使用接口桩件构造 ExceptionRepository 和 PlatformCallLogRepository，无需真实 MySQL。
+// creditRetrySvc 为真实实例（CreateDebitFailedException 需调用 ExceptionRepository.Create）。
 func newTestDeductService(t *testing.T, billRepo *mockBillRepo, roundSettlementRepo *mockRoundSettlementRepo, robotChecker *mockRobotChecker, virtualBalance *mockVirtualBalance, platformClient *mockPlatformClient) *DeductService {
 	t.Helper()
 	dbRepo := &mockDBRepository{
@@ -23,8 +23,8 @@ func newTestDeductService(t *testing.T, billRepo *mockBillRepo, roundSettlementR
 		roundSettlementRepo: roundSettlementRepo,
 	}
 	userConvert := newTestUserIDConvert(&domain.PlatformUser{UserID: "platform_user_123"}, nil)
-	callMgr := newTestCallMgr(t)
-	exceptionMgr := newTestExceptionMgr(t)
+	callMgr := newTestCallLogRepo()
+	exceptionMgr := newTestExceptionRepo()
 	creditRetrySvc := NewCreditRetryService(billRepo, platformClient, nil, newTestTraceIDGen(), nil, nil, exceptionMgr, userConvert, callMgr)
 	return NewDeductService(
 		platformClient, dbRepo, billRepo, roundSettlementRepo, nil, nil,

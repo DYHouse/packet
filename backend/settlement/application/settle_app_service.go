@@ -3,7 +3,7 @@ package application
 import (
 	"context"
 
-	"github.com/cashparty/backend/settlement/domain"
+	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
 )
@@ -12,13 +12,15 @@ import (
 // 各子 Service 的事务边界。外部调用方（如 game 模块的 GameEventHandler）应通过本
 // facade 调用 settlement 用例，不直接依赖 settlement/service 下的具体 Service。
 //
-// 事务编排遵循 GAME_SERVICE_ARCHITECTURE_REVIEW.md §13.1 #5：
-// Repository 不开事务，由 AppService 通过 dbRepo.WithTransaction 编排。
+// 事务编排策略遵循：
+//   - §13.1 #5：Repository 不开事务，由 AppService 通过 dbRepo.WithTransaction 编排。
+//   - §5.4 短事务原则：禁止事务内 RPC，含 RPC 的用例由 Service 对 DB 写入片段开事务。
+//
 // 纯 DB 写入用例（SettleRound、DistributePenaltyFromPlatform、DeductForSystemPacket）
 // 在此层开启事务并向下传递 tx；含 RPC 的用例由 Service 通过 dbRepo.WithTransaction
-// 对 DB 写入片段开事务（短事务原则：禁止事务内 RPC）。
+// 对 DB 写入片段开事务。
 type SettleAppService struct {
-	dbRepo                   domain.DBRepository
+	dbRepo                   repository.DBRepository
 	roundSettleService       *service.RoundSettleService
 	penaltySettlementService *service.PenaltySettlementService
 	deductService            *service.DeductService
@@ -29,7 +31,7 @@ type SettleAppService struct {
 // NewSettleAppService 构造 SettleAppService 实例。
 // dbRepo 提供事务编排能力，各子 Service 由 bootstrap 创建并注入。
 func NewSettleAppService(
-	dbRepo domain.DBRepository,
+	dbRepo repository.DBRepository,
 	roundSettleService *service.RoundSettleService,
 	penaltySettlementService *service.PenaltySettlementService,
 	deductService *service.DeductService,
@@ -50,7 +52,7 @@ func NewSettleAppService(
 // 委托 GameSettleReportingService 完成会话级结算。
 // 纯 DB 写入（creditRound + rewardSettler + 标记 Credited），在 AppService 层开启事务。
 func (s *SettleAppService) SettleRound(ctx context.Context, req *dto.RoundSettleRequest) error {
-	return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		return s.roundSettleService.SettleRound(ctx, tx, req)
 	})
 }
@@ -63,7 +65,8 @@ func (s *SettleAppService) SettleGame(ctx context.Context, sessionID int64) erro
 }
 
 // DeductPenaltyToPlatform 编排罚款扣款用例：从用户扣款上交平台。
-// 含 platform.Debit RPC，事务由 Service 内部对 CreateBillsPair 片段编排。
+// 纯转发到 penaltySettlementService.DeductPenaltyToPlatform，含 platform.Debit RPC，
+// 事务由 Service 内部对 CreateBillsPair 片段编排（§5.4 短事务原则）。
 func (s *SettleAppService) DeductPenaltyToPlatform(ctx context.Context, req *dto.PenaltyDeductRequest) error {
 	return s.penaltySettlementService.DeductPenaltyToPlatform(ctx, req)
 }
@@ -71,7 +74,7 @@ func (s *SettleAppService) DeductPenaltyToPlatform(ctx context.Context, req *dto
 // DistributePenaltyFromPlatform 编排罚款分配用例：将平台罚款分配给指定接收方。
 // 纯 DB 写入（批量 CreateBills），在 AppService 层开启事务。
 func (s *SettleAppService) DistributePenaltyFromPlatform(ctx context.Context, req *dto.PenaltyDistributeRequest) error {
-	return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		return s.penaltySettlementService.DistributePenaltyFromPlatform(ctx, tx, req)
 	})
 }
@@ -91,19 +94,19 @@ func (s *SettleAppService) DeductForLaterRound(ctx context.Context, req *dto.Lat
 // DeductForSystemPacket 编排系统红包扣款用例：平台账户扣款。
 // 纯 DB 写入（CreateRoundSettlementAndBills），在 AppService 层开启事务。
 func (s *SettleAppService) DeductForSystemPacket(ctx context.Context, req *dto.SystemPacketDeductRequest) error {
-	return s.dbRepo.WithTransaction(ctx, func(tx domain.Transaction) error {
+	return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		return s.deductService.DeductForSystemPacket(ctx, tx, req)
 	})
 }
 
 // CheckBalance 查询用户余额是否满足所需金额。
-// 只读用例，无需事务，直接转发。
+// 纯转发到 balanceQueryService.CheckBalance，只读用例，无需事务。
 func (s *SettleAppService) CheckBalance(ctx context.Context, userID int64, requiredAmount int64) (int64, bool, error) {
 	return s.balanceQueryService.CheckBalance(ctx, userID, requiredAmount)
 }
 
 // CheckBalanceForReady 检查用户余额是否满足开局所需费用。
-// 只读用例，无需事务，直接转发。
+// 纯转发到 balanceService.CheckBalanceForReady，只读用例，无需事务。
 func (s *SettleAppService) CheckBalanceForReady(ctx context.Context, req *dto.BalanceCheckRequest) (*dto.BalanceCheckResult, error) {
 	return s.balanceService.CheckBalanceForReady(ctx, req)
 }
