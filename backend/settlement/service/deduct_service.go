@@ -503,6 +503,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, tx repository
 			roundTraceID = s.traceIDGen.GenerateRoundTraceID(req.SessionID, req.RoundNo)
 		}
 
+		now := time.Now()
 		settlement := &domain.RoundSettlement{
 			RoundTraceID:       roundTraceID,
 			RoomID:             req.RoomID,
@@ -513,6 +514,7 @@ func (s *DeductService) DeductForSystemPacket(ctx context.Context, tx repository
 			DeductAmount:       req.TotalAmount,
 			DeductUserCount:    1,
 			DeductSuccessCount: 1,
+			DeductedAt:         &now,
 			Status:             domain.RoundStatusDeducted,
 		}
 
