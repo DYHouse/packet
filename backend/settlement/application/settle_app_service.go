@@ -24,7 +24,6 @@ type SettleAppService struct {
 	roundSettleService       *service.RoundSettleService
 	penaltySettlementService *service.PenaltySettlementService
 	deductService            *service.DeductService
-	balanceQueryService      *service.BalanceQueryService
 	balanceService           *service.BalanceService
 }
 
@@ -35,7 +34,6 @@ func NewSettleAppService(
 	roundSettleService *service.RoundSettleService,
 	penaltySettlementService *service.PenaltySettlementService,
 	deductService *service.DeductService,
-	balanceQueryService *service.BalanceQueryService,
 	balanceService *service.BalanceService,
 ) *SettleAppService {
 	return &SettleAppService{
@@ -43,7 +41,6 @@ func NewSettleAppService(
 		roundSettleService:       roundSettleService,
 		penaltySettlementService: penaltySettlementService,
 		deductService:            deductService,
-		balanceQueryService:      balanceQueryService,
 		balanceService:           balanceService,
 	}
 }
@@ -100,9 +97,9 @@ func (s *SettleAppService) DeductForSystemPacket(ctx context.Context, req *dto.S
 }
 
 // CheckBalance 查询用户余额是否满足所需金额。
-// 纯转发到 balanceQueryService.CheckBalance，只读用例，无需事务。
+// 纯转发到 balanceService.CheckBalance，只读用例，无需事务。
 func (s *SettleAppService) CheckBalance(ctx context.Context, userID int64, requiredAmount int64) (int64, bool, error) {
-	return s.balanceQueryService.CheckBalance(ctx, userID, requiredAmount)
+	return s.balanceService.CheckBalance(ctx, userID, requiredAmount)
 }
 
 // CheckBalanceForReady 检查用户余额是否满足开局所需费用。

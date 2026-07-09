@@ -296,11 +296,8 @@ func (m *mockVirtualBalance) GetBalance(_ context.Context, _ int64) (int64, erro
 	return m.getBalanceRes, nil
 }
 
-func (m *mockVirtualBalance) SyncToDB(_ context.Context) error               { return nil }
-func (m *mockVirtualBalance) AddToRobotSet(_ context.Context, _ int64) error { return nil }
-func (m *mockVirtualBalance) IsRobot(_ context.Context, _ int64) (bool, error) {
-	return false, nil
-}
+func (m *mockVirtualBalance) SyncToDB(_ context.Context) error                     { return nil }
+func (m *mockVirtualBalance) AddToRobotSet(_ context.Context, _ int64) error       { return nil }
 func (m *mockVirtualBalance) SetBalance(_ context.Context, _ int64, _ int64) error { return nil }
 
 // mockRefundAuditRepo 退款审核仓储桩件。

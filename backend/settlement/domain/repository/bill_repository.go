@@ -16,8 +16,6 @@ type BillRepository interface {
 	UpdateBillStatus(ctx context.Context, billID int64, fromStatus, toStatus int, errMsg string) error
 	// UpdateBillSuccess 乐观锁更新账单为成功状态并记录余额
 	UpdateBillSuccess(ctx context.Context, billID int64, fromStatus int, balanceBefore, balanceAfter int64) error
-	// GetBillByTraceID 根据 round_trace_id 查询账单
-	GetBillByTraceID(ctx context.Context, traceID string) (*domain.BillRecord, error)
 	// GetBillByID 根据主键查询账单
 	GetBillByID(ctx context.Context, billID int64) (*domain.BillRecord, error)
 	// ExistsByRoundAndType 检查指定回合与类型的账单是否已存在（幂等检查）
@@ -28,8 +26,6 @@ type BillRepository interface {
 	GetBillByTraceTypeAndUser(ctx context.Context, roundTraceID string, billType int, userID int64) (*domain.BillRecord, error)
 	// GetBillsByTraceID 根据回合 trace id 查询全部账单
 	GetBillsByTraceID(ctx context.Context, traceID string) ([]*domain.BillRecord, error)
-	// GetBillsByUserID 分页查询用户账单（按创建时间倒序）
-	GetBillsByUserID(ctx context.Context, userID int64, limit, offset int) ([]*domain.BillRecord, error)
 	// GetBillsByRoundID 查询指定回合全部账单（按创建时间正序）
 	GetBillsByRoundID(ctx context.Context, roundID int64) ([]*domain.BillRecord, error)
 	// CreateBills 批量创建账单。事务边界由 AppService 通过 DBRepository.WithTransaction 编排，

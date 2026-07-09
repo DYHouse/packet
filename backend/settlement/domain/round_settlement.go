@@ -57,18 +57,6 @@ type RoundSettlement struct {
 	UpdatedAt          time.Time
 }
 
-// CanSettle 校验当前回合结算是否可进入派奖阶段。
-// 仅 Deducted 状态（扣款完成）允许进入派奖；其他状态拒绝。
-func (r *RoundSettlement) CanSettle() bool {
-	return r.Status == RoundStatusDeducted
-}
-
-// IsTerminalStatus 校验当前回合结算是否处于终态（不再发生状态流转）。
-// Credited 与 Failed 为终态。
-func (r *RoundSettlement) IsTerminalStatus() bool {
-	return r.Status == RoundStatusCredited || r.Status == RoundStatusFailed
-}
-
 // TransitionTo 校验状态转换的合法性，作为状态机守卫方法。
 // 仅校验不修改状态；调用方校验通过后自行更新 Status 字段。
 // 合法转换返回 nil，非法转换返回 error 描述当前状态与目标状态。

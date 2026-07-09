@@ -381,8 +381,6 @@ type mockVirtualBalance struct {
 	getBalanceErr error
 	syncToDBErr   error
 	addToRobotErr error
-	isRobotResult bool
-	isRobotErr    error
 	setBalanceErr error
 
 	deductCalls     int
@@ -422,9 +420,6 @@ func (m *mockVirtualBalance) GetBalance(_ context.Context, _ int64) (int64, erro
 
 func (m *mockVirtualBalance) SyncToDB(_ context.Context) error               { return m.syncToDBErr }
 func (m *mockVirtualBalance) AddToRobotSet(_ context.Context, _ int64) error { return m.addToRobotErr }
-func (m *mockVirtualBalance) IsRobot(_ context.Context, _ int64) (bool, error) {
-	return m.isRobotResult, m.isRobotErr
-}
 func (m *mockVirtualBalance) SetBalance(_ context.Context, _ int64, _ int64) error {
 	return m.setBalanceErr
 }
@@ -564,60 +559,12 @@ func (m *mockSettlementQueryRepo) IsPlayerGameSettled(_ context.Context, _ int64
 
 // mockExceptionRepo 异常记录仓储桩件，实现 repository.ExceptionRepository。
 // Create 默认返回 nil error，使调用方继续执行后续 DB 操作（如 UpdateBillExceptionID）。
-// GetByID / GetByStatus / UpdateStatus 为 Phase 7 Task 7.3 新增方法的桩件，
-// 默认返回零值/空切片/nil error，可按需扩展为可配置返回值。
 type mockExceptionRepo struct {
 	createErr error
-
-	// GetByID 可配置返回值
-	getByIDResult *domain.ExceptionRecord
-	getByIDErr    error
-
-	// GetByStatus 可配置返回值
-	getByStatusResult []*domain.ExceptionRecord
-	getByStatusErr    error
-
-	// UpdateStatus 可配置返回值
-	updateStatusErr error
-
-	// 调用计数（便于后续测试断言）
-	getByIDCalls      int
-	getByStatusCalls  int
-	updateStatusCalls int
-
-	// 记录最后一次 UpdateStatus 调用参数
-	lastUpdateStatusID           int64
-	lastUpdateStatusNewStatus    domain.ExceptionStatus
-	lastUpdateStatusHandleType   domain.HandleType
-	lastUpdateStatusHandleRemark string
-	lastUpdateStatusHandledBy    int64
 }
 
 func (m *mockExceptionRepo) Create(_ context.Context, _ *domain.ExceptionRecord) error {
 	return m.createErr
-}
-
-func (m *mockExceptionRepo) GetByID(_ context.Context, _ int64) (*domain.ExceptionRecord, error) {
-	m.getByIDCalls++
-	return m.getByIDResult, m.getByIDErr
-}
-
-func (m *mockExceptionRepo) GetByStatus(_ context.Context, _ domain.ExceptionStatus, _ int, _ int) ([]*domain.ExceptionRecord, error) {
-	m.getByStatusCalls++
-	if m.getByStatusResult != nil {
-		return m.getByStatusResult, m.getByStatusErr
-	}
-	return []*domain.ExceptionRecord{}, m.getByStatusErr
-}
-
-func (m *mockExceptionRepo) UpdateStatus(_ context.Context, id int64, newStatus domain.ExceptionStatus, handleType domain.HandleType, handleRemark string, handledBy int64) error {
-	m.updateStatusCalls++
-	m.lastUpdateStatusID = id
-	m.lastUpdateStatusNewStatus = newStatus
-	m.lastUpdateStatusHandleType = handleType
-	m.lastUpdateStatusHandleRemark = handleRemark
-	m.lastUpdateStatusHandledBy = handledBy
-	return m.updateStatusErr
 }
 
 // mockPlatformCallLogRepo 平台调用日志仓储桩件，实现 repository.PlatformCallLogRepository。
@@ -636,14 +583,6 @@ func (m *mockPlatformCallLogRepo) CreateLog(_ context.Context, _ *dto.CallLogCre
 
 func (m *mockPlatformCallLogRepo) UpdateLog(_ context.Context, _ *dto.CallLogUpdateParams) error {
 	return m.updateLogErr
-}
-
-func (m *mockPlatformCallLogRepo) GetLogByID(_ context.Context, _ int64) (*domain.PlatformCallLog, error) {
-	return nil, nil
-}
-
-func (m *mockPlatformCallLogRepo) GetFailedLogs(_ context.Context, _ int) ([]*domain.PlatformCallLog, error) {
-	return nil, nil
 }
 
 // newTestExceptionRepo 创建异常记录仓储桩件。

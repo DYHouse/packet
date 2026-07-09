@@ -92,37 +92,6 @@ func TestTraceIDGenerator_GenerateBatchID(t *testing.T) {
 	}
 }
 
-// TestTraceIDGenerator_GenerateReconcileNo 测试对账单号格式与随机性。
-func TestTraceIDGenerator_GenerateReconcileNo(t *testing.T) {
-	gen := NewTraceIDGenerator(&stubIDGenerator{id: 12345, nodeID: 1})
-
-	got, err := gen.GenerateReconcileNo()
-	if err != nil {
-		t.Fatalf("GenerateReconcileNo failed: %v", err)
-	}
-
-	// 格式校验：REC_<14位时间戳>_<4位随机数>
-	if !strings.HasPrefix(got, "REC_") {
-		t.Errorf("GenerateReconcileNo = %q, want prefix %q", got, "REC_")
-	}
-	parts := strings.Split(got, "_")
-	if len(parts) != 3 {
-		t.Errorf("GenerateReconcileNo = %q, want 3 parts", got)
-	}
-	if len(parts[1]) != 14 {
-		t.Errorf("timestamp part = %q, want 14 digits", parts[1])
-	}
-	if len(parts[2]) != 4 {
-		t.Errorf("random part = %q, want 4 digits", parts[2])
-	}
-
-	// 多次调用应该产生不同的随机数
-	got2, _ := gen.GenerateReconcileNo()
-	if got == got2 {
-		t.Errorf("expected different random parts, got identical %q", got)
-	}
-}
-
 // TestTraceIDGenerator_GenerateRefundOrderNo 测试确定性方法。
 func TestTraceIDGenerator_GenerateRefundOrderNo(t *testing.T) {
 	gen := NewTraceIDGenerator(&stubIDGenerator{id: 12345, nodeID: 1})
@@ -142,54 +111,5 @@ func TestTraceIDGenerator_GenerateExceptionNo(t *testing.T) {
 	want := "EXC_1001_TIMEOUT"
 	if got != want {
 		t.Errorf("GenerateExceptionNo = %q, want %q", got, want)
-	}
-}
-
-// TestParseRoundTraceID 测试 RoundTraceID 解析。
-func TestParseRoundTraceID(t *testing.T) {
-	tests := []struct {
-		input     string
-		wantSess  int64
-		wantRound int
-		wantErr   bool
-	}{
-		{"RT_123_1", 123, 1, false},
-		{"RT_456_10", 456, 10, false},
-		{"RT_0_0", 0, 0, false},
-		{"INVALID", 0, 0, true},
-		{"RT_abc_1", 0, 0, true},
-		{"RT_123_abc", 0, 0, true},
-		{"RT_123", 0, 0, true},
-		{"XX_123_1", 0, 0, true},
-	}
-
-	for _, tt := range tests {
-		sess, round, err := ParseRoundTraceID(tt.input)
-		if tt.wantErr {
-			if err == nil {
-				t.Errorf("ParseRoundTraceID(%q) expected error, got nil", tt.input)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("ParseRoundTraceID(%q) unexpected error: %v", tt.input, err)
-			continue
-		}
-		if sess != tt.wantSess {
-			t.Errorf("ParseRoundTraceID(%q) session = %d, want %d", tt.input, sess, tt.wantSess)
-		}
-		if round != tt.wantRound {
-			t.Errorf("ParseRoundTraceID(%q) round = %d, want %d", tt.input, round, tt.wantRound)
-		}
-	}
-}
-
-// TestExtractSessionIDFromRoundTraceID 测试从 RoundTraceID 提取 sessionID。
-func TestExtractSessionIDFromRoundTraceID(t *testing.T) {
-	if got := ExtractSessionIDFromRoundTraceID("RT_123_1"); got != 123 {
-		t.Errorf("ExtractSessionIDFromRoundTraceID = %d, want 123", got)
-	}
-	if got := ExtractSessionIDFromRoundTraceID("INVALID"); got != 0 {
-		t.Errorf("ExtractSessionIDFromRoundTraceID = %d, want 0 for invalid input", got)
 	}
 }

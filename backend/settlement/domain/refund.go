@@ -26,7 +26,6 @@ const (
 // RefundType 退款类型枚举值，标识退款的业务触发原因。
 const (
 	RefundTypeFirstRoundFail = 1
-	RefundTypeOther          = 2
 )
 
 // RefundAudit 退款审核聚合根，表示一笔退款的审核与执行记录。
@@ -57,24 +56,6 @@ type RefundAudit struct {
 	ErrorMessage    string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
-}
-
-// CanApprove 校验当前退款审核是否可执行审批操作。
-// 仅 Pending 状态的退款审核允许审批；其他状态拒绝。
-func (r *RefundAudit) CanApprove() bool {
-	return r.Status == RefundStatusPending
-}
-
-// CanRetry 校验当前退款审核是否可重试（回退到 Pending）。
-// 仅 Processing 状态且执行失败的退款审核允许重试回退。
-func (r *RefundAudit) CanRetry() bool {
-	return r.Status == RefundStatusProcessing
-}
-
-// IsTerminalStatus 校验当前退款审核是否处于终态（不再发生状态流转）。
-// Refunded 与 Rejected 为终态。
-func (r *RefundAudit) IsTerminalStatus() bool {
-	return r.Status == RefundStatusRefunded || r.Status == RefundStatusRejected
 }
 
 // TransitionTo 校验状态转换的合法性，作为状态机守卫方法。

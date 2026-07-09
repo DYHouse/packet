@@ -14,8 +14,4 @@ type PlatformCallLogRepository interface {
 	CreateLog(ctx context.Context, params *dto.CallLogCreateParams) (*domain.PlatformCallLog, error)
 	// UpdateLog 更新平台调用日志。
 	UpdateLog(ctx context.Context, params *dto.CallLogUpdateParams) error
-	// GetLogByID 根据 ID 查询平台调用日志。
-	GetLogByID(ctx context.Context, id int64) (*domain.PlatformCallLog, error)
-	// GetFailedLogs 查询失败的平台调用日志。
-	GetFailedLogs(ctx context.Context, limit int) ([]*domain.PlatformCallLog, error)
 }

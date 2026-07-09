@@ -445,39 +445,6 @@ func (s *DeductService) getExistingFirstRoundResult(ctx context.Context, roundID
 	return result, nil
 }
 
-func (s *DeductService) getBatchDeductResult(ctx context.Context, batchID string) (*dto.FirstRoundDeductResult, error) {
-	bills, err := s.billRepo.GetBillsByBatchID(ctx, batchID)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &dto.FirstRoundDeductResult{
-		BatchID:        batchID,
-		SuccessCount:   0,
-		FailedCount:    0,
-		SuccessPlayers: make([]int64, 0),
-		FailedPlayers:  make([]*dto.FailedPlayerInfo, 0),
-	}
-
-	for _, bill := range bills {
-		if bill.Status == domain.BillStatusSuccess {
-			result.SuccessCount++
-			result.SuccessPlayers = append(result.SuccessPlayers, bill.UserID)
-		} else if bill.Status == domain.BillStatusFailed {
-			result.FailedCount++
-			result.FailedPlayers = append(result.FailedPlayers, &dto.FailedPlayerInfo{
-				UserID:    bill.UserID,
-				ErrorCode: "DEDUCT_FAILED",
-				ErrorMsg:  bill.ErrorMessage,
-			})
-		}
-	}
-
-	result.AllSuccess = result.FailedCount == 0
-
-	return result, nil
-}
-
 func (s *DeductService) DeductForLaterRound(ctx context.Context, req *dto.LaterRoundDeductRequest) error {
 	deductReq := &dto.SingleDeductRequest{
 		RoomID:       req.RoomID,

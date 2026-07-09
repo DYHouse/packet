@@ -66,11 +66,9 @@ type Container struct {
 	UserService          *application.UserService
 	RoundSettleSvc       *settlementService.RoundSettleService
 	PenaltySettlementSvc *settlementService.PenaltySettlementService
-	BalanceQuerySvc      *settlementService.BalanceQueryService
 	DeductSvc            *settlementService.DeductService
 	RefundApplySvc       *settlementService.RefundApplyService
 	RefundExecuteSvc     *settlementService.RefundExecuteService
-	RefundQuerySvc       *settlementService.RefundQueryService
 	BalanceService       *settlementService.BalanceService
 	// SettleAppSvc 是 settlement 模块的 Application 层入口（Phase 3.5），
 	// 供外部调用方（如 GameEventConsumer）通过 facade 调用 settlement 用例，
@@ -127,7 +125,6 @@ func NewContainer(
 	kafkaProducer kafka.KafkaProducer,
 	roundSettleSvc *settlementService.RoundSettleService,
 	penaltySettlementSvc *settlementService.PenaltySettlementService,
-	balanceQuerySvc *settlementService.BalanceQueryService,
 	packetGenerator *algorithm.PacketGenerator,
 	roomRepo repository.RoomRepository,
 	platformClient platform.Client,
@@ -143,7 +140,6 @@ func NewContainer(
 	deductSvc *settlementService.DeductService,
 	refundApplySvc *settlementService.RefundApplyService,
 	refundExecuteSvc *settlementService.RefundExecuteService,
-	refundQuerySvc *settlementService.RefundQueryService,
 	rewardSettler *settlementService.RewardSettler,
 	callMgr settlementRepository.PlatformCallLogRepository,
 	gameSettleSvc *settlementService.GameSettleReportingService,
@@ -200,11 +196,9 @@ func NewContainer(
 		GrabService:            grabService,
 		RoundSettleSvc:         roundSettleSvc,
 		PenaltySettlementSvc:   penaltySettlementSvc,
-		BalanceQuerySvc:        balanceQuerySvc,
 		DeductSvc:              deductSvc,
 		RefundApplySvc:         refundApplySvc,
 		RefundExecuteSvc:       refundExecuteSvc,
-		RefundQuerySvc:         refundQuerySvc,
 		PacketGenerator:        packetGenerator,
 		UserLimiter:            userLimiter,
 		RateLimiterCfg:         rateLimiterCfg,
@@ -247,7 +241,6 @@ func (c *Container) InitAppServices() {
 		c.RoundSettleSvc,
 		c.PenaltySettlementSvc,
 		c.DeductSvc,
-		c.BalanceQuerySvc,
 		c.BalanceService,
 	)
 

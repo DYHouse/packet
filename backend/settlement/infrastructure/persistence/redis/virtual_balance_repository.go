@@ -140,11 +140,6 @@ func (s *VirtualBalanceRepository) AddToRobotSet(ctx context.Context, userID int
 	return s.redis.SAdd(ctx, rediskeys.RobotUserIDsKey(), converter.FormatID(userID)).Err()
 }
 
-// IsRobot 判断是否为机器人
-func (s *VirtualBalanceRepository) IsRobot(ctx context.Context, userID int64) (bool, error) {
-	return s.redis.SIsMember(ctx, rediskeys.RobotUserIDsKey(), converter.FormatID(userID)).Result()
-}
-
 // SetBalance 设置虚拟余额（初始化时使用）
 func (s *VirtualBalanceRepository) SetBalance(ctx context.Context, userID int64, balance int64) error {
 	return s.redis.Set(ctx, rediskeys.RobotVirtualBalanceKey(userID), balance, 0).Err()

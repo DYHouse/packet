@@ -123,8 +123,3 @@ type BalanceCheckRequest struct {
 	MaxPlayers int
 	MaxRounds  int
 }
-
-type GameSettleRequest struct {
-	RoomID    int64
-	SessionID int64
-}

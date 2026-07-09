@@ -82,15 +82,6 @@ func (m *billRepository) UpdateBillSuccess(ctx context.Context, billID int64, fr
 	return nil
 }
 
-func (m *billRepository) GetBillByTraceID(ctx context.Context, traceID string) (*domain.BillRecord, error) {
-	var bill model.BillRecord
-	err := m.db.WithContext(ctx).Where("round_trace_id = ?", traceID).First(&bill).Error
-	if err != nil {
-		return nil, err
-	}
-	return billModelToDomain(&bill), nil
-}
-
 func (m *billRepository) GetBillByID(ctx context.Context, billID int64) (*domain.BillRecord, error) {
 	var bill model.BillRecord
 	err := m.db.WithContext(ctx).Where("id = ?", billID).First(&bill).Error
@@ -130,19 +121,6 @@ func (m *billRepository) GetBillByTraceTypeAndUser(ctx context.Context, roundTra
 func (m *billRepository) GetBillsByTraceID(ctx context.Context, traceID string) ([]*domain.BillRecord, error) {
 	var bills []*model.BillRecord
 	err := m.db.WithContext(ctx).Where("round_trace_id = ?", traceID).Find(&bills).Error
-	if err != nil {
-		return nil, err
-	}
-	return billModelSliceToDomain(bills), nil
-}
-
-func (m *billRepository) GetBillsByUserID(ctx context.Context, userID int64, limit, offset int) ([]*domain.BillRecord, error) {
-	var bills []*model.BillRecord
-	err := m.db.WithContext(ctx).Where("user_id = ?", userID).
-		Order("created_at desc").
-		Limit(limit).
-		Offset(offset).
-		Find(&bills).Error
 	if err != nil {
 		return nil, err
 	}

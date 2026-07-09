@@ -37,27 +37,6 @@ const (
 	DeductSceneSystemPacket    = 3
 )
 
-// ReconcileStatus 对账状态枚举值，标识账单的对账结果。
-const (
-	ReconcileStatusPending  = 0
-	ReconcileStatusSuccess  = 1
-	ReconcileStatusAbnormal = 2
-)
-
-// ReconcileType 对账类型枚举值，标识对账的触发方式。
-const (
-	ReconcileTypeScheduled = 1
-	ReconcileTypeAbnormal  = 2
-	ReconcileTypeManual    = 3
-)
-
-// ReconcileScope 对账范围枚举值，标识对账的粒度。
-const (
-	ReconcileScopeSession = 1
-	ReconcileScopeRound   = 2
-	ReconcileScopeBill    = 3
-)
-
 // GameSettleStatus 游戏级结算状态枚举值（记录在 RoundSettlement 上）。
 const (
 	GameSettleStatusNone     = 0
@@ -112,18 +91,6 @@ type BillRecord struct {
 	IsRobot          bool
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
-}
-
-// CanRefund 校验当前账单是否可发起退款。
-// 仅 Success 状态的账单允许退款；Processing/Failed/Refunded 状态拒绝退款。
-func (b *BillRecord) CanRefund() bool {
-	return b.Status == BillStatusSuccess
-}
-
-// IsTerminalStatus 校验当前账单是否处于终态（不再发生状态流转）。
-// Refunded 为终态；Processing/Success/Failed 均非终态（Success 可退款，Failed 可重试）。
-func (b *BillRecord) IsTerminalStatus() bool {
-	return b.Status == BillStatusRefunded
 }
 
 // TransitionTo 校验状态转换的合法性，作为状态机守卫方法。

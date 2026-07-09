@@ -37,7 +37,6 @@
 //   - RefundExecuteService：负责退款审批（ApproveRefund）、驳回（RejectRefund）与执行（executeRefund）。
 //     跨表事务（refund_audit + bill_record）由 Service 内部通过 dbRepo.WithTransaction 编排。
 //     审批含 platform.Credit RPC，采用 Processing 中间状态 + BizOrderNo 幂等兜底。
-//   - RefundQueryService：负责退款记录查询（GetRefundAuditByOrderNo/GetRefundsByStatus），只读用例，无需事务。
 //
 // # 5. 重试与对账域
 //
@@ -49,8 +48,8 @@
 //
 // # 6. 查询域
 //
-//   - BalanceQueryService：负责余额查询（CheckBalance）和账单查询，只读用例，无需事务。
-//   - BalanceService：负责开局余额检查（CheckBalanceForReady），只读用例，无需事务。
+//   - BalanceService：负责余额校验与查询（CheckBalanceForReady 开局校验、
+//     CheckUserBalance 真实玩家余额查询、CheckBalance 通用余额校验），只读用例，无需事务。
 //
 // # 7. 基础设施支持
 //

@@ -18,8 +18,6 @@ type VirtualBalanceService interface {
 	SyncToDB(ctx context.Context) error
 	// AddToRobotSet 添加到机器人ID集合（供RobotChecker使用）
 	AddToRobotSet(ctx context.Context, userID int64) error
-	// IsRobot 判断是否为机器人
-	IsRobot(ctx context.Context, userID int64) (bool, error)
 	// SetBalance 设置虚拟余额（初始化时使用）
 	SetBalance(ctx context.Context, userID int64, balance int64) error
 }

@@ -78,32 +78,6 @@ func (r *PlatformCallLogRepositoryImpl) UpdateLog(ctx context.Context, params *d
 		Updates(updates).Error
 }
 
-// GetLogByID 根据 ID 查询平台调用日志。
-// 行为与原 service 层实现完全一致。
-func (r *PlatformCallLogRepositoryImpl) GetLogByID(ctx context.Context, id int64) (*domain.PlatformCallLog, error) {
-	var log model.PlatformCallLog
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&log).Error
-	if err != nil {
-		return nil, err
-	}
-	return platformCallLogModelToDomain(&log), nil
-}
-
-// GetFailedLogs 查询失败的平台调用日志。
-// 行为与原 service 层实现完全一致。
-func (r *PlatformCallLogRepositoryImpl) GetFailedLogs(ctx context.Context, limit int) ([]*domain.PlatformCallLog, error) {
-	var logs []*model.PlatformCallLog
-	err := r.db.WithContext(ctx).
-		Where("status = ?", domain.CallLogStatusFailed).
-		Order("id desc").
-		Limit(limit).
-		Find(&logs).Error
-	if err != nil {
-		return nil, err
-	}
-	return platformCallLogModelSliceToDomain(logs), nil
-}
-
 // platformCallLogModelToDomain 将 model 层平台调用日志转换为 domain 层聚合根。
 func platformCallLogModelToDomain(m *model.PlatformCallLog) *domain.PlatformCallLog {
 	if m == nil {
@@ -123,18 +97,6 @@ func platformCallLogModelToDomain(m *model.PlatformCallLog) *domain.PlatformCall
 		CreatedAt:    m.CreatedAt,
 		UpdatedAt:    m.UpdatedAt,
 	}
-}
-
-// platformCallLogModelSliceToDomain 批量转换 model 切片为 domain 切片。
-func platformCallLogModelSliceToDomain(ms []*model.PlatformCallLog) []*domain.PlatformCallLog {
-	if ms == nil {
-		return nil
-	}
-	result := make([]*domain.PlatformCallLog, 0, len(ms))
-	for _, m := range ms {
-		result = append(result, platformCallLogModelToDomain(m))
-	}
-	return result
 }
 
 // 编译时接口实现校验

@@ -188,44 +188,6 @@ func (m *refundAuditRepository) CreateRefundAuditAndUpdateBillRefundStatus(ctx c
 	return nil
 }
 
-// RejectRefund 拒绝退款审核并更新账单 refund_status。
-// 事务边界由 AppService 通过 DBRepository.WithTransaction 编排：在事务回调内通过
-// tx.RefundAuditRepo() 获取的子 repo，其 m.db 即为事务连接，两步操作自动纳入同一事务。
-func (m *refundAuditRepository) RejectRefund(ctx context.Context, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error {
-	// 乐观锁：refund_audit 只允许从 refundFromStatus 转换到 Rejected，防止并发覆盖。
-	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
-	result := m.db.WithContext(ctx).Model(&model.RefundAudit{}).
-		Where("id = ? AND status = ?", refundID, refundFromStatus).
-		Updates(map[string]interface{}{
-			"status":         domain.RefundStatusRejected,
-			"approved_at":    time.Now(),
-			"approve_remark": errMsg,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("reject refund failed: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		// 退款单已不是 refundFromStatus（已被其他事务处理），视为幂等成功
-		return nil
-	}
-
-	// 乐观锁：bill 只允许从 billFromRefundStatus 转换，防止并发覆盖。
-	// RowsAffected == 0 表示已被其他事务处理，视为幂等成功。
-	billResult := m.db.WithContext(ctx).Model(&model.BillRecord{}).
-		Where("id = ? AND refund_status = ?", billID, billFromRefundStatus).
-		Updates(map[string]interface{}{
-			"refund_status": billToRefundStatus,
-		})
-	if billResult.Error != nil {
-		return fmt.Errorf("reject refund failed: %w", billResult.Error)
-	}
-	if billResult.RowsAffected == 0 {
-		// 账单已不是 billFromRefundStatus（已被其他事务处理），视为幂等成功
-		return nil
-	}
-	return nil
-}
-
 func (m *refundAuditRepository) GetRefundsByStatus(ctx context.Context, status int, limit int, offset int) ([]*domain.RefundAudit, error) {
 	var refunds []*model.RefundAudit
 	err := m.db.WithContext(ctx).Model(&model.RefundAudit{}).

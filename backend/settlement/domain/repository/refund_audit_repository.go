@@ -29,10 +29,6 @@ type RefundAuditRepository interface {
 	// 事务边界由 AppService 通过 DBRepository.WithTransaction 编排，调用方应在事务回调内
 	// 通过 tx.RefundAuditRepo() 获取基于事务连接的子 repo 后调用本方法。
 	CreateRefundAuditAndUpdateBillRefundStatus(ctx context.Context, refundAudit *domain.RefundAudit, billID int64, fromRefundStatus, toRefundStatus int, refundOrderNo string) error
-	// RejectRefund 拒绝退款审核并更新账单 refund_status。
-	// 事务边界由 AppService 通过 DBRepository.WithTransaction 编排，调用方应在事务回调内
-	// 通过 tx.RefundAuditRepo() 获取基于事务连接的子 repo 后调用本方法。
-	RejectRefund(ctx context.Context, refundID int64, refundFromStatus int, billID int64, billFromRefundStatus, billToRefundStatus int, errMsg string) error
 	// GetRefundsByStatus 分页查询指定状态的退款审核记录（按申请时间正序）
 	GetRefundsByStatus(ctx context.Context, status int, limit int, offset int) ([]*domain.RefundAudit, error)
 }
