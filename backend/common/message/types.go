@@ -32,7 +32,6 @@ const (
 	PushSpectatorLeft      = "spectator_left"
 	PushPlayerJoined       = "player_joined"
 	PushPlayerLeft         = "player_left"
-	PushSeatSelected       = "seat_selected"
 	PushSeatCancelled      = "seat_cancelled"
 	PushPlayerReady        = "player_ready"
 	PushPlayerDisconnected = "player_disconnected"

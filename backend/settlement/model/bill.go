@@ -7,18 +7,18 @@ type BillRecord struct {
 	RoundTraceID     string     `gorm:"size:64;uniqueIndex:idx_round_trace_bill_user,priority:1" json:"round_trace_id"`
 	BizOrderNo       string     `gorm:"uniqueIndex;size:128" json:"biz_order_no"`
 	PlatformTransID  string     `gorm:"index;size:64" json:"platform_trans_id"`
-	BillType         int        `gorm:"not null;uniqueIndex:idx_round_trace_bill_user,priority:2" json:"bill_type"`
+	BillType         int        `gorm:"not null;uniqueIndex:idx_round_trace_bill_user,priority:2;index:idx_session_user_type,priority:3" json:"bill_type"`
 	DeductScene      int        `gorm:"default:0" json:"deduct_scene"`
 	RoomID           int64      `gorm:"index;not null" json:"room_id"`
-	SessionID        int64      `gorm:"index" json:"session_id"`
+	SessionID        int64      `gorm:"index:idx_user_status_session,priority:3;index:idx_session_user_type,priority:1;index:idx_user_session,priority:2" json:"session_id"`
 	RoundID          int64      `gorm:"index" json:"round_id"`
 	RoundNo          int        `gorm:"default:0" json:"round_no"`
-	UserID           int64      `gorm:"not null;uniqueIndex:idx_round_trace_bill_user,priority:3" json:"user_id"`
+	UserID           int64      `gorm:"not null;uniqueIndex:idx_round_trace_bill_user,priority:3;index:idx_user_status_session,priority:1;index:idx_session_user_type,priority:2;index:idx_user_session,priority:1" json:"user_id"`
 	BatchID          string     `gorm:"index;size:32" json:"batch_id"`
 	Amount           int64      `gorm:"not null" json:"amount"`
 	BalanceBefore    int64      `gorm:"not null;default:0" json:"balance_before"`
 	BalanceAfter     int64      `gorm:"not null;default:0" json:"balance_after"`
-	Status           int        `gorm:"default:0;index" json:"status"`
+	Status           int        `gorm:"default:0;index:idx_user_status_session,priority:2;index:idx_session_user_type,priority:4" json:"status"`
 	ReconcileStatus  int        `gorm:"default:0;index" json:"reconcile_status"`
 	RefundStatus     int        `gorm:"default:0;index" json:"refund_status"`
 	RefundOrderNo    string     `gorm:"size:128" json:"refund_order_no"`
@@ -36,7 +36,7 @@ type BillRecord struct {
 	GameSettledAt    *time.Time `gorm:"index" json:"game_settled_at"`
 	Remark           string     `gorm:"size:256" json:"remark"`
 	IsRobot          bool       `gorm:"default:false;index" json:"is_robot"`
-	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	CreatedAt        time.Time  `gorm:"autoCreateTime;index:idx_user_session,priority:3" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 

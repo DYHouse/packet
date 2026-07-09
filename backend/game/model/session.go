@@ -35,7 +35,7 @@ type SessionPlayer struct {
 	ID          int64      `json:"id" gorm:"primaryKey;autoIncrement"`
 	SessionID   int64      `json:"session_id" gorm:"uniqueIndex:idx_session_user;not null"`
 	RoomID      int64      `json:"room_id" gorm:"index;not null"`
-	UserID      int64      `json:"user_id" gorm:"uniqueIndex:idx_session_user;not null"`
+	UserID      int64      `json:"user_id" gorm:"uniqueIndex:idx_session_user;index:idx_user_joined,priority:1;not null"`
 	Nickname    string     `json:"nickname" gorm:"size:50"`
 	Avatar      string     `json:"avatar" gorm:"size:255"`
 	SeatNo      int        `json:"seat_no"`
@@ -46,7 +46,7 @@ type SessionPlayer struct {
 	TotalProfit int64      `json:"total_profit"`
 	IP          string     `json:"ip" gorm:"size:45"`
 	DeviceID    string     `json:"device_id" gorm:"size:100"`
-	JoinedAt    time.Time  `json:"joined_at"`
+	JoinedAt    time.Time  `json:"joined_at" gorm:"index:idx_user_joined,priority:2"`
 	LeftAt      *time.Time `json:"left_at"`
 	CreatedAt   time.Time  `json:"created_at" gorm:"autoCreateTime"`
 }

@@ -126,9 +126,17 @@ func (s *RefundExecuteService) executeRefund(ctx context.Context, refund *domain
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   domain.CallTypeCredit,
-		BizOrderNo: refund.RefundOrderNo,
-		ReqBody:    creditReq,
+		TraceID:        resolveTraceID(ctx),
+		CallType:       domain.CallTypeCredit,
+		BizOrderNo:     refund.RefundOrderNo,
+		UserID:         refund.UserID,
+		PlatformUserID: platformUserID,
+		SessionID:      refund.SessionID,
+		RoundID:        0,
+		Amount:         refund.RefundAmount,
+		Currency:       s.cfg.Currency,
+		ReqBody:        creditReq,
+		NodeID:         resolveNodeID(),
 	})
 	if callLogErr != nil {
 		logger.Warn("create call log failed", "biz_order_no", refund.RefundOrderNo, "error", callLogErr)
@@ -140,10 +148,15 @@ func (s *RefundExecuteService) executeRefund(ctx context.Context, refund *domain
 			logger.Warn("update refund audit to pending for retry failed", "refund_id", refund.ID, "error", retryErr)
 		}
 		if callLog != nil {
+			logStatus := domain.CallLogStatusFailed
+			if isTimeoutError(err) {
+				logStatus = domain.CallLogStatusTimeout
+			}
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       domain.CallLogStatusFailed,
+				Status:       logStatus,
 				ErrorMessage: err.Error(),
+				RequestTime:  callLog.RequestTime,
 			})
 		}
 		return fmt.Errorf("platform refund failed: %w", err)
@@ -153,9 +166,10 @@ func (s *RefundExecuteService) executeRefund(ctx context.Context, refund *domain
 
 	if callLog != nil {
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-			ID:       callLog.ID,
-			RespBody: creditResult,
-			Status:   domain.CallLogStatusSuccess,
+			ID:          callLog.ID,
+			RespBody:    creditResult,
+			Status:      domain.CallLogStatusSuccess,
+			RequestTime: callLog.RequestTime,
 		})
 	}
 

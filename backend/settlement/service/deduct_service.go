@@ -305,9 +305,17 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *domain.Bi
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   domain.CallTypeDebit,
-		BizOrderNo: bill.BizOrderNo,
-		ReqBody:    debitReq,
+		TraceID:        resolveTraceID(ctx),
+		CallType:       domain.CallTypeDebit,
+		BizOrderNo:     bill.BizOrderNo,
+		UserID:         bill.UserID,
+		PlatformUserID: platformUserID,
+		SessionID:      bill.SessionID,
+		RoundID:        bill.RoundID,
+		Amount:         amount,
+		Currency:       s.cfg.Currency,
+		ReqBody:        debitReq,
+		NodeID:         resolveNodeID(),
 	})
 	if callLogErr != nil {
 		logger.Warn("create call log failed", "biz_order_no", bill.BizOrderNo, "error", callLogErr)
@@ -318,10 +326,15 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *domain.Bi
 		s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
+			logStatus := domain.CallLogStatusFailed
+			if isTimeoutError(err) {
+				logStatus = domain.CallLogStatusTimeout
+			}
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       domain.CallLogStatusFailed,
+				Status:       logStatus,
 				ErrorMessage: err.Error(),
+				RequestTime:  callLog.RequestTime,
 			})
 		}
 		return fmt.Errorf("debit failed: %w", err)
@@ -339,9 +352,10 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *domain.Bi
 		s.creditRetrySvc.CreateDebitFailedException(ctx, bill)
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-				ID:       callLog.ID,
-				RespBody: result,
-				Status:   domain.CallLogStatusSuccess,
+				ID:          callLog.ID,
+				RespBody:    result,
+				Status:      domain.CallLogStatusSuccess,
+				RequestTime: callLog.RequestTime,
 			})
 		}
 		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
@@ -357,9 +371,10 @@ func (s *DeductService) executeSingleDeduct(ctx context.Context, bill *domain.Bi
 
 	if callLog != nil {
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-			ID:       callLog.ID,
-			RespBody: result,
-			Status:   domain.CallLogStatusSuccess,
+			ID:          callLog.ID,
+			RespBody:    result,
+			Status:      domain.CallLogStatusSuccess,
+			RequestTime: callLog.RequestTime,
 		})
 	}
 

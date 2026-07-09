@@ -13,6 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// 查询与清理由运维直接通过数据库执行，Repository 仅保留写入所需的两个方法。
+
 // PlatformCallLogRepositoryImpl 是 PlatformCallLogRepository 接口的 MySQL 实现。
 // 从原 service/platform_call_manager.go 迁移，行为完全一致。
 type PlatformCallLogRepositoryImpl struct {
@@ -25,7 +27,7 @@ func NewPlatformCallLogRepository(db *gorm.DB) repository.PlatformCallLogReposit
 }
 
 // CreateLog 创建平台调用日志。
-// 行为与原 service 层实现完全一致。
+// 行为与原 service 层实现完全一致：JSON 序列化失败时降级为空 body 并 Warn。
 func (r *PlatformCallLogRepositoryImpl) CreateLog(ctx context.Context, params *dto.CallLogCreateParams) (*domain.PlatformCallLog, error) {
 	reqBody, err := json.Marshal(params.ReqBody)
 	if err != nil {
@@ -34,12 +36,21 @@ func (r *PlatformCallLogRepositoryImpl) CreateLog(ctx context.Context, params *d
 		reqBody = nil
 	}
 
+	now := time.Now()
 	log := &model.PlatformCallLog{
-		CallType:    params.CallType,
-		BizOrderNo:  params.BizOrderNo,
-		RequestBody: string(reqBody),
-		RequestTime: time.Now(),
-		Status:      domain.CallLogStatusPending,
+		TraceID:        params.TraceID,
+		CallType:       params.CallType,
+		BizOrderNo:     params.BizOrderNo,
+		UserID:         params.UserID,
+		PlatformUserID: params.PlatformUserID,
+		SessionID:      params.SessionID,
+		RoundID:        params.RoundID,
+		Amount:         params.Amount,
+		Currency:       params.Currency,
+		RequestBody:    string(reqBody),
+		RequestTime:    now,
+		Status:         domain.CallLogStatusPending,
+		NodeID:         params.NodeID,
 	}
 
 	if err := r.db.WithContext(ctx).Create(log).Error; err != nil {
@@ -50,17 +61,18 @@ func (r *PlatformCallLogRepositoryImpl) CreateLog(ctx context.Context, params *d
 }
 
 // UpdateLog 更新平台调用日志。
-// 行为与原 service 层实现完全一致。
+// duration_ms 由 params.RequestTime 与当前时间差值计算（RequestTime 由 service 层从 CreateLog 返回值传入）。
 func (r *PlatformCallLogRepositoryImpl) UpdateLog(ctx context.Context, params *dto.CallLogUpdateParams) error {
 	now := time.Now()
 	updates := map[string]interface{}{
 		"response_time": &now,
 		"status":        params.Status,
 		"error_message": params.ErrorMessage,
-		// retry_count 语义：表示重试次数。首次调用（当前状态为 pending）保持 retry_count=0；
-		// 仅当当前状态为 failed（即本次为重试调用）时才自增 1。CASE 表达式中的 status
-		// 引用的是更新前的当前列值，故与本次 status 赋值互不影响。
-		"retry_count": gorm.Expr("CASE WHEN status = ? THEN retry_count + 1 ELSE retry_count END", domain.CallLogStatusFailed),
+	}
+
+	// duration_ms：若 service 层传入有效 RequestTime 则计算耗时，便于排查慢调用
+	if !params.RequestTime.IsZero() {
+		updates["duration_ms"] = int(now.Sub(params.RequestTime).Milliseconds())
 	}
 
 	if params.RespBody != nil {
@@ -84,18 +96,26 @@ func platformCallLogModelToDomain(m *model.PlatformCallLog) *domain.PlatformCall
 		return nil
 	}
 	return &domain.PlatformCallLog{
-		ID:           m.ID,
-		CallType:     m.CallType,
-		BizOrderNo:   m.BizOrderNo,
-		RequestBody:  m.RequestBody,
-		ResponseBody: m.ResponseBody,
-		Status:       m.Status,
-		ErrorMessage: m.ErrorMessage,
-		RetryCount:   m.RetryCount,
-		RequestTime:  m.RequestTime,
-		ResponseTime: m.ResponseTime,
-		CreatedAt:    m.CreatedAt,
-		UpdatedAt:    m.UpdatedAt,
+		ID:             m.ID,
+		TraceID:        m.TraceID,
+		BizOrderNo:     m.BizOrderNo,
+		CallType:       m.CallType,
+		UserID:         m.UserID,
+		PlatformUserID: m.PlatformUserID,
+		SessionID:      m.SessionID,
+		RoundID:        m.RoundID,
+		Amount:         m.Amount,
+		Currency:       m.Currency,
+		Status:         m.Status,
+		ErrorMessage:   m.ErrorMessage,
+		RequestBody:    m.RequestBody,
+		ResponseBody:   m.ResponseBody,
+		RequestTime:    m.RequestTime,
+		ResponseTime:   m.ResponseTime,
+		DurationMs:     m.DurationMs,
+		NodeID:         m.NodeID,
+		CreatedAt:      m.CreatedAt,
+		UpdatedAt:      m.UpdatedAt,
 	}
 }
 

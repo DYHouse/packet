@@ -12,7 +12,6 @@ type RoomEventType string
 const (
 	RoomEventSpectatorJoin   RoomEventType = "spectator_join"
 	RoomEventSpectatorLeave  RoomEventType = "spectator_leave"
-	RoomEventSeatSelect      RoomEventType = "seat_select"
 	RoomEventSeatCancel      RoomEventType = "seat_cancel"
 	RoomEventPlayerReady     RoomEventType = "player_ready"
 	RoomEventSpectatorKick   RoomEventType = "spectator_kick"
@@ -52,12 +51,6 @@ type SpectatorJoinPayload struct {
 
 type SpectatorLeavePayload struct {
 	Reason string `json:"reason,omitempty"`
-}
-
-type SeatSelectPayload struct {
-	SeatNo   int    `json:"seat_no"`
-	Nickname string `json:"nickname,omitempty"`
-	Avatar   string `json:"avatar,omitempty"`
 }
 
 type SeatCancelPayload struct {
@@ -134,21 +127,6 @@ func NewSpectatorLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 	}
 	_ = event.SetPayload(SpectatorLeavePayload{
 		Reason: reason,
-	})
-	return event
-}
-
-func NewSeatSelectEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
-	event := &RoomEvent{
-		EventHeader: message.NewEventHeader(""),
-		EventType:   RoomEventSeatSelect,
-		RoomID:      roomID,
-		UserID:      userID,
-	}
-	_ = event.SetPayload(SeatSelectPayload{
-		SeatNo:   seatNo,
-		Nickname: nickname,
-		Avatar:   avatar,
 	})
 	return event
 }

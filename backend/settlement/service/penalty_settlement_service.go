@@ -165,9 +165,17 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 		}
 
 		callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-			CallType:   domain.CallTypeDebit,
-			BizOrderNo: playerBill.BizOrderNo,
-			ReqBody:    debitReq,
+			TraceID:        resolveTraceID(ctx),
+			CallType:       domain.CallTypeDebit,
+			BizOrderNo:     playerBill.BizOrderNo,
+			UserID:         playerBill.UserID,
+			PlatformUserID: platformUserID,
+			SessionID:      playerBill.SessionID,
+			RoundID:        0,
+			Amount:         req.Amount,
+			Currency:       s.cfg.Currency,
+			ReqBody:        debitReq,
+			NodeID:         resolveNodeID(),
 		})
 		if callLogErr != nil {
 			logger.Warn("create call log failed", "biz_order_no", playerBill.BizOrderNo, "error", callLogErr)
@@ -177,10 +185,15 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 		if err != nil {
 			s.billRepo.UpdateBillStatus(ctx, playerBill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 			if callLog != nil {
+				logStatus := domain.CallLogStatusFailed
+				if isTimeoutError(err) {
+					logStatus = domain.CallLogStatusTimeout
+				}
 				s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 					ID:           callLog.ID,
-					Status:       domain.CallLogStatusFailed,
+					Status:       logStatus,
 					ErrorMessage: err.Error(),
+					RequestTime:  callLog.RequestTime,
 				})
 			}
 			return fmt.Errorf("debit penalty failed: %w", err)
@@ -197,9 +210,10 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 			}
 			if callLog != nil {
 				s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-					ID:       callLog.ID,
-					RespBody: result,
-					Status:   domain.CallLogStatusSuccess,
+					ID:          callLog.ID,
+					RespBody:    result,
+					Status:      domain.CallLogStatusSuccess,
+					RequestTime: callLog.RequestTime,
 				})
 			}
 			detail := fmt.Sprintf("罚款扣款 ParseAmount 解析失败,平台可能已扣款但余额无法解析,需人工对账, user_id: %d, raw_amount: %s, error: %s", req.UserID, result.Data.Balance.Amount, err.Error())
@@ -218,9 +232,10 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-				ID:       callLog.ID,
-				RespBody: result,
-				Status:   domain.CallLogStatusSuccess,
+				ID:          callLog.ID,
+				RespBody:    result,
+				Status:      domain.CallLogStatusSuccess,
+				RequestTime: callLog.RequestTime,
 			})
 		}
 

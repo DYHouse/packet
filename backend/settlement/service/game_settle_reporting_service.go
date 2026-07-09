@@ -273,9 +273,17 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   domain.CallTypeSettle,
-		BizOrderNo: bizOrderNo,
-		ReqBody:    settleReq,
+		TraceID:        resolveTraceID(ctx),
+		CallType:       domain.CallTypeSettle,
+		BizOrderNo:     bizOrderNo,
+		UserID:         userID,
+		PlatformUserID: platformUserID,
+		SessionID:      sessionID,
+		RoundID:        0,
+		Amount:         payOut - betAmount,
+		Currency:       s.cfg.Currency,
+		ReqBody:        settleReq,
+		NodeID:         resolveNodeID(),
 	})
 	if callLogErr != nil {
 		logger.Warn("create call log failed", "biz_order_no", bizOrderNo, "error", callLogErr)
@@ -294,10 +302,15 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 				"session_id", sessionID, "user_id", userID, "biz_order_no", bizOrderNo, "error", rollbackErr)
 		}
 		if callLog != nil {
+			logStatus := domain.CallLogStatusFailed
+			if isTimeoutError(err) {
+				logStatus = domain.CallLogStatusTimeout
+			}
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       domain.CallLogStatusFailed,
+				Status:       logStatus,
 				ErrorMessage: err.Error(),
+				RequestTime:  callLog.RequestTime,
 			})
 		}
 		return fmt.Errorf("game settle failed: %w", err)
@@ -310,9 +323,10 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 
 	if callLog != nil {
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-			ID:       callLog.ID,
-			RespBody: result,
-			Status:   domain.CallLogStatusSuccess,
+			ID:          callLog.ID,
+			RespBody:    result,
+			Status:      domain.CallLogStatusSuccess,
+			RequestTime: callLog.RequestTime,
 		})
 	}
 

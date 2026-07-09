@@ -14,11 +14,11 @@ const (
 
 type Round struct {
 	RoundID       int64       `json:"round_id" gorm:"primaryKey"`
-	SessionID     int64       `json:"session_id" gorm:"index;not null"`
+	SessionID     int64       `json:"session_id" gorm:"index:idx_session_roundno,priority:1;index:idx_session_sender,priority:1;not null"`
 	RoomID        int64       `json:"room_id" gorm:"index;not null"`
-	RoundNo       int         `json:"round_no" gorm:"not null;index:idx_session_round"`
+	RoundNo       int         `json:"round_no" gorm:"not null;index:idx_session_roundno,priority:2;index:idx_session_sender,priority:3"`
 	Status        RoundStatus `json:"status" gorm:"default:0;index"`
-	SenderID      int64       `json:"sender_id" gorm:"default:0"`
+	SenderID      int64       `json:"sender_id" gorm:"default:0;index:idx_session_sender,priority:2"`
 	SenderType    string      `json:"sender_type" gorm:"size:20;default:''"`
 	TotalAmount   int64       `json:"total_amount" gorm:"default:0"`
 	Commission    int64       `json:"commission" gorm:"default:0"`
@@ -40,12 +40,12 @@ type RoundGrabRecord struct {
 	ID             int64     `json:"id" gorm:"primaryKey;autoIncrement"`
 	RoundID        int64     `json:"round_id" gorm:"index;not null"`
 	PacketID       int64     `json:"packet_id" gorm:"index;not null"`
-	SessionID      int64     `json:"session_id" gorm:"index;not null"`
-	UserID         int64     `json:"user_id" gorm:"index;not null"`
+	SessionID      int64     `json:"session_id" gorm:"index:idx_session_user,priority:1;not null"`
+	UserID         int64     `json:"user_id" gorm:"index:idx_session_user,priority:2;not null"`
 	Amount         int64     `json:"amount" gorm:"not null"`
 	IsMin          int       `json:"is_min" gorm:"default:0"`
 	IsAutoAssigned int       `json:"is_auto_assigned" gorm:"default:0"`
-	GrabbedAt      time.Time `json:"grabbed_at"`
+	GrabbedAt      time.Time `json:"grabbed_at" gorm:"index:idx_session_user,priority:3"`
 	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
 }
 

@@ -104,24 +104,6 @@ func (s *SeatAppService) SelectSeat(ctx context.Context, req *SelectSeatRequest)
 		s.scheduler.SetTimeout(ctx, scheduler.TimeoutTypeSeat, req.RoomID, req.UserID)
 	}
 
-	spectator, _ := s.repo.GetSpectator(ctx, req.RoomID, req.UserID)
-	nickname := ""
-	avatar := ""
-	if spectator != nil {
-		nickname = spectator.Nickname
-		avatar = spectator.Avatar
-	}
-
-	if s.publisher != nil {
-		if err := s.publisher.PublishRoomEvent(ctx, events.NewSeatSelectEvent(req.RoomID, req.UserID, req.SeatNo, nickname, avatar)); err != nil {
-			logger.Warn("publish seat_select event failed",
-				"room_id", req.RoomID,
-				"user_id", req.UserID,
-				"trace_id", trace.FromContext(ctx),
-				"error", err)
-		}
-	}
-
 	stateData, _ := s.repo.GetRoomStateData(ctx, req.RoomID)
 
 	if s.broadcaster != nil && stateData != nil {

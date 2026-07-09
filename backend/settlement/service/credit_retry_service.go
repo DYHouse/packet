@@ -157,9 +157,17 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *domain.Bil
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   domain.CallTypeCredit,
-		BizOrderNo: bill.BizOrderNo,
-		ReqBody:    creditReq,
+		TraceID:        resolveTraceID(ctx),
+		CallType:       domain.CallTypeCredit,
+		BizOrderNo:     bill.BizOrderNo,
+		UserID:         bill.UserID,
+		PlatformUserID: platformUserID,
+		SessionID:      bill.SessionID,
+		RoundID:        bill.RoundID,
+		Amount:         bill.Amount,
+		Currency:       s.cfg.Currency,
+		ReqBody:        creditReq,
+		NodeID:         resolveNodeID(),
 	})
 	if callLogErr != nil {
 		logger.Warn("create call log failed", "biz_order_no", bill.BizOrderNo, "error", callLogErr)
@@ -169,10 +177,15 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *domain.Bil
 	if err != nil {
 		s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 		if callLog != nil {
+			logStatus := domain.CallLogStatusFailed
+			if isTimeoutError(err) {
+				logStatus = domain.CallLogStatusTimeout
+			}
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       domain.CallLogStatusFailed,
+				Status:       logStatus,
 				ErrorMessage: err.Error(),
+				RequestTime:  callLog.RequestTime,
 			})
 		}
 		return fmt.Errorf("credit failed: %w", err)
@@ -193,9 +206,10 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *domain.Bil
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-				ID:       callLog.ID,
-				RespBody: result,
-				Status:   domain.CallLogStatusSuccess,
+				ID:          callLog.ID,
+				RespBody:    result,
+				Status:      domain.CallLogStatusSuccess,
+				RequestTime: callLog.RequestTime,
 			})
 		}
 		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
@@ -203,9 +217,10 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *domain.Bil
 
 	if callLog != nil {
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
-			ID:       callLog.ID,
-			RespBody: result,
-			Status:   domain.CallLogStatusSuccess,
+			ID:          callLog.ID,
+			RespBody:    result,
+			Status:      domain.CallLogStatusSuccess,
+			RequestTime: callLog.RequestTime,
 		})
 	}
 
