@@ -115,14 +115,20 @@ func (s *VirtualBalanceRepository) SyncToDB(ctx context.Context) error {
 		balance, err := s.redis.Get(ctx, rediskeys.RobotVirtualBalanceKey(userID)).Int64()
 		if err != nil {
 			// 读取余额失败，重新加回 dirtyKey 等下次重试
-			s.redis.SAdd(ctx, dirtyKey, member)
+			if err := s.redis.SAdd(ctx, dirtyKey, member).Err(); err != nil {
+				logger.Error("sadd dirty key failed",
+					"key", dirtyKey, "member", member, "error", err)
+			}
 			logger.Error("get virtual balance failed, re-add to dirty", "user_id", userID, "error", err)
 			continue
 		}
 
 		if err := s.repo.UpdateBalance(ctx, userID, balance); err != nil {
 			// DB 更新失败，重新加回 dirtyKey 等下次重试
-			s.redis.SAdd(ctx, dirtyKey, member)
+			if err := s.redis.SAdd(ctx, dirtyKey, member).Err(); err != nil {
+				logger.Error("sadd dirty key failed",
+					"key", dirtyKey, "member", member, "error", err)
+			}
 			logger.Error("update balance to DB failed, re-add to dirty", "user_id", userID, "error", err)
 			continue
 		}

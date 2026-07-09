@@ -25,10 +25,10 @@ func newTestDeductService(t *testing.T, billRepo *mockBillRepo, roundSettlementR
 	userConvert := newTestUserIDConvert(&domain.PlatformUser{UserID: "platform_user_123"}, nil)
 	callMgr := newTestCallLogRepo()
 	exceptionMgr := newTestExceptionRepo()
-	creditRetrySvc := NewCreditRetryService(billRepo, platformClient, nil, newTestTraceIDGen(), nil, nil, exceptionMgr, userConvert, callMgr)
+	creditRetrySvc := NewCreditRetryService(billRepo, platformClient, nil, newTestTraceIDGen(), nil, nil, exceptionMgr, userConvert, callMgr, 0, 0, 0)
 	return NewDeductService(
 		platformClient, dbRepo, billRepo, roundSettlementRepo, nil, nil,
-		newTestTraceIDGen(), nil, nil, creditRetrySvc, userConvert, callMgr, robotChecker, virtualBalance,
+		newTestTraceIDGen(), nil, nil, creditRetrySvc, userConvert, callMgr, robotChecker, virtualBalance, 0,
 	)
 }
 
@@ -109,8 +109,8 @@ func TestDeductForLaterRound_Success_RealPlayer(t *testing.T) {
 	if roundSettlementRepo.updateRoundSettlementStatusCalls != 1 {
 		t.Errorf("UpdateRoundSettlementStatus 调用次数 = %d, 期望 1", roundSettlementRepo.updateRoundSettlementStatusCalls)
 	}
-	if roundSettlementRepo.lastStatusStatus != dto.RoundStatusDeducted {
-		t.Errorf("回合状态 = %d, 期望 %d (Deducted)", roundSettlementRepo.lastStatusStatus, dto.RoundStatusDeducted)
+	if roundSettlementRepo.lastStatusStatus != domain.RoundStatusDeducted {
+		t.Errorf("回合状态 = %d, 期望 %d (Deducted)", roundSettlementRepo.lastStatusStatus, domain.RoundStatusDeducted)
 	}
 }
 
@@ -196,8 +196,8 @@ func TestDeductForLaterRound_ParseAmountFailure(t *testing.T) {
 	if billRepo.updateBillStatusCalls == 0 {
 		t.Fatal("ParseAmount 失败时应调用 UpdateBillStatus 标记 Failed")
 	}
-	if billRepo.lastUpdateStatusTo != dto.BillStatusFailed {
-		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, dto.BillStatusFailed)
+	if billRepo.lastUpdateStatusTo != domain.BillStatusFailed {
+		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, domain.BillStatusFailed)
 	}
 
 	// 验证创建了异常记录（UpdateBillExceptionID 被调用）
@@ -230,8 +230,8 @@ func TestDeductForLaterRound_VirtualBalanceDeductFailure(t *testing.T) {
 	}
 
 	// 验证 bill 标记为 Failed
-	if billRepo.lastUpdateStatusTo != dto.BillStatusFailed {
-		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, dto.BillStatusFailed)
+	if billRepo.lastUpdateStatusTo != domain.BillStatusFailed {
+		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, domain.BillStatusFailed)
 	}
 
 	// 验证未标记 bill Success

@@ -1,30 +1,30 @@
 package dto
 
 type FirstRoundDeductResult struct {
-	BatchID        string
-	AllSuccess     bool
-	SuccessCount   int
-	FailedCount    int
-	SuccessPlayers []int64
-	FailedPlayers  []*FailedPlayerInfo
+	BatchID        string              `json:"batch_id"`
+	AllSuccess     bool                `json:"all_success"`
+	SuccessCount   int                 `json:"success_count"`
+	FailedCount    int                 `json:"failed_count"`
+	SuccessPlayers []int64             `json:"success_players"`
+	FailedPlayers  []*FailedPlayerInfo `json:"failed_players"`
 }
 
 type FailedPlayerInfo struct {
-	UserID    int64
-	ErrorCode string
-	ErrorMsg  string
+	UserID    int64  `json:"user_id"`
+	ErrorCode string `json:"error_code"`
+	ErrorMsg  string `json:"error_msg"`
 }
 
 type RefundResult struct {
-	RefundOrderNo string
-	Status        int
-	RefundedAt    string
-	ErrorMsg      string
+	RefundOrderNo string `json:"refund_order_no"`
+	Status        int    `json:"status"`
+	RefundedAt    string `json:"refunded_at"`
+	ErrorMsg      string `json:"error_msg"`
 }
 
 type BillQueryResult struct {
-	Total int64
-	List  []*BillInfo
+	Total int64       `json:"total"`
+	List  []*BillInfo `json:"list"`
 }
 
 type BillInfo struct {

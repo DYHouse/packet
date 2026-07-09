@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // BillType 账单类型枚举值，标识账单的业务来源。
 // 以下常量为 untyped int，确保与原 dto 层常量完全兼容。
@@ -120,4 +124,25 @@ func (b *BillRecord) CanRefund() bool {
 // Refunded 为终态；Processing/Success/Failed 均非终态（Success 可退款，Failed 可重试）。
 func (b *BillRecord) IsTerminalStatus() bool {
 	return b.Status == BillStatusRefunded
+}
+
+// TransitionTo 校验状态转换的合法性，作为状态机守卫方法。
+// 仅校验不修改状态；调用方校验通过后自行更新 Status 字段。
+// 合法转换返回 nil，非法转换返回 error 描述当前状态与目标状态。
+// 合法转换：Processing(0) → Success(1) / Failed(2)；Success(1) → Refunded(3)。
+func (b *BillRecord) TransitionTo(newStatus int) error {
+	if b == nil {
+		return errors.New("BillRecord is nil")
+	}
+	allowed := false
+	switch b.Status {
+	case BillStatusProcessing:
+		allowed = newStatus == BillStatusSuccess || newStatus == BillStatusFailed
+	case BillStatusSuccess:
+		allowed = newStatus == BillStatusRefunded
+	}
+	if !allowed {
+		return fmt.Errorf("invalid bill status transition: %d -> %d", b.Status, newStatus)
+	}
+	return nil
 }

@@ -14,18 +14,24 @@ import (
 // 参照 game/infrastructure/persistence/mysql/db_repository.go 模式。
 type dbRepositoryImpl struct {
 	db                  *gorm.DB
+	transactionTimeout  time.Duration
 	billRepo            repository.BillRepository
 	roundSettlementRepo repository.RoundSettlementRepository
 	refundAuditRepo     repository.RefundAuditRepository
 	settlementQueryRepo repository.SettlementQueryRepository
-	exceptionRepo       *ExceptionRepositoryImpl
-	platformCallLogRepo *PlatformCallLogRepositoryImpl
+	exceptionRepo       repository.ExceptionRepository
+	platformCallLogRepo repository.PlatformCallLogRepository
 }
 
 // NewDBRepository 创建 settlement DBRepository 实例，聚合所有子 repo。
-func NewDBRepository(db *gorm.DB) repository.DBRepository {
+// transactionTimeout 控制 WithTransaction 的 ctx 超时，传入 0 时使用 30s 兜底（与原硬编码一致）。
+func NewDBRepository(db *gorm.DB, transactionTimeout time.Duration) repository.DBRepository {
+	if transactionTimeout <= 0 {
+		transactionTimeout = 30 * time.Second
+	}
 	return &dbRepositoryImpl{
 		db:                  db,
+		transactionTimeout:  transactionTimeout,
 		billRepo:            NewBillRepository(db),
 		roundSettlementRepo: NewRoundSettlementRepository(db),
 		refundAuditRepo:     NewRefundAuditRepository(db),
@@ -54,10 +60,10 @@ func (r *dbRepositoryImpl) PlatformCallLogRepo() repository.PlatformCallLogRepos
 	return r.platformCallLogRepo
 }
 
-// WithTransaction 编排事务。通过 ctx 超时控制（默认 30s）遵循短事务原则，
+// WithTransaction 编排事务。通过 ctx 超时控制（由 transactionTimeout 注入，默认 30s）遵循短事务原则，
 // 事务回调内通过 tx 子 repo 访问器获取基于事务连接的子 repo。
 func (r *dbRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx repository.Transaction) error) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, r.transactionTimeout)
 	defer cancel()
 	return r.db.WithContext(ctx).Transaction(func(gormTx *gorm.DB) error {
 		tx := newGormTransaction(gormTx)
@@ -73,8 +79,8 @@ type gormTransactionImpl struct {
 	roundSettlementRepo repository.RoundSettlementRepository
 	refundAuditRepo     repository.RefundAuditRepository
 	settlementQueryRepo repository.SettlementQueryRepository
-	exceptionRepo       *ExceptionRepositoryImpl
-	platformCallLogRepo *PlatformCallLogRepositoryImpl
+	exceptionRepo       repository.ExceptionRepository
+	platformCallLogRepo repository.PlatformCallLogRepository
 }
 
 func newGormTransaction(db *gorm.DB) *gormTransactionImpl {

@@ -1,13 +1,18 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // RefundStatus 退款状态枚举值，表示退款审核的生命周期阶段。
 // 状态流转：
 //
 //	None(0) → Pending(1)
-//	Pending(1) → Processing(5) / Rejected(4)
-//	Processing(5) → Refunded(3) / Pending(1, 重试回退)
+//	Pending(1) → Approved(2) / Rejected(4)
+//	Approved(2) → Refunded(3) / Processing(5)（过渡态：被 UpdateRefundAuditStatus 设置后立即进入 executeRefund，不会持久停留）
+//	Processing(5) → Refunded(3) / Pending(1)（RPC 失败回退）
 //	Refunded(3) / Rejected(4) 为终态。
 const (
 	RefundStatusNone       = 0
@@ -70,4 +75,34 @@ func (r *RefundAudit) CanRetry() bool {
 // Refunded 与 Rejected 为终态。
 func (r *RefundAudit) IsTerminalStatus() bool {
 	return r.Status == RefundStatusRefunded || r.Status == RefundStatusRejected
+}
+
+// TransitionTo 校验状态转换的合法性，作为状态机守卫方法。
+// 仅校验不修改状态；调用方校验通过后自行更新 Status 字段。
+// 合法转换返回 nil，非法转换返回 error 描述当前状态与目标状态。
+// 合法转换：
+//
+//	None(0) → Pending(1)
+//	Pending(1) → Approved(2) / Rejected(4)
+//	Approved(2) → Refunded(3) / Processing(5)（过渡态）
+//	Processing(5) → Refunded(3) / Pending(1)（RPC 失败回退）
+func (r *RefundAudit) TransitionTo(newStatus int) error {
+	if r == nil {
+		return errors.New("RefundAudit is nil")
+	}
+	allowed := false
+	switch r.Status {
+	case RefundStatusNone:
+		allowed = newStatus == RefundStatusPending
+	case RefundStatusPending:
+		allowed = newStatus == RefundStatusApproved || newStatus == RefundStatusRejected
+	case RefundStatusApproved:
+		allowed = newStatus == RefundStatusRefunded || newStatus == RefundStatusProcessing
+	case RefundStatusProcessing:
+		allowed = newStatus == RefundStatusRefunded || newStatus == RefundStatusPending
+	}
+	if !allowed {
+		return fmt.Errorf("invalid refund audit status transition: %d -> %d", r.Status, newStatus)
+	}
+	return nil
 }

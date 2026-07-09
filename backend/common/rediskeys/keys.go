@@ -237,6 +237,8 @@ const (
 	// 旧值：cashparty:settle:lock:game_retry:%d_%d
 	// 新值：cashparty:settle:lock:game_retry:%d:%d
 	KeyGameSettleRetryLock = KeyPrefix + ":settle:lock:game_retry:%d:%d"
+	// KeyPenaltyDeductLock 罚款扣款锁（按 userID + roundTraceID 粒度，防止重复扣款）。
+	KeyPenaltyDeductLock = KeyPrefix + ":settle:lock:penalty_deduct:%d:%s"
 )
 
 // ============================================================================
@@ -663,6 +665,11 @@ func GameSettleLockKey(sessionID int64) string {
 // GameSettleRetryLockKey 游戏结算重试锁 key（P1-8 修复：使用 ":" 分隔）
 func GameSettleRetryLockKey(sessionID int64, userID int64) string {
 	return fmt.Sprintf(KeyGameSettleRetryLock, sessionID, userID)
+}
+
+// PenaltyDeductLockKey 罚款扣款锁 key（按 userID + roundTraceID 粒度，防止重复扣款）
+func PenaltyDeductLockKey(userID int64, roundTraceID string) string {
+	return fmt.Sprintf(KeyPenaltyDeductLock, userID, roundTraceID)
 }
 
 // ============================================================================

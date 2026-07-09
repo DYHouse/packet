@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/model"
@@ -33,7 +34,7 @@ func (m *settlementQueryRepository) AggregateBetBySession(ctx context.Context, s
 	err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Select("user_id, SUM(ABS(amount)) as total_amount").
 		Where("session_id = ? AND amount < 0 AND status = ? AND user_id != ?",
-			sessionID, dto.BillStatusSuccess, dto.PlatformAccountID).
+			sessionID, domain.BillStatusSuccess, dto.PlatformAccountID).
 		Group("user_id").
 		Find(&results).Error
 	if err != nil {
@@ -56,7 +57,7 @@ func (m *settlementQueryRepository) AggregatePayOutBySession(ctx context.Context
 	err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Select("user_id, SUM(amount) as total_amount").
 		Where("session_id = ? AND amount > 0 AND status = ? AND user_id != ? AND bill_type != ?",
-			sessionID, dto.BillStatusSuccess, dto.PlatformAccountID, dto.BillTypeSessionCredit).
+			sessionID, domain.BillStatusSuccess, dto.PlatformAccountID, domain.BillTypeSessionCredit).
 		Group("user_id").
 		Find(&results).Error
 	if err != nil {
@@ -75,7 +76,7 @@ func (m *settlementQueryRepository) IsPlayerGameSettled(ctx context.Context, ses
 	var count int64
 	err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Where("session_id = ? AND user_id = ? AND game_settle_status = ?",
-			sessionID, userID, dto.BillGameSettleSettled).
+			sessionID, userID, domain.BillGameSettleSettled).
 		Count(&count).Error
 	if err != nil {
 		return false, err
@@ -89,7 +90,7 @@ func (m *settlementQueryRepository) GetUnsettledUsersBySession(ctx context.Conte
 	err := m.db.WithContext(ctx).Model(&model.BillRecord{}).
 		Select("DISTINCT user_id").
 		Where("session_id = ? AND status = ? AND game_settle_status = ? AND user_id != ?",
-			sessionID, dto.BillStatusSuccess, dto.BillGameSettleNone, dto.PlatformAccountID).
+			sessionID, domain.BillStatusSuccess, domain.BillGameSettleNone, dto.PlatformAccountID).
 		Find(&userIDs).Error
 	return userIDs, err
 }

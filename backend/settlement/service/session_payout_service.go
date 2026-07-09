@@ -13,7 +13,6 @@ import (
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
 
 // SessionPayoutService 负责会话级派奖：调用 platform.Credit 派发玩家在整局游戏中应得的奖金。
@@ -82,31 +81,31 @@ func (s *SessionPayoutService) CreditSessionPayouts(ctx context.Context, session
 
 // creditSessionPayout performs session-level payout credit for a single player with idempotency check.
 func (s *SessionPayoutService) creditSessionPayout(ctx context.Context, sessionID int64, userID int64, payOut int64, roomID int64) error {
-	existingBills, err := s.billRepo.GetBillsBySessionTypeAndUser(ctx, sessionID, dto.BillTypeSessionCredit, userID)
+	existingBills, err := s.billRepo.GetBillsBySessionTypeAndUser(ctx, sessionID, domain.BillTypeSessionCredit, userID)
 	if err != nil {
 		return fmt.Errorf("check existing session credit bills failed: %w", err)
 	}
 
 	for _, bill := range existingBills {
-		if bill.Status == dto.BillStatusSuccess {
+		if bill.Status == domain.BillStatusSuccess {
 			return nil
 		}
-		if bill.Status == dto.BillStatusProcessing || bill.Status == dto.BillStatusFailed {
+		if bill.Status == domain.BillStatusProcessing || bill.Status == domain.BillStatusFailed {
 			return s.executeSessionCredit(ctx, bill)
 		}
 	}
 
 	traceID := s.traceIDGen.GenerateSessionCreditTraceID(sessionID, userID)
-	bill := &model.BillRecord{
+	bill := &domain.BillRecord{
 		RoundTraceID: traceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(traceID, dto.BillTypeSessionCredit, userID),
-		BillType:     dto.BillTypeSessionCredit,
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(traceID, domain.BillTypeSessionCredit, userID),
+		BillType:     domain.BillTypeSessionCredit,
 		RoomID:       roomID,
 		SessionID:    sessionID,
 		RoundID:      0,
 		UserID:       userID,
 		Amount:       payOut,
-		Status:       dto.BillStatusProcessing,
+		Status:       domain.BillStatusProcessing,
 		Remark:       fmt.Sprintf("会话级抢红包/奖励入账,局ID:%d,入账:%d", sessionID, payOut),
 	}
 	if s.robotChecker == nil {
@@ -127,9 +126,9 @@ func (s *SessionPayoutService) creditSessionPayout(ctx context.Context, sessionI
 
 // executeSessionCredit calls platform.Credit() for a session credit bill.
 // On success, marks bill as Success. On failure, marks as Failed and sets next_retry_at.
-func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *model.BillRecord) error {
+func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *domain.BillRecord) error {
 	// Idempotency: already success
-	if bill.Status == dto.BillStatusSuccess {
+	if bill.Status == domain.BillStatusSuccess {
 		return nil
 	}
 
@@ -137,11 +136,11 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 	// 平台暂未提供查询接口，当前依靠 platform.Credit 的 BizOrderNo 幂等兜底。
 
 	// Transition bill to Processing (from current status) before calling RPC
-	if bill.Status != dto.BillStatusProcessing {
-		if err := s.billRepo.UpdateBillStatus(ctx, bill.ID, bill.Status, dto.BillStatusProcessing, ""); err != nil {
+	if bill.Status != domain.BillStatusProcessing {
+		if err := s.billRepo.UpdateBillStatus(ctx, bill.ID, bill.Status, domain.BillStatusProcessing, ""); err != nil {
 			return fmt.Errorf("update bill to processing failed: %w", err)
 		}
-		bill.Status = dto.BillStatusProcessing
+		bill.Status = domain.BillStatusProcessing
 	}
 
 	// 机器人虚拟通道
@@ -154,16 +153,20 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 	}
 	if isRobot {
 		if err := s.virtualBalance.Credit(ctx, bill.UserID, bill.Amount); err != nil {
-			s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+			s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 			return fmt.Errorf("robot virtual credit failed: %w", err)
 		}
 		balanceAfter, _ := s.virtualBalance.GetBalance(ctx, bill.UserID)
-		return s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
+		if err := bill.TransitionTo(domain.BillStatusSuccess); err != nil {
+			logger.Error("invalid bill status transition", "bill_id", bill.ID, "error", err)
+			return err
+		}
+		return s.billRepo.UpdateBillSuccess(ctx, bill.ID, domain.BillStatusProcessing, 0, balanceAfter)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
-		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -180,7 +183,7 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   model.CallTypeCredit,
+		CallType:   domain.CallTypeCredit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    creditReq,
 	})
@@ -190,20 +193,20 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 
 	result, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 		// Exponential backoff: delay = base * 2^retryCount, capped at max
 		delay := time.Duration(float64(dto.CreditRetryBaseDelay) * math.Pow(2, float64(bill.RetryCount)))
 		if delay > dto.CreditRetryMaxDelay {
 			delay = dto.CreditRetryMaxDelay
 		}
 		nextRetryAt := time.Now().Add(delay)
-		if retryErr := s.billRepo.IncrementRetryCountWithNextRetryTime(ctx, bill.ID, nextRetryAt); retryErr != nil {
+		if retryErr := s.billRepo.IncrementRetryCountWithNextRetryTime(ctx, bill.ID, bill.RetryCount, nextRetryAt); retryErr != nil {
 			logger.Error("increment retry count with next retry time failed", "bill_id", bill.ID, "error", retryErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       model.CallLogStatusFailed,
+				Status:       domain.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -216,18 +219,18 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 		// 资金安全要求 fail-closed：标记账单为 Failed 并创建异常记录供人工对账，不得标记为 Success。
 		logger.Error("parse balance amount failed after successful credit, mark bill as failed",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
-		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
+		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error()); updateErr != nil {
 			logger.Error("update bill to failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
 		}
 		detail := fmt.Sprintf("会话派奖 ParseAmount 解析失败,平台可能已入账但余额无法解析,需人工对账, bill_id: %d, raw_amount: %s, error: %s", bill.ID, result.Data.Balance.Amount, err.Error())
-		if excErr := s.createExceptionRecord(ctx, bill, model.ExceptionTypeCreditRetryExceed, detail); excErr != nil {
+		if excErr := s.createExceptionRecord(ctx, bill, domain.ExceptionTypeCreditRetryExceed, detail); excErr != nil {
 			logger.Error("create exception record for parse amount failure failed", "bill_id", bill.ID, "error", excErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:       callLog.ID,
 				RespBody: result,
-				Status:   model.CallLogStatusSuccess,
+				Status:   domain.CallLogStatusSuccess,
 			})
 		}
 		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
@@ -237,16 +240,20 @@ func (s *SessionPayoutService) executeSessionCredit(ctx context.Context, bill *m
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
-			Status:   model.CallLogStatusSuccess,
+			Status:   domain.CallLogStatusSuccess,
 		})
 	}
 
-	return s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
+	if err := bill.TransitionTo(domain.BillStatusSuccess); err != nil {
+		logger.Error("invalid bill status transition", "bill_id", bill.ID, "error", err)
+		return err
+	}
+	return s.billRepo.UpdateBillSuccess(ctx, bill.ID, domain.BillStatusProcessing, 0, balanceAfter)
 }
 
 // createExceptionRecord 创建异常记录并关联到账单，供人工对账。
-func (s *SessionPayoutService) createExceptionRecord(ctx context.Context, bill *model.BillRecord, exceptionType model.ExceptionType, detail string) error {
-	exception := &model.ExceptionRecord{
+func (s *SessionPayoutService) createExceptionRecord(ctx context.Context, bill *domain.BillRecord, exceptionType domain.ExceptionType, detail string) error {
+	exception := &domain.ExceptionRecord{
 		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(bill.ID, strconv.Itoa(int(exceptionType))),
 		ExceptionType:   exceptionType,
 		BillID:          bill.ID,
@@ -255,7 +262,7 @@ func (s *SessionPayoutService) createExceptionRecord(ctx context.Context, bill *
 		BillType:        bill.BillType,
 		UserID:          bill.UserID,
 		Amount:          bill.Amount,
-		Status:          model.ExceptionStatusPending,
+		Status:          domain.ExceptionStatusPending,
 		ExceptionDetail: detail,
 	}
 

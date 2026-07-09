@@ -32,10 +32,12 @@
 //
 // # 4. 退款域
 //
-//   - RefundService：负责退款申请（ApplyForRefund）、审批（ApproveRefund）、驳回（RejectRefund）、
-//     查询（GetRefundAuditByOrderNo/GetRefundsByStatus）。
+//   - RefundApplyService：负责退款申请（ApplyForRefund）。
+//     跨表事务（refund_audit + bill_record）由 Service 内部通过 dbRepo.WithTransaction 编排。
+//   - RefundExecuteService：负责退款审批（ApproveRefund）、驳回（RejectRefund）与执行（executeRefund）。
 //     跨表事务（refund_audit + bill_record）由 Service 内部通过 dbRepo.WithTransaction 编排。
 //     审批含 platform.Credit RPC，采用 Processing 中间状态 + BizOrderNo 幂等兜底。
+//   - RefundQueryService：负责退款记录查询（GetRefundAuditByOrderNo/GetRefundsByStatus），只读用例，无需事务。
 //
 // # 5. 重试与对账域
 //

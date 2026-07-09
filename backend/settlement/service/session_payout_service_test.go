@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/cashparty/backend/settlement/domain"
-	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
 
 // ============================================================================
@@ -159,8 +157,8 @@ func TestCreditSessionPayouts_ParseAmountFailure(t *testing.T) {
 	if billRepo.updateBillStatusCalls == 0 {
 		t.Fatal("ParseAmount 失败时应调用 UpdateBillStatus 标记 Failed")
 	}
-	if billRepo.lastUpdateStatusTo != dto.BillStatusFailed {
-		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, dto.BillStatusFailed)
+	if billRepo.lastUpdateStatusTo != domain.BillStatusFailed {
+		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, domain.BillStatusFailed)
 	}
 
 	// 验证创建了异常记录（UpdateBillExceptionID 被调用）
@@ -193,8 +191,8 @@ func TestCreditSessionPayouts_PlatformCreditFailure(t *testing.T) {
 	}
 
 	// 验证 bill 标记为 Failed
-	if billRepo.lastUpdateStatusTo != dto.BillStatusFailed {
-		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, dto.BillStatusFailed)
+	if billRepo.lastUpdateStatusTo != domain.BillStatusFailed {
+		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)", billRepo.lastUpdateStatusTo, domain.BillStatusFailed)
 	}
 
 	// 验证设置了重试（IncrementRetryCountWithNextRetryTime 被调用）
@@ -212,8 +210,8 @@ func TestCreditSessionPayouts_PlatformCreditFailure(t *testing.T) {
 func TestCreditSessionPayouts_Idempotent(t *testing.T) {
 	billRepo, robotChecker, virtualBalance, platformClient := makePayoutMocks()
 	// 模拟已存在 Success 状态的 session credit bill
-	billRepo.getBillsBySessionTypeAndUserRes = []*model.BillRecord{
-		{ID: 1, UserID: 1001, Status: dto.BillStatusSuccess, BillType: dto.BillTypeSessionCredit},
+	billRepo.getBillsBySessionTypeAndUserRes = []*domain.BillRecord{
+		{ID: 1, UserID: 1001, Status: domain.BillStatusSuccess, BillType: domain.BillTypeSessionCredit},
 	}
 	svc := newTestSessionPayoutService(t, billRepo, robotChecker, virtualBalance, platformClient)
 

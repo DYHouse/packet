@@ -6,13 +6,11 @@
 //
 // # 入口 facade
 //
-// 本包提供 3 个 AppService：
+// 本包提供 2 个 AppService：
 //
 //   - SettleAppService：结算用例入口，编排单局结算（SettleRound）、游戏级结算（SettleGame）、
 //     扣款（DeductForFirstRound/LaterRound/SystemPacket）、罚款（DeductPenaltyToPlatform/
 //     DistributePenaltyFromPlatform）、余额查询（CheckBalance/CheckBalanceForReady）。
-//   - RefundAppService：退款用例入口，转发退款申请（ApplyForRefund）、审批（ApproveRefund）、
-//     驳回（RejectRefund）、查询（GetRefundAuditByOrderNo/GetRefundsByStatus）。
 //   - SchedulerAppService：调度器用例入口，为 5 个 scheduler 提供统一方法
 //     （RetryCreditBills/RetryGameSettle/SettleGameByTimeout/ProcessPendingRefunds/RunSettlementCheck）。
 //
@@ -29,10 +27,8 @@
 //     在 AppService 层通过 dbRepo.WithTransaction 开启事务，向下传递 tx。
 //   - 含 RPC 的用例（SettleGame、DeductPenaltyToPlatform、DeductForFirstRound、DeductForLaterRound）：
 //     事务由 Service 内部对 DB 写入片段编排，AppService 仅纯转发。
-//   - 只读用例（CheckBalance、CheckBalanceForReady、退款查询）：
+//   - 只读用例（CheckBalance、CheckBalanceForReady）：
 //     无需事务，AppService 纯转发。
-//   - 退款用例（ApplyForRefund/ApproveRefund/RejectRefund）：
-//     跨表事务（refund_audit + bill_record）由 RefundService 内部通过 dbRepo.WithTransaction 编排。
 //   - 调度器用例（SchedulerAppService 各方法）：
 //     逻辑与原 scheduler.execute() 完全等价，事务边界与错误处理保持一致。
 package application

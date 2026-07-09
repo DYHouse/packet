@@ -1,32 +1,19 @@
 package model
 
-import "time"
+import (
+	"time"
 
-type ExceptionType int
-
-const (
-	ExceptionTypeDebitFailed        ExceptionType = 1
-	ExceptionTypeCreditRetryExceed  ExceptionType = 2
-	ExceptionTypeDeductedNotSettled ExceptionType = 3
+	"github.com/cashparty/backend/settlement/domain"
 )
 
-type ExceptionStatus int
+// ExceptionType 异常类型枚举（type alias 引用 domain 层定义，反转依赖方向）。
+type ExceptionType = domain.ExceptionType
 
-const (
-	ExceptionStatusPending    ExceptionStatus = 0
-	ExceptionStatusProcessing ExceptionStatus = 1
-	ExceptionStatusResolved   ExceptionStatus = 2
-	ExceptionStatusIgnored    ExceptionStatus = 3
-)
+// ExceptionStatus 异常处理状态枚举（type alias 引用 domain 层定义）。
+type ExceptionStatus = domain.ExceptionStatus
 
-type HandleType int
-
-const (
-	HandleTypeManual HandleType = 1
-	HandleTypeRefund HandleType = 2
-	HandleTypeRetry  HandleType = 3
-	HandleTypeIgnore HandleType = 4
-)
+// HandleType 异常处理方式枚举（type alias 引用 domain 层定义）。
+type HandleType = domain.HandleType
 
 type ExceptionRecord struct {
 	ID              int64           `gorm:"primaryKey;autoIncrement" json:"id"`

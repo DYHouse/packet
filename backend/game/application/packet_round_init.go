@@ -10,6 +10,7 @@ import (
 	"github.com/cashparty/backend/game/domain/room"
 	roundDom "github.com/cashparty/backend/game/domain/round"
 	"github.com/cashparty/backend/game/model"
+	"github.com/cashparty/backend/settlement/domain"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 )
 
@@ -176,7 +177,7 @@ func (p *PacketOrchestrator) initRoundAndDeduct(ctx context.Context, roomID stri
 	}
 
 	return p.initRoundCore(ctx, roomID, meta, roundNo, &roundInitDeductStep{
-		deductScene:  settlementDto.DeductSceneFirstRoundShare,
+		deductScene:  domain.DeductSceneFirstRoundShare,
 		deductAmount: meta.RoomFee,
 		senderID:     0,
 		senderType:   roundDom.SenderTypeSystem,
@@ -222,7 +223,7 @@ func (p *PacketOrchestrator) initLaterRoundAndDeduct(ctx context.Context, roomID
 	}
 
 	return p.initRoundCore(ctx, roomID, meta, roundNo, &roundInitDeductStep{
-		deductScene:  settlementDto.DeductSceneLaterRoundMin,
+		deductScene:  domain.DeductSceneLaterRoundMin,
 		deductAmount: roomFee,
 		senderID:     senderIDInt,
 		senderType:   senderType,
@@ -265,7 +266,7 @@ func (p *PacketOrchestrator) initSystemRoundAndDeduct(ctx context.Context, roomI
 	}
 
 	return p.initRoundCore(ctx, roomID, meta, roundNo, &roundInitDeductStep{
-		deductScene:  settlementDto.DeductSceneSystemPacket,
+		deductScene:  domain.DeductSceneSystemPacket,
 		deductAmount: totalAmount,
 		senderID:     0,
 		senderType:   "system",

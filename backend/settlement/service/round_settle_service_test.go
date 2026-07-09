@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
 
 // ============================================================================
@@ -20,15 +20,15 @@ func newRoundSettleService(billRepo *mockBillRepo, roundSettlementRepo *mockRoun
 }
 
 // newTestSettlement 构造测试用回合结算记录（状态为 Deducted，可进入 SettleRound 流程）。
-func newTestSettlement() *model.RoundSettlement {
-	return &model.RoundSettlement{
+func newTestSettlement() *domain.RoundSettlement {
+	return &domain.RoundSettlement{
 		ID:           1,
 		RoundTraceID: "RT_1000_1",
 		RoomID:       100,
 		SessionID:    1000,
 		RoundID:      10000,
 		RoundNo:      1,
-		Status:       dto.RoundStatusDeducted,
+		Status:       domain.RoundStatusDeducted,
 	}
 }
 
@@ -98,8 +98,8 @@ func TestSettleRound_Success_RealPlayer(t *testing.T) {
 
 	// 验证 bill 状态为 Success 且 IsRobot=false（真人玩家）
 	for _, b := range billRepo.createBillsArg {
-		if b.Status != dto.BillStatusSuccess {
-			t.Errorf("bill 状态 = %d, 期望 %d (Success)", b.Status, dto.BillStatusSuccess)
+		if b.Status != domain.BillStatusSuccess {
+			t.Errorf("bill 状态 = %d, 期望 %d (Success)", b.Status, domain.BillStatusSuccess)
 		}
 		if b.IsRobot {
 			t.Errorf("真人玩家 bill.IsRobot 应为 false")
@@ -172,8 +172,8 @@ func TestSettleRound_Success_WithCommission(t *testing.T) {
 	if billRepo.createBillArg == nil {
 		t.Fatalf("佣金 bill 参数为 nil")
 	}
-	if billRepo.createBillArg.BillType != dto.BillTypeCommission {
-		t.Errorf("佣金 bill 类型 = %d, 期望 %d", billRepo.createBillArg.BillType, dto.BillTypeCommission)
+	if billRepo.createBillArg.BillType != domain.BillTypeCommission {
+		t.Errorf("佣金 bill 类型 = %d, 期望 %d", billRepo.createBillArg.BillType, domain.BillTypeCommission)
 	}
 	if billRepo.createBillArg.UserID != dto.PlatformAccountID {
 		t.Errorf("佣金 bill UserID = %d, 期望 %d (PlatformAccountID)", billRepo.createBillArg.UserID, dto.PlatformAccountID)
@@ -229,10 +229,10 @@ func TestSettleRound_CreateBillsError(t *testing.T) {
 func TestSettleRound_Idempotent_AlreadyCredited(t *testing.T) {
 	billRepo, roundSettlementRepo, robotChecker := makeRoundSettleMocks()
 	// 预检查阶段即返回 Credited 状态，直接短路返回
-	roundSettlementRepo.getRoundSettlementByRoundIDResult = &model.RoundSettlement{
+	roundSettlementRepo.getRoundSettlementByRoundIDResult = &domain.RoundSettlement{
 		ID:      1,
 		RoundID: 10000,
-		Status:  dto.RoundStatusCredited,
+		Status:  domain.RoundStatusCredited,
 	}
 	svc := newRoundSettleService(billRepo, roundSettlementRepo, robotChecker, nil)
 	tx := &mockTransaction{billRepo: billRepo, roundSettlementRepo: roundSettlementRepo}

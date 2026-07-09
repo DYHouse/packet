@@ -1,22 +1,20 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // RoundStatus 回合结算状态枚举值，表示单局结算的生命周期阶段。
 // 状态流转：
 //
 //	Deducting(0) → Deducted(1) / Failed(5)
-//	Deducted(1) → Settling(2)
-//	Settling(2) → Success(3) / Partial(4) / Failed(5)
-//	Success(3) → Credited(6)
-//	Partial(4) → Credited(6)
+//	Deducted(1) → Credited(6) / Failed(5)
 //	Credited(6) / Failed(5) 为终态。
 const (
 	RoundStatusDeducting = 0
 	RoundStatusDeducted  = 1
-	RoundStatusSettling  = 2
-	RoundStatusSuccess   = 3
-	RoundStatusPartial   = 4
 	RoundStatusFailed    = 5
 	RoundStatusCredited  = 6
 )
@@ -69,4 +67,25 @@ func (r *RoundSettlement) CanSettle() bool {
 // Credited 与 Failed 为终态。
 func (r *RoundSettlement) IsTerminalStatus() bool {
 	return r.Status == RoundStatusCredited || r.Status == RoundStatusFailed
+}
+
+// TransitionTo 校验状态转换的合法性，作为状态机守卫方法。
+// 仅校验不修改状态；调用方校验通过后自行更新 Status 字段。
+// 合法转换返回 nil，非法转换返回 error 描述当前状态与目标状态。
+// 合法转换：Deducting(0) → Deducted(1) / Failed(5)；Deducted(1) → Credited(6) / Failed(5)。
+func (r *RoundSettlement) TransitionTo(newStatus int) error {
+	if r == nil {
+		return errors.New("RoundSettlement is nil")
+	}
+	allowed := false
+	switch r.Status {
+	case RoundStatusDeducting:
+		allowed = newStatus == RoundStatusDeducted || newStatus == RoundStatusFailed
+	case RoundStatusDeducted:
+		allowed = newStatus == RoundStatusCredited || newStatus == RoundStatusFailed
+	}
+	if !allowed {
+		return fmt.Errorf("invalid round settlement status transition: %d -> %d", r.Status, newStatus)
+	}
+	return nil
 }

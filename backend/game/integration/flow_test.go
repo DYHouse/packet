@@ -5,6 +5,7 @@ import (
 
 	gameAlg "github.com/cashparty/backend/game/algorithm"
 	"github.com/cashparty/backend/game/domain/reward"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/dto"
 )
 
@@ -148,9 +149,9 @@ func TestIntegration_SendPacket_GrabPacket_Settle_Account(t *testing.T) {
 		t.Errorf("UpdateRoundSettlementStatus 调用次数 = %d, 期望 1",
 			env.roundSettleRepo.updateRoundSettlementStatusCalls)
 	}
-	if env.roundSettleRepo.lastStatusStatus != dto.RoundStatusDeducted {
+	if env.roundSettleRepo.lastStatusStatus != domain.RoundStatusDeducted {
 		t.Errorf("回合状态 = %d, 期望 %d (Deducted)",
-			env.roundSettleRepo.lastStatusStatus, dto.RoundStatusDeducted)
+			env.roundSettleRepo.lastStatusStatus, domain.RoundStatusDeducted)
 	}
 }
 
@@ -210,9 +211,9 @@ func TestIntegration_RobotPlayer_Flow(t *testing.T) {
 	}
 
 	// 验证回合结算状态更新为 Deducted
-	if env.roundSettleRepo.lastStatusStatus != dto.RoundStatusDeducted {
+	if env.roundSettleRepo.lastStatusStatus != domain.RoundStatusDeducted {
 		t.Errorf("回合状态 = %d, 期望 %d (Deducted)",
-			env.roundSettleRepo.lastStatusStatus, dto.RoundStatusDeducted)
+			env.roundSettleRepo.lastStatusStatus, domain.RoundStatusDeducted)
 	}
 }
 
@@ -325,9 +326,9 @@ func TestIntegration_ParseAmountFailure_Flow(t *testing.T) {
 	if env.billRepo.updateBillStatusCalls == 0 {
 		t.Fatal("ParseAmount 失败时应调用 UpdateBillStatus 标记 Failed")
 	}
-	if env.billRepo.lastUpdateStatusTo != dto.BillStatusFailed {
+	if env.billRepo.lastUpdateStatusTo != domain.BillStatusFailed {
 		t.Errorf("bill 最终状态 = %d, 期望 %d (Failed)",
-			env.billRepo.lastUpdateStatusTo, dto.BillStatusFailed)
+			env.billRepo.lastUpdateStatusTo, domain.BillStatusFailed)
 	}
 
 	// 验证创建了异常记录（UpdateBillExceptionID 被调用，P0-3）

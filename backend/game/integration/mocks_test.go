@@ -19,7 +19,6 @@ import (
 	"github.com/cashparty/backend/settlement/domain"
 	settlementRepository "github.com/cashparty/backend/settlement/domain/repository"
 	settlementMysqlRepo "github.com/cashparty/backend/settlement/infrastructure/persistence/mysql"
-	"github.com/cashparty/backend/settlement/model"
 	"github.com/cashparty/backend/settlement/service"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -185,10 +184,10 @@ type mockBillRepo struct {
 	lastUpdateStatusErrMsg string
 	lastUpdateSuccessBal   int64
 	lastUpdateExceptionID  int64
-	lastCreateBillsArg     []*model.BillRecord
+	lastCreateBillsArg     []*domain.BillRecord
 }
 
-func (m *mockBillRepo) CreateBills(_ context.Context, bills []*model.BillRecord) error {
+func (m *mockBillRepo) CreateBills(_ context.Context, bills []*domain.BillRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.createBillsCalls++
@@ -247,7 +246,7 @@ func (m *mockRoundSettlementRepo) ExistsRoundSettlement(_ context.Context, _ int
 	return m.existsRoundSettlementResult, m.existsRoundSettlementErr
 }
 
-func (m *mockRoundSettlementRepo) CreateRoundSettlementAndBills(_ context.Context, _ *model.RoundSettlement, _ []*model.BillRecord) error {
+func (m *mockRoundSettlementRepo) CreateRoundSettlementAndBills(_ context.Context, _ *domain.RoundSettlement, _ []*domain.BillRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.createRoundSettlementAndBillsCalls++
@@ -310,7 +309,7 @@ type mockRefundAuditRepo struct {
 	createErr error
 }
 
-func (m *mockRefundAuditRepo) CreateRefundAuditAndUpdateBillRefundStatus(_ context.Context, _ *model.RefundAudit, _ int64, _, _ int, _ string) error {
+func (m *mockRefundAuditRepo) CreateRefundAuditAndUpdateBillRefundStatus(_ context.Context, _ *domain.RefundAudit, _ int64, _, _ int, _ string) error {
 	return m.createErr
 }
 
@@ -605,12 +604,13 @@ func newIntegrationEnv(t *testing.T, isRobot bool, debitAmount string) *integrat
 		billRepo, platformClient, testRedisClient,
 		traceIDGen, nil, nil,
 		exceptionMgr, userConvert, callMgr,
+		0, 0, 0,
 	)
 	deductSvc := service.NewDeductService(
 		platformClient, dbRepo, billRepo, roundSettleRepo, refundAuditRepo,
 		testRedisClient, traceIDGen, nil, nil,
 		creditRetrySvc, userConvert, callMgr,
-		robotChecker, virtualBalance,
+		robotChecker, virtualBalance, 0,
 	)
 
 	return &integrationEnv{

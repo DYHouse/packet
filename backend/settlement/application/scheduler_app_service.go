@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
 	"github.com/cashparty/backend/settlement/service"
@@ -19,7 +20,7 @@ import (
 type SchedulerAppService struct {
 	creditRetrySvc      *service.CreditRetryService
 	gameSettleSvc       *service.GameSettleReportingService
-	refundSvc           *service.RefundService
+	refundExecuteSvc    *service.RefundExecuteService
 	settlementCheckSvc  *service.SettlementCheckService
 	roundSettlementRepo repository.RoundSettlementRepository
 	settlementQueryRepo repository.SettlementQueryRepository
@@ -32,7 +33,7 @@ type SchedulerAppService struct {
 func NewSchedulerAppService(
 	creditRetrySvc *service.CreditRetryService,
 	gameSettleSvc *service.GameSettleReportingService,
-	refundSvc *service.RefundService,
+	refundExecuteSvc *service.RefundExecuteService,
 	settlementCheckSvc *service.SettlementCheckService,
 	roundSettlementRepo repository.RoundSettlementRepository,
 	settlementQueryRepo repository.SettlementQueryRepository,
@@ -41,7 +42,7 @@ func NewSchedulerAppService(
 	return &SchedulerAppService{
 		creditRetrySvc:      creditRetrySvc,
 		gameSettleSvc:       gameSettleSvc,
-		refundSvc:           refundSvc,
+		refundExecuteSvc:    refundExecuteSvc,
 		settlementCheckSvc:  settlementCheckSvc,
 		roundSettlementRepo: roundSettlementRepo,
 		settlementQueryRepo: settlementQueryRepo,
@@ -99,7 +100,7 @@ func (s *SchedulerAppService) RetryGameSettle(ctx context.Context, limit int) er
 		}
 
 		if allSuccess && len(userIDs) > 0 {
-			if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusFailed, dto.GameSettleStatusSuccess); err != nil {
+			if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, domain.GameSettleStatusFailed, domain.GameSettleStatusSuccess); err != nil {
 				logger.Error("update game settle status by session failed", "session_id", sessionID, "error", err)
 			}
 		}
@@ -133,15 +134,15 @@ func (s *SchedulerAppService) SettleGameByTimeout(ctx context.Context, timeoutDu
 // 对首回合失败类型的退款执行自动审批。limit 与 offset 由 scheduler 配置透传；
 // 行为与原 scheduler 完全一致。
 func (s *SchedulerAppService) ProcessPendingRefunds(ctx context.Context, limit int, offset int) error {
-	refunds, err := s.refundAuditRepo.GetRefundsByStatus(ctx, dto.RefundStatusPending, limit, offset)
+	refunds, err := s.refundAuditRepo.GetRefundsByStatus(ctx, domain.RefundStatusPending, limit, offset)
 	if err != nil {
 		logger.Error("get pending refunds failed", "error", err)
 		return err
 	}
 
 	for _, refund := range refunds {
-		if refund.RefundType == dto.RefundTypeFirstRoundFail {
-			if err := s.refundSvc.ApproveRefund(ctx, &dto.RefundApproveRequest{
+		if refund.RefundType == domain.RefundTypeFirstRoundFail {
+			if err := s.refundExecuteSvc.ApproveRefund(ctx, &dto.RefundApproveRequest{
 				RefundOrderNo: refund.RefundOrderNo,
 				ApprovedBy:    0,
 			}); err != nil {
@@ -154,14 +155,14 @@ func (s *SchedulerAppService) ProcessPendingRefunds(ctx context.Context, limit i
 }
 
 // RunSettlementCheck 等价于 SettlementCheckScheduler.execute()：依次执行首回合扣款失败
-// 与已扣款未结算两项一致性检查。failedFirstRoundLookback 与 deductedNotSettledLookback
+// 与已扣款未结算两项一致性检查。failedFirstRoundLookback、deductedNotSettledLookback 与 limit
 // 由 scheduler 配置透传；行为与原 scheduler 完全一致。
-func (s *SchedulerAppService) RunSettlementCheck(ctx context.Context, failedFirstRoundLookback time.Duration, deductedNotSettledLookback time.Duration) error {
-	if err := s.settlementCheckSvc.CheckFirstRoundDeductFailure(ctx, time.Now().Add(-failedFirstRoundLookback)); err != nil {
+func (s *SchedulerAppService) RunSettlementCheck(ctx context.Context, failedFirstRoundLookback time.Duration, deductedNotSettledLookback time.Duration, limit int) error {
+	if err := s.settlementCheckSvc.CheckFirstRoundDeductFailure(ctx, time.Now().Add(-failedFirstRoundLookback), limit); err != nil {
 		logger.Error("check first round deduct failure failed", "error", err)
 		return err
 	}
-	if err := s.settlementCheckSvc.CheckDeductedButNotSettled(ctx, time.Now().Add(-deductedNotSettledLookback)); err != nil {
+	if err := s.settlementCheckSvc.CheckDeductedButNotSettled(ctx, time.Now().Add(-deductedNotSettledLookback), limit); err != nil {
 		logger.Error("check deducted but not settled failed", "error", err)
 		return err
 	}

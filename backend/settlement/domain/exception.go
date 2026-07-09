@@ -2,39 +2,35 @@ package domain
 
 import (
 	"time"
-
-	"github.com/cashparty/backend/settlement/model"
 )
 
-// ExceptionType 异常类型枚举（从 model 层重导出，确保 domain 为单一真理源）。
-// 枚举定义保留在 model/ 层，因为 model.ExceptionRecord GORM 实体引用该类型；
-// domain 层通过 type alias 重导出，使新代码统一引用 domain.ExceptionType。
-type ExceptionType = model.ExceptionType
+// ExceptionType 异常类型枚举（domain 层原生定义，model 层通过 type alias 引用）。
+type ExceptionType int
 
-// ExceptionStatus 异常处理状态枚举（从 model 层重导出）。
-type ExceptionStatus = model.ExceptionStatus
+// ExceptionStatus 异常处理状态枚举（domain 层原生定义）。
+type ExceptionStatus int
 
-// HandleType 异常处理方式枚举（从 model 层重导出）。
-type HandleType = model.HandleType
+// HandleType 异常处理方式枚举（domain 层原生定义）。
+type HandleType int
 
 const (
-	ExceptionTypeDebitFailed        ExceptionType = model.ExceptionTypeDebitFailed
-	ExceptionTypeCreditRetryExceed  ExceptionType = model.ExceptionTypeCreditRetryExceed
-	ExceptionTypeDeductedNotSettled ExceptionType = model.ExceptionTypeDeductedNotSettled
+	ExceptionTypeDebitFailed        ExceptionType = 1
+	ExceptionTypeCreditRetryExceed  ExceptionType = 2
+	ExceptionTypeDeductedNotSettled ExceptionType = 3
 )
 
 const (
-	ExceptionStatusPending    ExceptionStatus = model.ExceptionStatusPending
-	ExceptionStatusProcessing ExceptionStatus = model.ExceptionStatusProcessing
-	ExceptionStatusResolved   ExceptionStatus = model.ExceptionStatusResolved
-	ExceptionStatusIgnored    ExceptionStatus = model.ExceptionStatusIgnored
+	ExceptionStatusPending    ExceptionStatus = 0
+	ExceptionStatusProcessing ExceptionStatus = 1
+	ExceptionStatusResolved   ExceptionStatus = 2
+	ExceptionStatusIgnored    ExceptionStatus = 3
 )
 
 const (
-	HandleTypeManual HandleType = model.HandleTypeManual
-	HandleTypeRefund HandleType = model.HandleTypeRefund
-	HandleTypeRetry  HandleType = model.HandleTypeRetry
-	HandleTypeIgnore HandleType = model.HandleTypeIgnore
+	HandleTypeManual HandleType = 1
+	HandleTypeRefund HandleType = 2
+	HandleTypeRetry  HandleType = 3
+	HandleTypeIgnore HandleType = 4
 )
 
 // ExceptionRecord 异常记录聚合根，表示结算流程中产生的异常事件及其处理记录。

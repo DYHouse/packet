@@ -10,9 +10,9 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
 
 // RoundSettleService 负责单局结算相关操作：写 grab/commission BillRecord、触发奖励结算、
@@ -58,7 +58,7 @@ func NewRoundSettleService(
 func (s *RoundSettleService) SettleRound(ctx context.Context, tx repository.Transaction, req *dto.RoundSettleRequest) error {
 	roundSettlementRepo := tx.RoundSettlementRepo()
 	settlement, err := roundSettlementRepo.GetRoundSettlementByRoundID(ctx, req.RoundID)
-	if err == nil && settlement != nil && settlement.Status == dto.RoundStatusCredited {
+	if err == nil && settlement != nil && settlement.Status == domain.RoundStatusCredited {
 		return nil
 	}
 
@@ -72,7 +72,7 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, tx repository.Tran
 			return fmt.Errorf("round settlement not found for roundID: %d", req.RoundID)
 		}
 
-		if existingSettlement.Status == dto.RoundStatusCredited {
+		if existingSettlement.Status == domain.RoundStatusCredited {
 			return nil
 		}
 
@@ -106,6 +106,15 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, tx repository.Tran
 		}
 
 		// 所有子结算成功后才标记 round_settlement.status = Credited
+		// 状态机守卫：校验 Deducted → Credited 合法性，非法状态（如 Failed）拒绝推进，fail-closed。
+		if err := existingSettlement.TransitionTo(domain.RoundStatusCredited); err != nil {
+			logger.Error("invalid round settlement status transition before credited",
+				"round_trace_id", existingSettlement.RoundTraceID,
+				"current_status", existingSettlement.Status,
+				"target_status", domain.RoundStatusCredited,
+				"error", err)
+			return fmt.Errorf("invalid round settlement status transition before credited: %w", err)
+		}
 		now := time.Now()
 		if err := roundSettlementRepo.UpdateRoundSettlementCredited(ctx, existingSettlement.RoundTraceID, totalSettleAmount, settleUserCount, &now); err != nil {
 			return fmt.Errorf("update round settlement credited failed: %w", err)
@@ -121,7 +130,7 @@ func (s *RoundSettleService) SettleRound(ctx context.Context, tx repository.Tran
 // 返回 totalSettleAmount/settleUserCount 供 SettleRound 在所有子结算成功后统一标记 round_settlement.status。
 // 不再在此处调用 UpdateRoundSettlementCredited，避免 reward 失败后 status 被提前置位导致重试无法补偿。
 // tx 由 SettleRound 从 AppService 事务回调传入，所有 DB 操作纳入同一事务。
-func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Transaction, settlement *model.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
+func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Transaction, settlement *domain.RoundSettlement, players []*dto.PlayerSettleInfo) (int64, int, error) {
 	billRepo := tx.BillRepo()
 	if settlement.Commission > 0 {
 		if err := s.settleCommission(ctx, tx, settlement); err != nil {
@@ -130,7 +139,7 @@ func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Tran
 		}
 	}
 
-	bills := make([]*model.BillRecord, 0)
+	bills := make([]*domain.BillRecord, 0)
 	var totalSettleAmount int64
 	var settleUserCount int
 
@@ -139,9 +148,9 @@ func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Tran
 			continue
 		}
 
-		existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeGrabPacket, player.UserID)
+		existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, domain.BillTypeGrabPacket, player.UserID)
 		if err == nil && existingBill != nil {
-			if existingBill.Status == dto.BillStatusSuccess {
+			if existingBill.Status == domain.BillStatusSuccess {
 				totalSettleAmount += player.Amount
 				settleUserCount++
 			}
@@ -156,17 +165,17 @@ func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Tran
 			return 0, 0, fmt.Errorf("check robot failed: %w", err)
 		}
 
-		bill := &model.BillRecord{
+		bill := &domain.BillRecord{
 			RoundTraceID: settlement.RoundTraceID,
-			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeGrabPacket, player.UserID),
-			BillType:     dto.BillTypeGrabPacket,
+			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, domain.BillTypeGrabPacket, player.UserID),
+			BillType:     domain.BillTypeGrabPacket,
 			RoomID:       settlement.RoomID,
 			SessionID:    settlement.SessionID,
 			RoundID:      settlement.RoundID,
 			RoundNo:      settlement.RoundNo,
 			UserID:       player.UserID,
 			Amount:       player.Amount,
-			Status:       dto.BillStatusSuccess,
+			Status:       domain.BillStatusSuccess,
 			Remark:       fmt.Sprintf("抢红包收入(待会话级入账),局ID:%d", settlement.RoundID),
 			IsRobot:      isRobot,
 		}
@@ -184,26 +193,26 @@ func (s *RoundSettleService) creditRound(ctx context.Context, tx repository.Tran
 	return totalSettleAmount, settleUserCount, nil
 }
 
-func (s *RoundSettleService) settleCommission(ctx context.Context, tx repository.Transaction, settlement *model.RoundSettlement) error {
+func (s *RoundSettleService) settleCommission(ctx context.Context, tx repository.Transaction, settlement *domain.RoundSettlement) error {
 	billRepo := tx.BillRepo()
-	existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, dto.BillTypeCommission, dto.PlatformAccountID)
+	existingBill, err := billRepo.GetBillByRoundTypeAndUser(ctx, settlement.RoundID, domain.BillTypeCommission, dto.PlatformAccountID)
 	if err == nil && existingBill != nil {
-		if existingBill.Status == dto.BillStatusSuccess {
+		if existingBill.Status == domain.BillStatusSuccess {
 			return nil
 		}
 	}
 
-	commissionBill := &model.BillRecord{
+	commissionBill := &domain.BillRecord{
 		RoundTraceID: settlement.RoundTraceID,
-		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, dto.BillTypeCommission, dto.PlatformAccountID),
-		BillType:     dto.BillTypeCommission,
+		BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(settlement.RoundTraceID, domain.BillTypeCommission, dto.PlatformAccountID),
+		BillType:     domain.BillTypeCommission,
 		RoomID:       settlement.RoomID,
 		SessionID:    settlement.SessionID,
 		RoundID:      settlement.RoundID,
 		RoundNo:      settlement.RoundNo,
 		UserID:       dto.PlatformAccountID,
 		Amount:       settlement.Commission,
-		Status:       dto.BillStatusSuccess,
+		Status:       domain.BillStatusSuccess,
 		Remark:       fmt.Sprintf("佣金收入,局ID:%d", settlement.RoundID),
 	}
 

@@ -8,54 +8,46 @@ import (
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/lock"
 	"github.com/cashparty/backend/common/logger"
-	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
 
-// RefundService 负责退款申请、审批与执行。
+// RefundExecuteService 负责退款审批与执行。
 // dbRepo 用于跨表事务方法（同时更新 refund_audit 与 bill_record）的事务编排。
-type RefundService struct {
+// 审批含 platform.Credit RPC，采用 Processing 中间状态 + BizOrderNo 幂等兜底。
+type RefundExecuteService struct {
 	platform        platform.Client
 	dbRepo          repository.DBRepository
-	billRepo        repository.BillRepository
 	refundAuditRepo repository.RefundAuditRepository
-	redis           cRedis.RedisClient
-	traceIDGen      *TraceIDGenerator
 	cfg             *config.PlatformConfig
 	lockCfg         *config.LockConfig
 	userIDConvert   *UserIDConvertService
 	callMgr         repository.PlatformCallLogRepository
 }
 
-func NewRefundService(
+// NewRefundExecuteService 构造 RefundExecuteService 实例。
+func NewRefundExecuteService(
 	platformClient platform.Client,
 	dbRepo repository.DBRepository,
-	billRepo repository.BillRepository,
 	refundAuditRepo repository.RefundAuditRepository,
-	redis cRedis.RedisClient,
-	traceIDGen *TraceIDGenerator,
 	cfg *config.PlatformConfig,
 	lockCfg *config.LockConfig,
 	userIDConvert *UserIDConvertService,
 	callMgr repository.PlatformCallLogRepository,
-) *RefundService {
+) *RefundExecuteService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
 	if lockCfg == nil {
 		lockCfg = config.DefaultLockConfig()
 	}
-	return &RefundService{
+	return &RefundExecuteService{
 		platform:        platformClient,
 		dbRepo:          dbRepo,
-		billRepo:        billRepo,
 		refundAuditRepo: refundAuditRepo,
-		redis:           redis,
-		traceIDGen:      traceIDGen,
 		cfg:             cfg,
 		lockCfg:         lockCfg,
 		userIDConvert:   userIDConvert,
@@ -63,74 +55,14 @@ func NewRefundService(
 	}
 }
 
-func (s *RefundService) ApplyForRefund(ctx context.Context, req *dto.RefundApplyRequest) (string, error) {
-	lockKey := rediskeys.RefundApplyLockKey(req.BillID)
-	var refundOrderNo string
-	err := lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.RefundApplyLockTTL.Seconds()), func() error {
-		var applyErr error
-		refundOrderNo, applyErr = s.applyForRefundLocked(ctx, req)
-		return applyErr
-	})
-	return refundOrderNo, err
-}
-
-func (s *RefundService) applyForRefundLocked(ctx context.Context, req *dto.RefundApplyRequest) (string, error) {
-	bill, err := s.billRepo.GetBillByID(ctx, req.BillID)
-	if err != nil {
-		return "", fmt.Errorf("bill not found: %w", err)
-	}
-
-	if bill.Status != dto.BillStatusSuccess {
-		return "", fmt.Errorf("bill status is not success, cannot refund")
-	}
-
-	if bill.RefundStatus == dto.RefundStatusRefunded {
-		return "", fmt.Errorf("bill already refunded")
-	}
-
-	if bill.RefundStatus == dto.RefundStatusPending {
-		existingRefund, err := s.refundAuditRepo.GetRefundAuditByBillID(ctx, bill.ID)
-		if err == nil && existingRefund != nil {
-			return existingRefund.RefundOrderNo, nil
-		}
-	}
-
-	refundOrderNo := s.traceIDGen.GenerateRefundOrderNo(bill.ID)
-	refundAudit := &model.RefundAudit{
-		RefundOrderNo: refundOrderNo,
-		RoundTraceID:  bill.RoundTraceID,
-		BatchID:       bill.BatchID,
-		RoomID:        bill.RoomID,
-		SessionID:     bill.SessionID,
-		RoundID:       bill.RoundID,
-		UserID:        bill.UserID,
-		BillID:        bill.ID,
-		BillOrderNo:   bill.BizOrderNo,
-		RefundAmount:  req.RefundAmount,
-		RefundReason:  req.RefundReason,
-		RefundType:    req.RefundType,
-		Status:        dto.RefundStatusPending,
-		AppliedAt:     time.Now(),
-		AppliedBy:     req.AppliedBy,
-	}
-
-	// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
-	if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
-		return tx.RefundAuditRepo().CreateRefundAuditAndUpdateBillRefundStatus(ctx, refundAudit, bill.ID, dto.RefundStatusNone, dto.RefundStatusPending, refundOrderNo)
-	}); err != nil {
-		return "", err
-	}
-
-	return refundOrderNo, nil
-}
-
-func (s *RefundService) ApproveRefund(ctx context.Context, req *dto.RefundApproveRequest) error {
+// ApproveRefund 审批退款单，状态置为 Approved 后立即执行退款。
+func (s *RefundExecuteService) ApproveRefund(ctx context.Context, req *dto.RefundApproveRequest) error {
 	refund, err := s.refundAuditRepo.GetRefundAuditByOrderNo(ctx, req.RefundOrderNo)
 	if err != nil {
 		return fmt.Errorf("refund audit not found: %w", err)
 	}
 
-	if refund.Status != dto.RefundStatusPending {
+	if refund.Status != domain.RefundStatusPending {
 		return fmt.Errorf("refund status is not pending")
 	}
 
@@ -141,12 +73,16 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *dto.RefundApprov
 		if err != nil {
 			return fmt.Errorf("refund audit not found: %w", err)
 		}
-		if refund.Status != dto.RefundStatusPending {
+		if refund.Status != domain.RefundStatusPending {
 			return nil
 		}
 
 		now := time.Now()
-		if err := s.refundAuditRepo.UpdateRefundAuditStatus(ctx, refund.ID, dto.RefundStatusApproved,
+		// 守卫：校验 Pending → Approved 状态转换合法性
+		if err := refund.TransitionTo(domain.RefundStatusApproved); err != nil {
+			return fmt.Errorf("invalid refund audit status transition: %w", err)
+		}
+		if err := s.refundAuditRepo.UpdateRefundAuditStatus(ctx, refund.ID, domain.RefundStatusApproved,
 			now, req.ApprovedBy, req.Remark); err != nil {
 			return err
 		}
@@ -155,9 +91,9 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *dto.RefundApprov
 	})
 }
 
-func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundAudit) error {
+func (s *RefundExecuteService) executeRefund(ctx context.Context, refund *domain.RefundAudit) error {
 	// 1. 幂等跳过：已退款的不再重复处理
-	if refund.Status == dto.RefundStatusRefunded {
+	if refund.Status == domain.RefundStatusRefunded {
 		return nil
 	}
 
@@ -165,13 +101,13 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 	//    平台暂未提供查询接口，当前依靠 BizOrderNo 幂等兜底，fall through 重试 RPC。
 
 	// 3. 将退款单置为 Processing（乐观锁 WHERE status = Approved）
-	if err := s.refundAuditRepo.UpdateRefundAuditToProcessing(ctx, refund.ID, dto.RefundStatusApproved); err != nil {
+	if err := s.refundAuditRepo.UpdateRefundAuditToProcessing(ctx, refund.ID, domain.RefundStatusApproved); err != nil {
 		return fmt.Errorf("update refund to processing failed: %w", err)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, refund.UserID)
 	if err != nil {
-		if retryErr := s.refundAuditRepo.UpdateRefundAuditToPendingForRetry(ctx, refund.ID, dto.RefundStatusProcessing, err.Error()); retryErr != nil {
+		if retryErr := s.refundAuditRepo.UpdateRefundAuditToPendingForRetry(ctx, refund.ID, domain.RefundStatusProcessing, err.Error()); retryErr != nil {
 			logger.Warn("update refund audit to pending for retry failed", "refund_id", refund.ID, "error", retryErr)
 		}
 		return fmt.Errorf("get platform user id failed: %w", err)
@@ -190,7 +126,7 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   model.CallTypeCredit,
+		CallType:   domain.CallTypeCredit,
 		BizOrderNo: refund.RefundOrderNo,
 		ReqBody:    creditReq,
 	})
@@ -200,13 +136,13 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 
 	creditResult, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		if retryErr := s.refundAuditRepo.UpdateRefundAuditToPendingForRetry(ctx, refund.ID, dto.RefundStatusProcessing, err.Error()); retryErr != nil {
+		if retryErr := s.refundAuditRepo.UpdateRefundAuditToPendingForRetry(ctx, refund.ID, domain.RefundStatusProcessing, err.Error()); retryErr != nil {
 			logger.Warn("update refund audit to pending for retry failed", "refund_id", refund.ID, "error", retryErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       model.CallLogStatusFailed,
+				Status:       domain.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -219,23 +155,24 @@ func (s *RefundService) executeRefund(ctx context.Context, refund *model.RefundA
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: creditResult,
-			Status:   model.CallLogStatusSuccess,
+			Status:   domain.CallLogStatusSuccess,
 		})
 	}
 
 	// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
 	return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
-		return tx.RefundAuditRepo().UpdateRefundSuccess(ctx, refund.ID, dto.RefundStatusProcessing, dto.BillStatusSuccess, platformTransID, time.Now())
+		return tx.RefundAuditRepo().UpdateRefundSuccess(ctx, refund.ID, domain.RefundStatusProcessing, domain.BillStatusSuccess, platformTransID, time.Now())
 	})
 }
 
-func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectRequest) error {
+// RejectRefund 驳回退款单，状态从 Pending 置为 Rejected。
+func (s *RefundExecuteService) RejectRefund(ctx context.Context, req *dto.RefundRejectRequest) error {
 	refund, err := s.refundAuditRepo.GetRefundAuditByOrderNo(ctx, req.RefundOrderNo)
 	if err != nil {
 		return fmt.Errorf("refund audit not found: %w", err)
 	}
 
-	if refund.Status != dto.RefundStatusPending {
+	if refund.Status != domain.RefundStatusPending {
 		return fmt.Errorf("refund status is not pending")
 	}
 
@@ -246,21 +183,18 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *dto.RefundRejectR
 		if err != nil {
 			return fmt.Errorf("refund audit not found: %w", err)
 		}
-		if refund.Status != dto.RefundStatusPending {
+		if refund.Status != domain.RefundStatusPending {
 			return fmt.Errorf("refund status is not pending")
+		}
+
+		// 守卫：校验 Pending → Rejected 状态转换合法性
+		if err := refund.TransitionTo(domain.RefundStatusRejected); err != nil {
+			return fmt.Errorf("invalid refund audit status transition: %w", err)
 		}
 
 		// 跨表事务（refund_audit + bill_record），通过 dbRepo.WithTransaction 编排。
 		return s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
-			return tx.RefundAuditRepo().RejectRefund(ctx, refund.ID, dto.RefundStatusPending, refund.BillID, dto.RefundStatusPending, dto.RefundStatusRejected, req.Remark)
+			return tx.RefundAuditRepo().RejectRefund(ctx, refund.ID, domain.RefundStatusPending, refund.BillID, domain.RefundStatusPending, domain.RefundStatusRejected, req.Remark)
 		})
 	})
-}
-
-func (s *RefundService) GetRefundAuditByOrderNo(ctx context.Context, refundOrderNo string) (*model.RefundAudit, error) {
-	return s.refundAuditRepo.GetRefundAuditByOrderNo(ctx, refundOrderNo)
-}
-
-func (s *RefundService) GetRefundsByStatus(ctx context.Context, status int, limit, offset int) ([]*model.RefundAudit, error) {
-	return s.refundAuditRepo.GetRefundsByStatus(ctx, status, limit, offset)
 }

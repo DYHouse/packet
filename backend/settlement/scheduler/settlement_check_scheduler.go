@@ -16,6 +16,7 @@ type SettlementCheckScheduler struct {
 	schedulerApp               *settlementApplication.SchedulerAppService
 	deductedNotSettledLookback time.Duration
 	failedFirstRoundLookback   time.Duration
+	limit                      int
 }
 
 func NewSettlementCheckScheduler(schedulerApp *settlementApplication.SchedulerAppService, redis cRedis.RedisClient, cfg commonconfig.SettlementSchedulerSubConfig) *SettlementCheckScheduler {
@@ -27,10 +28,15 @@ func NewSettlementCheckScheduler(schedulerApp *settlementApplication.SchedulerAp
 		LockTTL:      cfg.LockTTL,
 	}
 
+	limit := cfg.Limit
+	if limit <= 0 {
+		limit = 100
+	}
 	s := &SettlementCheckScheduler{
 		schedulerApp:               schedulerApp,
 		deductedNotSettledLookback: cfg.DeductedNotSettledLookback,
 		failedFirstRoundLookback:   cfg.FailedFirstRoundLookback,
+		limit:                      limit,
 	}
 	s.base = csched.NewBaseScheduler(config, s.execute, redis)
 	return s
@@ -43,7 +49,7 @@ func (s *SettlementCheckScheduler) Start(ctx context.Context) error {
 }
 
 func (s *SettlementCheckScheduler) execute(ctx context.Context) error {
-	return s.schedulerApp.RunSettlementCheck(ctx, s.failedFirstRoundLookback, s.deductedNotSettledLookback)
+	return s.schedulerApp.RunSettlementCheck(ctx, s.failedFirstRoundLookback, s.deductedNotSettledLookback, s.limit)
 }
 
 func (s *SettlementCheckScheduler) Stop() {

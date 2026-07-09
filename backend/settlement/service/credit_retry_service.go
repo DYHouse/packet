@@ -13,9 +13,9 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/settlement/config"
+	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
 
 type CreditRetryConfig struct {
@@ -28,8 +28,8 @@ type CreditRetryConfig struct {
 func DefaultCreditRetryConfig() *CreditRetryConfig {
 	return &CreditRetryConfig{
 		MaxRetryCount:   dto.MaxRetryCount,
-		BaseDelay:       5 * time.Second,
-		MaxDelay:        5 * time.Minute,
+		BaseDelay:       dto.CreditRetryBaseDelay,
+		MaxDelay:        dto.CreditRetryMaxDelay,
 		RetryMultiplier: 2.0,
 	}
 }
@@ -57,12 +57,26 @@ func NewCreditRetryService(
 	exceptionMgr repository.ExceptionRepository,
 	userIDConvert *UserIDConvertService,
 	callMgr repository.PlatformCallLogRepository,
+	baseDelay time.Duration,
+	maxDelay time.Duration,
+	maxRetryCount int,
 ) *CreditRetryService {
 	if cfg == nil {
 		cfg = config.DefaultPlatformConfig()
 	}
 	if lockCfg == nil {
 		lockCfg = config.DefaultLockConfig()
+	}
+	// 退避参数以 dto 常量为兜底默认值（与原硬编码 5s/5min/3 一致），传入非零值则覆盖。
+	retryCfg := DefaultCreditRetryConfig()
+	if baseDelay > 0 {
+		retryCfg.BaseDelay = baseDelay
+	}
+	if maxDelay > 0 {
+		retryCfg.MaxDelay = maxDelay
+	}
+	if maxRetryCount > 0 {
+		retryCfg.MaxRetryCount = maxRetryCount
 	}
 	return &CreditRetryService{
 		billRepo:      billRepo,
@@ -71,14 +85,14 @@ func NewCreditRetryService(
 		traceIDGen:    traceIDGen,
 		cfg:           cfg,
 		lockCfg:       lockCfg,
-		retryCfg:      DefaultCreditRetryConfig(),
+		retryCfg:      retryCfg,
 		exceptionMgr:  exceptionMgr,
 		userIDConvert: userIDConvert,
 		callMgr:       callMgr,
 	}
 }
 
-func (s *CreditRetryService) GetRetryableCredits(ctx context.Context, limit int) ([]*model.BillRecord, error) {
+func (s *CreditRetryService) GetRetryableCredits(ctx context.Context, limit int) ([]*domain.BillRecord, error) {
 	return s.billRepo.GetRetryableCredits(ctx, limit)
 }
 
@@ -95,7 +109,7 @@ func (s *CreditRetryService) doRetryCredit(ctx context.Context, billID int64) er
 		return err
 	}
 
-	if bill.Status == dto.BillStatusSuccess {
+	if bill.Status == domain.BillStatusSuccess {
 		return nil
 	}
 
@@ -105,7 +119,7 @@ func (s *CreditRetryService) doRetryCredit(ctx context.Context, billID int64) er
 
 	if err := s.executeCredit(ctx, bill); err != nil {
 		nextRetryAt := s.calculateNextRetryTime(bill.RetryCount)
-		if incErr := s.billRepo.IncrementRetryCountWithNextRetryTime(ctx, billID, nextRetryAt); incErr != nil {
+		if incErr := s.billRepo.IncrementRetryCountWithNextRetryTime(ctx, billID, bill.RetryCount, nextRetryAt); incErr != nil {
 			logger.Error("increment retry count failed", "bill_id", billID, "error", incErr)
 		}
 		return err
@@ -114,19 +128,19 @@ func (s *CreditRetryService) doRetryCredit(ctx context.Context, billID int64) er
 	return nil
 }
 
-func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.BillRecord) error {
+func (s *CreditRetryService) executeCredit(ctx context.Context, bill *domain.BillRecord) error {
 	if bill.UserID == dto.PlatformAccountID {
 		logger.Info("skip platform account bill, mark as success directly",
 			"bill_id", bill.ID,
 			"bill_type", bill.BillType,
 			"amount", bill.Amount,
 		)
-		return s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, 0)
+		return s.billRepo.UpdateBillSuccess(ctx, bill.ID, domain.BillStatusProcessing, 0, 0)
 	}
 
 	platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, bill.UserID)
 	if err != nil {
-		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 		return fmt.Errorf("get platform user id failed: %w", err)
 	}
 
@@ -143,7 +157,7 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   model.CallTypeCredit,
+		CallType:   domain.CallTypeCredit,
 		BizOrderNo: bill.BizOrderNo,
 		ReqBody:    creditReq,
 	})
@@ -153,11 +167,11 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 
 	result, err := s.platform.Credit(ctx, creditReq)
 	if err != nil {
-		s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error())
+		s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       model.CallLogStatusFailed,
+				Status:       domain.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -170,18 +184,18 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 		// 资金安全要求 fail-closed：标记账单为 Failed 并创建异常记录供人工对账，不得标记为 Success。
 		logger.Error("parse balance amount failed after successful credit, mark bill as failed",
 			"bill_id", bill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
-		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, dto.BillStatusProcessing, dto.BillStatusFailed, err.Error()); updateErr != nil {
+		if updateErr := s.billRepo.UpdateBillStatus(ctx, bill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error()); updateErr != nil {
 			logger.Error("update bill to failed after parse amount error", "bill_id", bill.ID, "error", updateErr)
 		}
 		detail := fmt.Sprintf("入账 ParseAmount 解析失败,平台可能已入账但余额无法解析,需人工对账, bill_id: %d, raw_amount: %s, error: %s", bill.ID, result.Data.Balance.Amount, err.Error())
-		if excErr := s.createExceptionRecord(ctx, bill, model.ExceptionTypeCreditRetryExceed, detail); excErr != nil {
+		if excErr := s.createExceptionRecord(ctx, bill, domain.ExceptionTypeCreditRetryExceed, detail); excErr != nil {
 			logger.Error("create exception record for parse amount failure failed", "bill_id", bill.ID, "error", excErr)
 		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:       callLog.ID,
 				RespBody: result,
-				Status:   model.CallLogStatusSuccess,
+				Status:   domain.CallLogStatusSuccess,
 			})
 		}
 		return fmt.Errorf("parse balance amount failed for bill %d: %w", bill.ID, err)
@@ -191,11 +205,15 @@ func (s *CreditRetryService) executeCredit(ctx context.Context, bill *model.Bill
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
-			Status:   model.CallLogStatusSuccess,
+			Status:   domain.CallLogStatusSuccess,
 		})
 	}
 
-	return s.billRepo.UpdateBillSuccess(ctx, bill.ID, dto.BillStatusProcessing, 0, balanceAfter)
+	if err := bill.TransitionTo(domain.BillStatusSuccess); err != nil {
+		logger.Error("invalid bill status transition", "bill_id", bill.ID, "error", err)
+		return err
+	}
+	return s.billRepo.UpdateBillSuccess(ctx, bill.ID, domain.BillStatusProcessing, 0, balanceAfter)
 }
 
 func (s *CreditRetryService) calculateNextRetryTime(retryCount int) time.Time {
@@ -207,8 +225,8 @@ func (s *CreditRetryService) calculateNextRetryTime(retryCount int) time.Time {
 	return time.Now().Add(delay)
 }
 
-func (s *CreditRetryService) createExceptionRecord(ctx context.Context, bill *model.BillRecord, exceptionType model.ExceptionType, detail string) error {
-	exception := &model.ExceptionRecord{
+func (s *CreditRetryService) createExceptionRecord(ctx context.Context, bill *domain.BillRecord, exceptionType domain.ExceptionType, detail string) error {
+	exception := &domain.ExceptionRecord{
 		ExceptionNo:     s.traceIDGen.GenerateExceptionNo(bill.ID, strconv.Itoa(int(exceptionType))),
 		ExceptionType:   exceptionType,
 		BillID:          bill.ID,
@@ -217,7 +235,7 @@ func (s *CreditRetryService) createExceptionRecord(ctx context.Context, bill *mo
 		BillType:        bill.BillType,
 		UserID:          bill.UserID,
 		Amount:          bill.Amount,
-		Status:          model.ExceptionStatusPending,
+		Status:          domain.ExceptionStatusPending,
 		ExceptionDetail: detail,
 	}
 
@@ -228,14 +246,14 @@ func (s *CreditRetryService) createExceptionRecord(ctx context.Context, bill *mo
 	return s.billRepo.UpdateBillExceptionID(ctx, bill.ID, exception.ID)
 }
 
-func (s *CreditRetryService) createException(ctx context.Context, bill *model.BillRecord) error {
+func (s *CreditRetryService) createException(ctx context.Context, bill *domain.BillRecord) error {
 	detail := fmt.Sprintf("入账重试超限，重试次数: %d, 最后错误: %s", bill.RetryCount, bill.ErrorMessage)
-	return s.createExceptionRecord(ctx, bill, model.ExceptionTypeCreditRetryExceed, detail)
+	return s.createExceptionRecord(ctx, bill, domain.ExceptionTypeCreditRetryExceed, detail)
 }
 
-func (s *CreditRetryService) CreateDebitFailedException(ctx context.Context, bill *model.BillRecord) error {
+func (s *CreditRetryService) CreateDebitFailedException(ctx context.Context, bill *domain.BillRecord) error {
 	detail := fmt.Sprintf("扣款失败: %s", bill.ErrorMessage)
-	if err := s.createExceptionRecord(ctx, bill, model.ExceptionTypeDebitFailed, detail); err != nil {
+	if err := s.createExceptionRecord(ctx, bill, domain.ExceptionTypeDebitFailed, detail); err != nil {
 		logger.Error("create debit failed exception failed", "bill_id", bill.ID, "error", err)
 		return err
 	}

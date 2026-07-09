@@ -139,9 +139,13 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	roundSettlementRepo := settlementMysqlRepo.NewRoundSettlementRepository(db)
 	refundAuditRepo := settlementMysqlRepo.NewRefundAuditRepository(db)
 	settlementQueryRepo := settlementMysqlRepo.NewSettlementQueryRepository(db)
+	// SettlementConfig 汇总 settlement 模块的历史硬编码参数（事务超时/对账limit/扣款并发/退避参数），
+	// 统一从配置注入，默认值与原硬编码一致。后续可由外部配置覆盖。
+	settlementCfg := settlementConfig.DefaultSettlementConfig()
 	// P0-1：创建 settlement DBRepository 聚合，用于 AppService 编排事务。
 	// Repository 不再自治开事务，由 AppService/Service 通过 dbRepo.WithTransaction 编排。
-	settlementDbRepo := settlementMysqlRepo.NewDBRepository(db)
+	// 事务超时由 SettlementConfig.TransactionTimeout 注入（默认 30s，与原硬编码一致）。
+	settlementDbRepo := settlementMysqlRepo.NewDBRepository(db, settlementCfg.TransactionTimeout)
 
 	// 获取已初始化的 IDGenerator（规约 SID-7：禁止懒加载，GetGenerator 返回 error 时 fail-fast）
 	idGen, err := idgen.GetGenerator()
@@ -163,7 +167,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	exceptionMgr := settlementMysqlRepo.NewExceptionRepository(db)
 
 	callMgr := settlementMysqlRepo.NewPlatformCallLogRepository(db)
-	creditRetrySvc := settlementService.NewCreditRetryService(billRepo, platformClient, redisClient, traceIDGen, platformCfg, &cfg.Lock, exceptionMgr, userIDConvert, callMgr)
+	creditRetrySvc := settlementService.NewCreditRetryService(billRepo, platformClient, redisClient, traceIDGen, platformCfg, &cfg.Lock, exceptionMgr, userIDConvert, callMgr, settlementCfg.CreditRetryBaseDelay, settlementCfg.CreditRetryMaxDelay, settlementCfg.MaxRetryCount)
 
 	// Robot checker and settlement-layer virtual balance service (shared with
 	// game-layer robot services via the same Redis keys).
@@ -176,8 +180,11 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	robotAccountStore := &robotAccountStoreAdapter{repo: robotAccountRepo}
 	settlementVirtualBalance := settlementRedis.NewVirtualBalanceRepository(redisClient, robotAccountStore)
 
-	deductSvc := settlementService.NewDeductService(platformClient, settlementDbRepo, billRepo, roundSettlementRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance)
-	refundSvc := settlementService.NewRefundService(platformClient, settlementDbRepo, billRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr)
+	deductSvc := settlementService.NewDeductService(platformClient, settlementDbRepo, billRepo, roundSettlementRepo, refundAuditRepo, redisClient, traceIDGen, platformCfg, &cfg.Lock, creditRetrySvc, userIDConvert, callMgr, robotChecker, settlementVirtualBalance, settlementCfg.MaxConcurrentDeduct)
+	// Phase 7 Task 7.1：拆分 RefundService 为 Apply / Execute / Query 三个职责单一的 Service。
+	refundApplySvc := settlementService.NewRefundApplyService(billRepo, settlementDbRepo, refundAuditRepo, traceIDGen, &cfg.Lock)
+	refundExecuteSvc := settlementService.NewRefundExecuteService(platformClient, settlementDbRepo, refundAuditRepo, platformCfg, &cfg.Lock, userIDConvert, callMgr)
+	refundQuerySvc := settlementService.NewRefundQueryService(refundAuditRepo)
 	rewardSettler := settlementService.NewRewardSettler(billRepo, traceIDGen, robotChecker)
 	// Phase 2.4：拆分 GameSettleService 为 SessionPayoutService（调 platform.Credit 派奖）
 	// 与 GameSettleReportingService（调 platform.Settle 上报游戏结果）。
@@ -190,7 +197,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	// - PenaltySettlementService：罚款扣款与分配（DeductPenaltyToPlatform/DistributePenaltyFromPlatform）
 	// - BalanceQueryService：余额与账单查询（CheckBalance/GetUserBalance/GetBill*/GetRoundSettlement）
 	roundSettleSvc := settlementService.NewRoundSettleService(billRepo, roundSettlementRepo, redisClient, traceIDGen, rewardSettler, gameSettleSvc, &cfg.Lock, robotChecker)
-	penaltySettlementSvc := settlementService.NewPenaltySettlementService(platformClient, settlementDbRepo, billRepo, traceIDGen, platformCfg, userIDConvert, callMgr, robotChecker, settlementVirtualBalance, exceptionMgr)
+	penaltySettlementSvc := settlementService.NewPenaltySettlementService(platformClient, settlementDbRepo, billRepo, traceIDGen, platformCfg, &cfg.Lock, userIDConvert, callMgr, robotChecker, settlementVirtualBalance, exceptionMgr)
 	balanceQuerySvc := settlementService.NewBalanceQueryService(platformClient, billRepo, roundSettlementRepo, platformCfg, userIDConvert, robotChecker, settlementVirtualBalance)
 
 	algorithmConfig := convertAlgorithmConfig(&cfg.Algorithm)
@@ -209,7 +216,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	}
 
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, roundSettleSvc, penaltySettlementSvc, balanceQuerySvc, packetGenerator, roomRepo,
-		platformClient, billRepo, roundSettlementRepo, refundAuditRepo, settlementQueryRepo, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen)
+		platformClient, billRepo, roundSettlementRepo, refundAuditRepo, settlementQueryRepo, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundApplySvc, refundExecuteSvc, refundQuerySvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen)
 	container.LockCfg = &cfg.Lock
 	container.InitAppServices()
 

@@ -12,10 +12,13 @@ import (
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain/reward"
 	"github.com/cashparty/backend/settlement/config"
+	"github.com/cashparty/backend/settlement/domain"
 	settlementRepository "github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 )
+
+// defaultMultiplier 是 platform.Settle 请求中 Multiplier 字段的默认值。
+const defaultMultiplier = "1"
 
 // GameSettleReportingService 负责游戏结果上报：调用 platform.Settle(/settle) 上报每个玩家本局游戏结果。
 // 本 Service 仅上报游戏结果（bet_amount、payout、result），不直接移动资金；
@@ -106,13 +109,13 @@ func (s *GameSettleReportingService) SettleGame(ctx context.Context, sessionID i
 
 		// Check all rounds are credited
 		for _, rs := range settlements {
-			if rs.Status != dto.RoundStatusCredited {
+			if rs.Status != domain.RoundStatusCredited {
 				return fmt.Errorf("round %d not yet credited (status=%d)", rs.RoundID, rs.Status)
 			}
 		}
 
 		// Mark game settle as in progress
-		if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusNone, dto.GameSettleStatusSettling); err != nil {
+		if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, domain.GameSettleStatusNone, domain.GameSettleStatusSettling); err != nil {
 			logger.Error("update game settle status to settling failed", "session_id", sessionID, "error", err)
 		}
 
@@ -181,11 +184,11 @@ func (s *GameSettleReportingService) SettleGame(ctx context.Context, sessionID i
 		}
 
 		// Update game settle status
-		finalStatus := dto.GameSettleStatusSuccess
+		finalStatus := domain.GameSettleStatusSuccess
 		if !allSuccess {
-			finalStatus = dto.GameSettleStatusFailed
+			finalStatus = domain.GameSettleStatusFailed
 		}
-		if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, dto.GameSettleStatusSettling, finalStatus); err != nil {
+		if err := s.roundSettlementRepo.UpdateGameSettleStatusBySession(ctx, sessionID, domain.GameSettleStatusSettling, finalStatus); err != nil {
 			logger.Error("update game settle final status failed", "session_id", sessionID, "error", err)
 		}
 
@@ -207,7 +210,7 @@ func (s *GameSettleReportingService) checkAllPlayersSettled(ctx context.Context,
 		return false, fmt.Errorf("no round settlements found for session: %d", sessionID)
 	}
 	for _, rs := range settlements {
-		if rs.GameSettleStatus != dto.GameSettleStatusSuccess {
+		if rs.GameSettleStatus != domain.GameSettleStatusSuccess {
 			return false, nil
 		}
 	}
@@ -237,7 +240,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 		return fmt.Errorf("check robot failed: %w", err)
 	}
 	if isRobot {
-		if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleNone, dto.BillGameSettleSettled); err != nil {
+		if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, domain.BillGameSettleNone, domain.BillGameSettleSettled); err != nil {
 			logger.Error("mark robot game settle status failed", "session_id", sessionID, "user_id", userID, "error", err)
 		}
 		return nil
@@ -250,7 +253,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 
 	gameResult := reward.DetermineGameResult(payOut, betAmount)
 
-	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(s.traceIDGen.GenerateGameSettleTraceID(sessionID), dto.BillTypeGameSettle, userID)
+	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(s.traceIDGen.GenerateGameSettleTraceID(sessionID), domain.BillTypeGameSettle, userID)
 
 	settleReq := &platform.SettleRequest{
 		BizID:           bizOrderNo,
@@ -262,7 +265,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 		Currency:        s.cfg.Currency,
 		BetAmount:       platform.FormatAmount(betAmount),
 		PayOut:          platform.FormatAmount(payOut),
-		Multiplier:      "1",
+		Multiplier:      defaultMultiplier,
 		StartTime:       startTime.UnixMilli(),
 		EndTime:         endTime.UnixMilli(),
 		Result:          gameResult,
@@ -270,7 +273,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 	}
 
 	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-		CallType:   model.CallTypeSettle,
+		CallType:   domain.CallTypeSettle,
 		BizOrderNo: bizOrderNo,
 		ReqBody:    settleReq,
 	})
@@ -279,18 +282,21 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 	}
 
 	// Set game_settle_status to Processing before RPC (intermediate state for idempotency)
-	if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleNone, dto.BillGameSettleProcessing); err != nil {
+	if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, domain.BillGameSettleNone, domain.BillGameSettleProcessing); err != nil {
 		return fmt.Errorf("update game settle status to processing failed: %w", err)
 	}
 
 	result, err := s.platform.Settle(ctx, settleReq)
 	if err != nil {
 		// RPC failed — revert to None so it can be retried
-		_ = s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleProcessing, dto.BillGameSettleNone)
+		if rollbackErr := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, domain.BillGameSettleProcessing, domain.BillGameSettleNone); rollbackErr != nil {
+			logger.Error("rollback game settle status failed",
+				"session_id", sessionID, "user_id", userID, "biz_order_no", bizOrderNo, "error", rollbackErr)
+		}
 		if callLog != nil {
 			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 				ID:           callLog.ID,
-				Status:       model.CallLogStatusFailed,
+				Status:       domain.CallLogStatusFailed,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -298,7 +304,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 	}
 
 	// RPC succeeded — update to Settled
-	if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, dto.BillGameSettleProcessing, dto.BillGameSettleSettled); err != nil {
+	if err := s.billRepo.UpdateGameSettleStatusByUser(ctx, sessionID, userID, domain.BillGameSettleProcessing, domain.BillGameSettleSettled); err != nil {
 		logger.Error("mark player game settle status failed", "session_id", sessionID, "user_id", userID, "error", err)
 	}
 
@@ -306,7 +312,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 		s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
 			ID:       callLog.ID,
 			RespBody: result,
-			Status:   model.CallLogStatusSuccess,
+			Status:   domain.CallLogStatusSuccess,
 		})
 	}
 

@@ -20,15 +20,3 @@ type PlatformCallLog struct {
 func (PlatformCallLog) TableName() string {
 	return "platform_call_log"
 }
-
-const (
-	CallLogStatusPending = 0
-	CallLogStatusSuccess = 1
-	CallLogStatusFailed  = 2
-)
-
-const (
-	CallTypeDebit  = "debit"
-	CallTypeCredit = "credit"
-	CallTypeSettle = "settle"
-)

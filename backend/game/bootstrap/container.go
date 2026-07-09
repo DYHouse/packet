@@ -18,6 +18,7 @@ import (
 	gameconfig "github.com/cashparty/backend/game/config"
 	"github.com/cashparty/backend/game/domain/events"
 	repository "github.com/cashparty/backend/game/domain/repository"
+	"github.com/cashparty/backend/game/infrastructure/adapter"
 	"github.com/cashparty/backend/game/infrastructure/broadcast"
 	"github.com/cashparty/backend/game/infrastructure/messaging"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
@@ -67,7 +68,9 @@ type Container struct {
 	PenaltySettlementSvc *settlementService.PenaltySettlementService
 	BalanceQuerySvc      *settlementService.BalanceQueryService
 	DeductSvc            *settlementService.DeductService
-	RefundSvc            *settlementService.RefundService
+	RefundApplySvc       *settlementService.RefundApplyService
+	RefundExecuteSvc     *settlementService.RefundExecuteService
+	RefundQuerySvc       *settlementService.RefundQueryService
 	BalanceService       *settlementService.BalanceService
 	// SettleAppSvc 是 settlement 模块的 Application 层入口（Phase 3.5），
 	// 供外部调用方（如 GameEventConsumer）通过 facade 调用 settlement 用例，
@@ -138,7 +141,9 @@ func NewContainer(
 	exceptionMgr settlementRepository.ExceptionRepository,
 	creditRetrySvc *settlementService.CreditRetryService,
 	deductSvc *settlementService.DeductService,
-	refundSvc *settlementService.RefundService,
+	refundApplySvc *settlementService.RefundApplyService,
+	refundExecuteSvc *settlementService.RefundExecuteService,
+	refundQuerySvc *settlementService.RefundQueryService,
 	rewardSettler *settlementService.RewardSettler,
 	callMgr settlementRepository.PlatformCallLogRepository,
 	gameSettleSvc *settlementService.GameSettleReportingService,
@@ -197,7 +202,9 @@ func NewContainer(
 		PenaltySettlementSvc:   penaltySettlementSvc,
 		BalanceQuerySvc:        balanceQuerySvc,
 		DeductSvc:              deductSvc,
-		RefundSvc:              refundSvc,
+		RefundApplySvc:         refundApplySvc,
+		RefundExecuteSvc:       refundExecuteSvc,
+		RefundQuerySvc:         refundQuerySvc,
 		PacketGenerator:        packetGenerator,
 		UserLimiter:            userLimiter,
 		RateLimiterCfg:         rateLimiterCfg,
@@ -226,11 +233,15 @@ func (c *Container) InitAppServices() {
 	userCacheRepo := redisRepo.NewUserCacheRepository(c.Redis)
 	c.UserService = application.NewUserService(c.DBRepo, userCacheRepo, c.AvatarCfg, c.idGen)
 
-	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert, c.settlementVirtualBalance, c.robotChecker)
+	// 通过 FeeCalculatorAdapter 将 game 层 room.CalculateRequiredFee 适配为
+	// settlement/domain.FeeCalculator 接口，解除 settlement 对 game/domain/room 的直接依赖（Phase 4）。
+	feeCalculatorAdapter := adapter.NewFeeCalculatorAdapter()
+	c.BalanceService = settlementService.NewBalanceService(c.platformClient, c.platformCfg, c.userIDConvert, c.settlementVirtualBalance, c.robotChecker, feeCalculatorAdapter)
 
 	// Phase 3.5：创建 settlement Application 层 facade，作为外部调用方访问 settlement 用例的统一入口。
 	// P0-1：注入 settlement DBRepository，由 AppService 通过 dbRepo.WithTransaction 编排事务。
-	settlementDbRepo := settlementMysqlRepo.NewDBRepository(c.DB)
+	// 事务超时由 SettlementConfig.TransactionTimeout 注入（默认 30s，与原硬编码一致）。
+	settlementDbRepo := settlementMysqlRepo.NewDBRepository(c.DB, settlementConfig.DefaultSettlementConfig().TransactionTimeout)
 	c.SettleAppSvc = settlementApplication.NewSettleAppService(
 		settlementDbRepo,
 		c.RoundSettleSvc,
@@ -427,13 +438,14 @@ func (c *Container) initSettlementSchedulers() {
 	schedulerApp := settlementApplication.NewSchedulerAppService(
 		c.creditRetrySvc,
 		c.gameSettleSvc,
-		c.RefundSvc,
+		c.RefundExecuteSvc,
 		settlementService.NewSettlementCheckService(
 			c.billRepo,
 			c.roundSettlementRepo,
 			c.exceptionMgr,
-			c.RefundSvc,
+			c.RefundApplySvc,
 			c.traceIDGen,
+			settlementConfig.DefaultSettlementConfig().SettlementCheckLimit,
 		),
 		c.roundSettlementRepo,
 		c.settlementQueryRepo,

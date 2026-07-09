@@ -14,7 +14,6 @@ import (
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
-	"github.com/cashparty/backend/settlement/model"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -152,7 +151,7 @@ type mockBillRepo struct {
 	mu sync.Mutex
 
 	// 可配置返回值
-	getBillByRoundTypeAndUserResult *model.BillRecord
+	getBillByRoundTypeAndUserResult *domain.BillRecord
 	getBillByRoundTypeAndUserErr    error
 	createBillsErr                  error
 	createBillErr                   error
@@ -160,17 +159,17 @@ type mockBillRepo struct {
 	updateBillSuccessErr            error
 	existsByRoundAndTypeResult      bool
 	existsByRoundAndTypeErr         error
-	getBillsByRoundIDResult         []*model.BillRecord
+	getBillsByRoundIDResult         []*domain.BillRecord
 	getBillsByRoundIDErr            error
-	getBillsByBatchIDResult         []*model.BillRecord
+	getBillsByBatchIDResult         []*domain.BillRecord
 	getBillsByBatchIDErr            error
-	getBillByBatchAndUserResult     *model.BillRecord
+	getBillByBatchAndUserResult     *domain.BillRecord
 	getBillByBatchAndUserErr        error
-	getBillsBySessionTypeAndUserRes []*model.BillRecord
+	getBillsBySessionTypeAndUserRes []*domain.BillRecord
 	getBillsBySessionTypeAndUserErr error
 	incrementRetryCountErr          error
 	updateBillExceptionIDErr        error
-	getBillByIDResult               *model.BillRecord
+	getBillByIDResult               *domain.BillRecord
 	getBillByIDErr                  error
 
 	// 调用计数（用于验证 P0-2/P0-3/P0-4 行为）
@@ -180,8 +179,8 @@ type mockBillRepo struct {
 	updateBillSuccessCalls     int
 	updateBillExceptionIDCalls int
 	incrementRetryCountCalls   int
-	createBillArg              *model.BillRecord
-	createBillsArg             []*model.BillRecord
+	createBillArg              *domain.BillRecord
+	createBillsArg             []*domain.BillRecord
 
 	// 记录最后一次 UpdateBillStatus 调用参数
 	lastUpdateStatusBillID  int64
@@ -193,7 +192,7 @@ type mockBillRepo struct {
 	lastUpdateExceptionID   int64
 }
 
-func (m *mockBillRepo) CreateBill(_ context.Context, bill *model.BillRecord) error {
+func (m *mockBillRepo) CreateBill(_ context.Context, bill *domain.BillRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.createBillCalls++
@@ -201,7 +200,7 @@ func (m *mockBillRepo) CreateBill(_ context.Context, bill *model.BillRecord) err
 	return m.createBillErr
 }
 
-func (m *mockBillRepo) CreateBills(_ context.Context, bills []*model.BillRecord) error {
+func (m *mockBillRepo) CreateBills(_ context.Context, bills []*domain.BillRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.createBillsCalls++
@@ -233,27 +232,27 @@ func (m *mockBillRepo) ExistsByRoundAndType(_ context.Context, _ int64, _ int) (
 	return m.existsByRoundAndTypeResult, m.existsByRoundAndTypeErr
 }
 
-func (m *mockBillRepo) GetBillByRoundTypeAndUser(_ context.Context, _ int64, _ int, _ int64) (*model.BillRecord, error) {
+func (m *mockBillRepo) GetBillByRoundTypeAndUser(_ context.Context, _ int64, _ int, _ int64) (*domain.BillRecord, error) {
 	return m.getBillByRoundTypeAndUserResult, m.getBillByRoundTypeAndUserErr
 }
 
-func (m *mockBillRepo) GetBillsByRoundID(_ context.Context, _ int64) ([]*model.BillRecord, error) {
+func (m *mockBillRepo) GetBillsByRoundID(_ context.Context, _ int64) ([]*domain.BillRecord, error) {
 	return m.getBillsByRoundIDResult, m.getBillsByRoundIDErr
 }
 
-func (m *mockBillRepo) GetBillsByBatchID(_ context.Context, _ string) ([]*model.BillRecord, error) {
+func (m *mockBillRepo) GetBillsByBatchID(_ context.Context, _ string) ([]*domain.BillRecord, error) {
 	return m.getBillsByBatchIDResult, m.getBillsByBatchIDErr
 }
 
-func (m *mockBillRepo) GetBillByBatchAndUser(_ context.Context, _ string, _ int64) (*model.BillRecord, error) {
+func (m *mockBillRepo) GetBillByBatchAndUser(_ context.Context, _ string, _ int64) (*domain.BillRecord, error) {
 	return m.getBillByBatchAndUserResult, m.getBillByBatchAndUserErr
 }
 
-func (m *mockBillRepo) GetBillsBySessionTypeAndUser(_ context.Context, _ int64, _ int, _ int64) ([]*model.BillRecord, error) {
+func (m *mockBillRepo) GetBillsBySessionTypeAndUser(_ context.Context, _ int64, _ int, _ int64) ([]*domain.BillRecord, error) {
 	return m.getBillsBySessionTypeAndUserRes, m.getBillsBySessionTypeAndUserErr
 }
 
-func (m *mockBillRepo) IncrementRetryCountWithNextRetryTime(_ context.Context, billID int64, _ time.Time) error {
+func (m *mockBillRepo) IncrementRetryCountWithNextRetryTime(_ context.Context, billID int64, _ int, _ time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.incrementRetryCountCalls++
@@ -270,7 +269,7 @@ func (m *mockBillRepo) UpdateBillExceptionID(_ context.Context, billID, exceptio
 	return m.updateBillExceptionIDErr
 }
 
-func (m *mockBillRepo) GetBillByID(_ context.Context, _ int64) (*model.BillRecord, error) {
+func (m *mockBillRepo) GetBillByID(_ context.Context, _ int64) (*domain.BillRecord, error) {
 	return m.getBillByIDResult, m.getBillByIDErr
 }
 
@@ -284,7 +283,7 @@ type mockRoundSettlementRepo struct {
 	mu sync.Mutex
 
 	// 可配置返回值
-	getRoundSettlementByRoundIDResult     *model.RoundSettlement
+	getRoundSettlementByRoundIDResult     *domain.RoundSettlement
 	getRoundSettlementByRoundIDErr        error
 	existsRoundSettlementResult           bool
 	existsRoundSettlementErr              error
@@ -293,7 +292,7 @@ type mockRoundSettlementRepo struct {
 	updateRoundSettlementStatusErr        error
 	updateRoundSettlementSettleInfoErr    error
 	updateRoundSettlementDeductSuccessErr error
-	getAllRoundSettlementsBySessionResult []*model.RoundSettlement
+	getAllRoundSettlementsBySessionResult []*domain.RoundSettlement
 	getAllRoundSettlementsBySessionErr    error
 
 	// 调用计数
@@ -313,7 +312,7 @@ type mockRoundSettlementRepo struct {
 	lastSettleInfoSenderID      int64
 }
 
-func (m *mockRoundSettlementRepo) GetRoundSettlementByRoundID(_ context.Context, _ int64) (*model.RoundSettlement, error) {
+func (m *mockRoundSettlementRepo) GetRoundSettlementByRoundID(_ context.Context, _ int64) (*domain.RoundSettlement, error) {
 	return m.getRoundSettlementByRoundIDResult, m.getRoundSettlementByRoundIDErr
 }
 
@@ -321,7 +320,7 @@ func (m *mockRoundSettlementRepo) ExistsRoundSettlement(_ context.Context, _ int
 	return m.existsRoundSettlementResult, m.existsRoundSettlementErr
 }
 
-func (m *mockRoundSettlementRepo) CreateRoundSettlementAndBills(_ context.Context, _ *model.RoundSettlement, _ []*model.BillRecord) error {
+func (m *mockRoundSettlementRepo) CreateRoundSettlementAndBills(_ context.Context, _ *domain.RoundSettlement, _ []*domain.BillRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.createRoundSettlementAndBillsCalls++
@@ -363,7 +362,7 @@ func (m *mockRoundSettlementRepo) UpdateRoundSettlementDeductSuccess(_ context.C
 	return m.updateRoundSettlementDeductSuccessErr
 }
 
-func (m *mockRoundSettlementRepo) GetAllRoundSettlementsBySession(_ context.Context, _ int64) ([]*model.RoundSettlement, error) {
+func (m *mockRoundSettlementRepo) GetAllRoundSettlementsBySession(_ context.Context, _ int64) ([]*domain.RoundSettlement, error) {
 	return m.getAllRoundSettlementsBySessionResult, m.getAllRoundSettlementsBySessionErr
 }
 
@@ -524,7 +523,7 @@ type mockRefundAuditRepo struct {
 	createRefundAuditErr error
 }
 
-func (m *mockRefundAuditRepo) CreateRefundAuditAndUpdateBillRefundStatus(_ context.Context, _ *model.RefundAudit, _ int64, _, _ int, _ string) error {
+func (m *mockRefundAuditRepo) CreateRefundAuditAndUpdateBillRefundStatus(_ context.Context, _ *domain.RefundAudit, _ int64, _, _ int, _ string) error {
 	return m.createRefundAuditErr
 }
 
@@ -565,12 +564,60 @@ func (m *mockSettlementQueryRepo) IsPlayerGameSettled(_ context.Context, _ int64
 
 // mockExceptionRepo 异常记录仓储桩件，实现 repository.ExceptionRepository。
 // Create 默认返回 nil error，使调用方继续执行后续 DB 操作（如 UpdateBillExceptionID）。
+// GetByID / GetByStatus / UpdateStatus 为 Phase 7 Task 7.3 新增方法的桩件，
+// 默认返回零值/空切片/nil error，可按需扩展为可配置返回值。
 type mockExceptionRepo struct {
 	createErr error
+
+	// GetByID 可配置返回值
+	getByIDResult *domain.ExceptionRecord
+	getByIDErr    error
+
+	// GetByStatus 可配置返回值
+	getByStatusResult []*domain.ExceptionRecord
+	getByStatusErr    error
+
+	// UpdateStatus 可配置返回值
+	updateStatusErr error
+
+	// 调用计数（便于后续测试断言）
+	getByIDCalls      int
+	getByStatusCalls  int
+	updateStatusCalls int
+
+	// 记录最后一次 UpdateStatus 调用参数
+	lastUpdateStatusID           int64
+	lastUpdateStatusNewStatus    domain.ExceptionStatus
+	lastUpdateStatusHandleType   domain.HandleType
+	lastUpdateStatusHandleRemark string
+	lastUpdateStatusHandledBy    int64
 }
 
-func (m *mockExceptionRepo) Create(_ context.Context, _ *model.ExceptionRecord) error {
+func (m *mockExceptionRepo) Create(_ context.Context, _ *domain.ExceptionRecord) error {
 	return m.createErr
+}
+
+func (m *mockExceptionRepo) GetByID(_ context.Context, _ int64) (*domain.ExceptionRecord, error) {
+	m.getByIDCalls++
+	return m.getByIDResult, m.getByIDErr
+}
+
+func (m *mockExceptionRepo) GetByStatus(_ context.Context, _ domain.ExceptionStatus, _ int, _ int) ([]*domain.ExceptionRecord, error) {
+	m.getByStatusCalls++
+	if m.getByStatusResult != nil {
+		return m.getByStatusResult, m.getByStatusErr
+	}
+	return []*domain.ExceptionRecord{}, m.getByStatusErr
+}
+
+func (m *mockExceptionRepo) UpdateStatus(_ context.Context, id int64, newStatus domain.ExceptionStatus, handleType domain.HandleType, handleRemark string, handledBy int64) error {
+	m.updateStatusCalls++
+	m.lastUpdateStatusID = id
+	m.lastUpdateStatusNewStatus = newStatus
+	m.lastUpdateStatusHandleType = handleType
+	m.lastUpdateStatusHandleRemark = handleRemark
+	m.lastUpdateStatusHandledBy = handledBy
+	return m.updateStatusErr
 }
 
 // mockPlatformCallLogRepo 平台调用日志仓储桩件，实现 repository.PlatformCallLogRepository。
@@ -580,22 +627,22 @@ type mockPlatformCallLogRepo struct {
 	updateLogErr error
 }
 
-func (m *mockPlatformCallLogRepo) CreateLog(_ context.Context, _ *dto.CallLogCreateParams) (*model.PlatformCallLog, error) {
+func (m *mockPlatformCallLogRepo) CreateLog(_ context.Context, _ *dto.CallLogCreateParams) (*domain.PlatformCallLog, error) {
 	if m.createLogErr != nil {
 		return nil, m.createLogErr
 	}
-	return &model.PlatformCallLog{ID: 1}, nil
+	return &domain.PlatformCallLog{ID: 1}, nil
 }
 
 func (m *mockPlatformCallLogRepo) UpdateLog(_ context.Context, _ *dto.CallLogUpdateParams) error {
 	return m.updateLogErr
 }
 
-func (m *mockPlatformCallLogRepo) GetLogByID(_ context.Context, _ int64) (*model.PlatformCallLog, error) {
+func (m *mockPlatformCallLogRepo) GetLogByID(_ context.Context, _ int64) (*domain.PlatformCallLog, error) {
 	return nil, nil
 }
 
-func (m *mockPlatformCallLogRepo) GetFailedLogs(_ context.Context, _ int) ([]*model.PlatformCallLog, error) {
+func (m *mockPlatformCallLogRepo) GetFailedLogs(_ context.Context, _ int) ([]*domain.PlatformCallLog, error) {
 	return nil, nil
 }
 
