@@ -2,13 +2,14 @@ package config
 
 import "time"
 
-// SettlementSchedulerConfig configures the 5 settlement schedulers.
+// SettlementSchedulerConfig configures the 6 settlement schedulers.
 type SettlementSchedulerConfig struct {
-	CreditRetry       SettlementSchedulerSubConfig `mapstructure:"credit_retry" yaml:"credit_retry"`
-	SettlementCheck   SettlementSchedulerSubConfig `mapstructure:"settlement_check" yaml:"settlement_check"`
-	RefundProcess     SettlementSchedulerSubConfig `mapstructure:"refund_process" yaml:"refund_process"`
-	GameSettleRetry   SettlementSchedulerSubConfig `mapstructure:"game_settle_retry" yaml:"game_settle_retry"`
-	GameSettleTimeout SettlementSchedulerSubConfig `mapstructure:"game_settle_timeout" yaml:"game_settle_timeout"`
+	CreditRetry        SettlementSchedulerSubConfig `mapstructure:"credit_retry" yaml:"credit_retry"`
+	SettlementCheck    SettlementSchedulerSubConfig `mapstructure:"settlement_check" yaml:"settlement_check"`
+	RefundProcess      SettlementSchedulerSubConfig `mapstructure:"refund_process" yaml:"refund_process"`
+	GameSettleRetry    SettlementSchedulerSubConfig `mapstructure:"game_settle_retry" yaml:"game_settle_retry"`
+	GameSettleTimeout  SettlementSchedulerSubConfig `mapstructure:"game_settle_timeout" yaml:"game_settle_timeout"`
+	VirtualBalanceSync SettlementSchedulerSubConfig `mapstructure:"virtual_balance_sync" yaml:"virtual_balance_sync"`
 }
 
 // SettlementSchedulerSubConfig 是每个调度器的子配置。
@@ -99,6 +100,14 @@ func SetSettlementSchedulerDefaults(cfg *SettlementSchedulerConfig) {
 	}
 	if cfg.GameSettleTimeout.Limit == 0 {
 		cfg.GameSettleTimeout.Limit = 100
+	}
+	// VirtualBalanceSync: Interval=30s, InitialDelay=0, LockTTL=35（interval.Seconds()+5）
+	if cfg.VirtualBalanceSync.Interval == 0 {
+		cfg.VirtualBalanceSync.Interval = 30 * time.Second
+	}
+	// InitialDelay 默认 0，零值即无初始延迟，无需额外设置
+	if cfg.VirtualBalanceSync.LockTTL == 0 {
+		cfg.VirtualBalanceSync.LockTTL = 35
 	}
 }
 

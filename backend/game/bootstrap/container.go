@@ -419,14 +419,11 @@ func (c *Container) initRobotServices() {
 		c.RobotSchedulerService.OnGameEnd(ctx, roomID)
 	})
 
-	// Create virtual balance sync scheduler
-	c.SchedulerRegistry.Register(scheduler.NewVirtualBalanceSyncScheduler(
-		c.VirtualBalanceService, c.RobotCfg.Account.SyncInterval, c.Redis,
-	))
+	// VirtualBalanceSyncScheduler 已迁移至 initSettlementSchedulers()，由 settlement 模块统一管理。
 }
 
 func (c *Container) initSettlementSchedulers() {
-	// 创建 SchedulerAppService，作为 5 个 scheduler 的统一 Application 层入口。
+	// 创建 SchedulerAppService，作为 6 个 scheduler 的统一 Application 层入口。
 	// 各 scheduler 不再直接持有 service/repository，仅通过本 facade 调用用例。
 	schedulerApp := settlementApplication.NewSchedulerAppService(
 		c.creditRetrySvc,
@@ -440,6 +437,7 @@ func (c *Container) initSettlementSchedulers() {
 			c.traceIDGen,
 			settlementConfig.DefaultSettlementConfig().SettlementCheckLimit,
 		),
+		c.settlementVirtualBalance,
 		c.roundSettlementRepo,
 		c.settlementQueryRepo,
 		c.refundAuditRepo,
@@ -450,6 +448,7 @@ func (c *Container) initSettlementSchedulers() {
 	c.SchedulerRegistry.Register(settlementScheduler.NewSettlementCheckScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.SettlementCheck))
 	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleRetryScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.GameSettleRetry))
 	c.SchedulerRegistry.Register(settlementScheduler.NewGameSettleTimeoutScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.GameSettleTimeout))
+	c.SchedulerRegistry.Register(settlementScheduler.NewVirtualBalanceSyncScheduler(schedulerApp, c.Redis, c.SettlementSchedulerCfg.VirtualBalanceSync))
 }
 
 func (c *Container) NewRoomEventConsumer(cfg kafka.ConsumerConfig) (*messaging.RoomEventConsumer, error) {

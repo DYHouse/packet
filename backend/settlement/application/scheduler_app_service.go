@@ -11,7 +11,7 @@ import (
 	"github.com/cashparty/backend/settlement/service"
 )
 
-// SchedulerAppService 是 settlement 模块 5 个 scheduler 的统一 Application 层入口。
+// SchedulerAppService 是 settlement 模块 6 个 scheduler 的统一 Application 层入口。
 // 各方法逻辑与原 scheduler.execute() 完全等价，仅做封装转发：scheduler 在变更 4b 后
 // 不再持有 repository，循环逻辑全部内聚于本 AppService，scheduler 退化为纯薄壳，
 // 仅负责定时调度、分布式锁与配置参数透传。
@@ -22,6 +22,7 @@ type SchedulerAppService struct {
 	gameSettleSvc       *service.GameSettleReportingService
 	refundExecuteSvc    *service.RefundExecuteService
 	settlementCheckSvc  *service.SettlementCheckService
+	virtualBalanceSvc   domain.VirtualBalanceService
 	roundSettlementRepo repository.RoundSettlementRepository
 	settlementQueryRepo repository.SettlementQueryRepository
 	refundAuditRepo     repository.RefundAuditRepository
@@ -35,6 +36,7 @@ func NewSchedulerAppService(
 	gameSettleSvc *service.GameSettleReportingService,
 	refundExecuteSvc *service.RefundExecuteService,
 	settlementCheckSvc *service.SettlementCheckService,
+	virtualBalanceSvc domain.VirtualBalanceService,
 	roundSettlementRepo repository.RoundSettlementRepository,
 	settlementQueryRepo repository.SettlementQueryRepository,
 	refundAuditRepo repository.RefundAuditRepository,
@@ -44,6 +46,7 @@ func NewSchedulerAppService(
 		gameSettleSvc:       gameSettleSvc,
 		refundExecuteSvc:    refundExecuteSvc,
 		settlementCheckSvc:  settlementCheckSvc,
+		virtualBalanceSvc:   virtualBalanceSvc,
 		roundSettlementRepo: roundSettlementRepo,
 		settlementQueryRepo: settlementQueryRepo,
 		refundAuditRepo:     refundAuditRepo,
@@ -164,6 +167,16 @@ func (s *SchedulerAppService) RunSettlementCheck(ctx context.Context, failedFirs
 	}
 	if err := s.settlementCheckSvc.CheckDeductedButNotSettled(ctx, time.Now().Add(-deductedNotSettledLookback), limit); err != nil {
 		logger.Error("check deducted but not settled failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+// RunVirtualBalanceSync 等价于 VirtualBalanceSyncScheduler.execute()：
+// 将 Redis 中脏的机器人虚拟余额批量同步到 DB。行为与原 game/scheduler 实现完全一致。
+func (s *SchedulerAppService) RunVirtualBalanceSync(ctx context.Context) error {
+	if err := s.virtualBalanceSvc.SyncToDB(ctx); err != nil {
+		logger.Error("sync virtual balance to db failed", "error", err)
 		return err
 	}
 	return nil
