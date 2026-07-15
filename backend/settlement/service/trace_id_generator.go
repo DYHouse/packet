@@ -52,8 +52,11 @@ func (g *TraceIDGenerator) GenerateExceptionNo(billID int64, exceptionType strin
 	return fmt.Sprintf("EXC_%d_%s", billID, exceptionType)
 }
 
-func (g *TraceIDGenerator) GeneratePenaltyDeductTraceID(roomID, sessionID int64) string {
-	return fmt.Sprintf("PENALTY_DED_%d_%d", roomID, sessionID)
+// GeneratePenaltyDeductTraceID 基于房间+会话+用户+轮次确定性生成罚款扣款 traceID。
+// 包含 userID 维度以区分不同玩家的罚款，包含 roundNo 维度以区分同一玩家不同轮次的罚款。
+// 重试时可复现，作为 BizOrderNo 的基础。
+func (g *TraceIDGenerator) GeneratePenaltyDeductTraceID(roomID, sessionID, userID, roundNo int64) string {
+	return fmt.Sprintf("PENALTY_DED_%d_%d_%d_%d", roomID, sessionID, userID, roundNo)
 }
 
 func (g *TraceIDGenerator) GeneratePenaltyDistTraceID(roomID, sessionID int64) string {

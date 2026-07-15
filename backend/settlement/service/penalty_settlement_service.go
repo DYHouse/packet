@@ -69,7 +69,7 @@ func NewPenaltySettlementService(
 }
 
 func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, req *dto.PenaltyDeductRequest) error {
-	roundTraceID := s.traceIDGen.GeneratePenaltyDeductTraceID(req.RoomID, req.SessionID)
+	roundTraceID := s.traceIDGen.GeneratePenaltyDeductTraceID(req.RoomID, req.SessionID, req.UserID, int64(req.RoundNo))
 	// 分布式锁：按 userID + roundTraceID 粒度加锁，防止并发/重试导致重复扣款。
 	// WithRedisLock 底层基于 redsync（随机 token + Lua 脚本释放），避免 TTL 过期后误删他人锁。
 	lockKey := rediskeys.PenaltyDeductLockKey(req.UserID, roundTraceID)
@@ -97,6 +97,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 			BillType:     domain.BillTypePenaltyIncome,
 			RoomID:       req.RoomID,
 			SessionID:    req.SessionID,
+			RoundID:      req.RoundID,
 			RoundNo:      req.RoundNo,
 			UserID:       req.UserID,
 			Amount:       -req.Amount,
@@ -118,6 +119,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 			BillType:     domain.BillTypePenaltyIncome,
 			RoomID:       req.RoomID,
 			SessionID:    req.SessionID,
+			RoundID:      req.RoundID,
 			RoundNo:      req.RoundNo,
 			UserID:       dto.PlatformAccountID,
 			Amount:       req.Amount,
@@ -153,30 +155,30 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 		}
 
 		debitReq := &platform.DebitRequest{
-			BizID:    playerBill.BizOrderNo,
-			RoundID:  fmt.Sprintf("%d", req.SessionID),
-			GameID:   s.cfg.GameID,
-			GameCode: s.cfg.GameCode,
-			UserID:   platformUserID,
-			Currency: s.cfg.Currency,
-			Amount:   platform.FormatAmount(req.Amount),
-			Reason:   playerBill.Remark,
-			GameName: s.cfg.GameName,
-		}
+		BizID:    playerBill.BizOrderNo,
+		RoundID:  fmt.Sprintf("%d", req.RoundID),
+		GameID:   s.cfg.GameID,
+		GameCode: s.cfg.GameCode,
+		UserID:   platformUserID,
+		Currency: s.cfg.Currency,
+		Amount:   platform.FormatAmount(req.Amount),
+		Reason:   playerBill.Remark,
+		GameName: s.cfg.GameName,
+	}
 
-		callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
-			TraceID:        resolveTraceID(ctx),
-			CallType:       domain.CallTypeDebit,
-			BizOrderNo:     playerBill.BizOrderNo,
-			UserID:         playerBill.UserID,
-			PlatformUserID: platformUserID,
-			SessionID:      playerBill.SessionID,
-			RoundID:        0,
-			Amount:         req.Amount,
-			Currency:       s.cfg.Currency,
-			ReqBody:        debitReq,
-			NodeID:         resolveNodeID(),
-		})
+	callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
+		TraceID:        resolveTraceID(ctx),
+		CallType:       domain.CallTypeDebit,
+		BizOrderNo:     playerBill.BizOrderNo,
+		UserID:         playerBill.UserID,
+		PlatformUserID: platformUserID,
+		SessionID:      playerBill.SessionID,
+		RoundID:        req.RoundID,
+		Amount:         req.Amount,
+		Currency:       s.cfg.Currency,
+		ReqBody:        debitReq,
+		NodeID:         resolveNodeID(),
+	})
 		if callLogErr != nil {
 			logger.Warn("create call log failed", "biz_order_no", playerBill.BizOrderNo, "error", callLogErr)
 		}

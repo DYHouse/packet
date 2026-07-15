@@ -36,7 +36,7 @@ func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, se
 	}
 }
 
-func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string, penaltyType round.PenaltyType, roomFee int64, sessionID int64, currentRound int) (*round.PenaltyResult, error) {
+func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string, penaltyType round.PenaltyType, roomFee int64, sessionID int64, currentRound int, currentRoundID int64) (*round.PenaltyResult, error) {
 	keys := []string{
 		rediskeys.PenaltyCountKey(roomID, userID),
 		rediskeys.RoomHashKey(roomID),
@@ -76,6 +76,7 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 	deductReq := &settlementDto.PenaltyDeductRequest{
 		RoomID:      roomIDInt,
 		SessionID:   sessionID,
+		RoundID:     currentRoundID,
 		RoundNo:     currentRound,
 		UserID:      userIDInt,
 		Amount:      amount,

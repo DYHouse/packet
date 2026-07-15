@@ -35,6 +35,7 @@ type PlayerSettleInfo struct {
 type PenaltyDeductRequest struct {
 	RoomID      int64
 	SessionID   int64
+	RoundID     int64
 	RoundNo     int
 	UserID      int64
 	Amount      int64

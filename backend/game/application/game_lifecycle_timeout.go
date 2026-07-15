@@ -93,7 +93,7 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 			sessionID = converter.ParseID(meta.CurrentSessionID)
 		}
 
-		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound))
+		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound), converter.ParseID(meta.CurrentRoundID))
 		if err != nil {
 			logger.Error("apply penalty failed", "room_id", roomID, "user_id", userID, "error", err)
 			return nil
@@ -171,7 +171,7 @@ func (s *GameLifecycleService) OnReplaceTimeout(ctx context.Context, roomID stri
 			recipientIDs = append(recipientIDs, converter.ParseID(r))
 		}
 
-		roundID := sessionID
+		roundID := int64(0)
 		if meta.CurrentRoundID != "" {
 			roundID = converter.ParseID(meta.CurrentRoundID)
 		}
