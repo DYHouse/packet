@@ -73,8 +73,8 @@ func (r *gormHistoryRepository) GetSession(sessionID int64) (*model.GameSession,
 // 通过 SUM(CASE WHEN ...) 计算 total_grab/total_send/total_bet/total_income/profit 等，
 // profit = total_income - total_bet。
 func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTime, endTime *time.Time, configName string, limit, offset int) ([]repository.PlayerSessionBillRow, int64, error) {
-	join := "game_sessions gs INNER JOIN bill_record b ON b.session_id = gs.session_id AND b.user_id = ? AND b.status = 1"
-	joinArgs := []interface{}{userID}
+	join := "game_sessions gs INNER JOIN bill_record b ON b.session_id = gs.session_id AND b.user_id = ? AND b.status = 1 LEFT JOIN session_players sp ON sp.session_id = gs.session_id AND sp.user_id = ?"
+	joinArgs := []interface{}{userID, userID}
 
 	where := "gs.status = ? AND b.user_id != 0 AND b.bill_type != 12"
 	args := []interface{}{model.SessionStatusCompleted}
@@ -106,12 +106,14 @@ func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTi
 	listSQL := `SELECT
        gs.session_id, gs.room_no, gs.config_name, gs.room_fee, gs.max_rounds, gs.actual_rounds,
        gs.status, gs.started_at, gs.ended_at, gs.end_reason,
+       MAX(sp.seat_no) AS seat_no, MAX(sp.joined_at) AS joined_at, MAX(sp.left_at) AS left_at,
        COALESCE(SUM(CASE WHEN b.bill_type = 3 AND b.amount > 0 THEN b.amount ELSE 0 END), 0) AS total_grab,
        COALESCE(SUM(CASE WHEN b.bill_type = 4 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_send,
        COALESCE(SUM(CASE WHEN b.bill_type = 2 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS first_round_fee,
        COALESCE(SUM(CASE WHEN b.bill_type = 8 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS penalty,
        COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_bet,
        COALESCE(SUM(CASE WHEN b.bill_type IN (3,10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0) AS total_income,
+       COALESCE(SUM(CASE WHEN b.bill_type IN (10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0) AS reward,
        COALESCE(SUM(CASE WHEN b.bill_type IN (3,10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0)
          - COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS profit,
        COALESCE(SUM(CASE WHEN b.bill_type = 3 THEN 1 ELSE 0 END), 0) AS grab_count,
@@ -141,6 +143,7 @@ func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID in
        COALESCE(SUM(CASE WHEN bill_type = 8 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS penalty,
        COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_bet,
        COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS total_income,
+       COALESCE(SUM(CASE WHEN bill_type IN (10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS reward,
        COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0)
          - COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS profit,
        COALESCE(SUM(CASE WHEN bill_type = 3 THEN 1 ELSE 0 END), 0) AS grab_count,
@@ -166,6 +169,7 @@ func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*rep
        COALESCE(SUM(penalty), 0) AS penalty,
        COALESCE(SUM(total_bet), 0) AS total_bet,
        COALESCE(SUM(total_income), 0) AS total_income,
+       COALESCE(SUM(reward), 0) AS reward,
        COALESCE(SUM(profit), 0) AS total_profit,
        COALESCE(SUM(grab_count), 0) AS total_grab_count,
        COALESCE(SUM(send_count), 0) AS total_send_count
@@ -178,6 +182,7 @@ func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*rep
                COALESCE(SUM(CASE WHEN bill_type = 8 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS penalty,
                COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_bet,
                COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS total_income,
+               COALESCE(SUM(CASE WHEN bill_type IN (10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS reward,
                COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0)
                  - COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS profit,
                COALESCE(SUM(CASE WHEN bill_type = 3 THEN 1 ELSE 0 END), 0) AS grab_count,
@@ -203,4 +208,17 @@ func (r *gormHistoryRepository) GetPlayerSendRounds(sessionID, userID int64) ([]
 		return nil, err
 	}
 	return rounds, nil
+}
+
+// ListSessionSpecialRewards 查询会话内所有特殊奖励记录（顺子/豹子，按 round_no 升序）。
+// 利用 special_rewards 表的 session_id 索引，一次性获取整局所有回合的特殊奖励。
+func (r *gormHistoryRepository) ListSessionSpecialRewards(sessionID int64) ([]model.SpecialReward, error) {
+	var rewards []model.SpecialReward
+	err := r.db.Where("session_id = ?", sessionID).
+		Order("round_no ASC").
+		Find(&rewards).Error
+	if err != nil {
+		return nil, err
+	}
+	return rewards, nil
 }

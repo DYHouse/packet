@@ -136,9 +136,14 @@ type PlayerSessionBillRow struct {
 	Penalty       int64 // bill_type=8 求和（ABS）
 	TotalBet      int64 // bill_type IN (2,4,8) 且 amount<0 求和（ABS）
 	TotalIncome   int64 // bill_type IN (3,10,11) 且 amount>0 求和
+	Reward        int64 // 系统奖励求和（bill_type IN (10,11)）
 	Profit        int64 // TotalIncome - TotalBet
 	GrabCount     int64 // bill_type=3 计数
 	SendCount     int64 // bill_type=4 计数
+	// session_players 字段
+	SeatNo    int
+	JoinedAt  *time.Time
+	LeftAt    *time.Time
 }
 
 // PlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）
@@ -149,6 +154,7 @@ type PlayerSessionBillSummary struct {
 	Penalty       int64
 	TotalBet      int64
 	TotalIncome   int64
+	Reward        int64
 	Profit        int64
 	GrabCount     int64
 	SendCount     int64
@@ -164,6 +170,7 @@ type PlayerStatsBillAggregate struct {
 	Penalty        int64
 	TotalBet       int64
 	TotalIncome    int64
+	Reward         int64
 	TotalProfit    int64
 	TotalSendCount int64
 	TotalGrabCount int64
@@ -180,6 +187,8 @@ type HistoryDBRepository interface {
 	GetPlayerSessionBillSummary(userID, sessionID int64) (*PlayerSessionBillSummary, error)
 	AggregatePlayerStatsFromBill(userID int64) (*PlayerStatsBillAggregate, error)
 	GetPlayerSendRounds(sessionID, userID int64) ([]model.Round, error)
+	// ListSessionSpecialRewards 查询会话内所有特殊奖励记录（顺子/豹子，按 round_no 升序）
+	ListSessionSpecialRewards(sessionID int64) ([]model.SpecialReward, error)
 }
 
 type DBRepository interface {

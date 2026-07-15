@@ -104,6 +104,13 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		return nil, message.NewError(message.CodeHistoryQueryFailed)
 	}
 
+	// 5.1 查询会话所有特殊奖励（顺子/豹子，按 round_no 升序）
+	specialRewards, err := s.dbRepo.HistoryDBRepo().ListSessionSpecialRewards(sessionID)
+	if err != nil {
+		logger.Error("failed to list session special rewards", "session_id", sessionID, "error", err)
+		return nil, message.NewError(message.CodeHistoryQueryFailed)
+	}
+
 	// 6. 构建 round_id -> grabRecord 索引
 	grabByRound := make(map[int64]model.RoundGrabRecord, len(grabRecords))
 	for i := range grabRecords {
@@ -114,6 +121,12 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 	sendByRound := make(map[int64]model.Round, len(sendRounds))
 	for i := range sendRounds {
 		sendByRound[sendRounds[i].RoundID] = sendRounds[i]
+	}
+
+	// 7.1 构建 round_id -> SpecialReward 索引
+	rewardByRound := make(map[int64]model.SpecialReward, len(specialRewards))
+	for i := range specialRewards {
+		rewardByRound[specialRewards[i].RoundID] = specialRewards[i]
 	}
 
 	// 8. 组装回合明细
@@ -144,6 +157,14 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 				StartedAt:   timeToMs(sr.StartedAt),
 			}
 		}
+		// 填充特殊奖励（顺子/豹子）
+		if sr, ok := rewardByRound[rounds[i].RoundID]; ok {
+			rd.MyReward = &RewardDetail{
+				RewardType:  sr.RewardType,
+				Amount:      currency.NewMoneyFromFen(sr.Amount),
+				TriggerType: sr.TriggerType,
+			}
+		}
 		roundDetails = append(roundDetails, rd)
 	}
 
@@ -167,6 +188,8 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		Penalty:       currency.NewMoneyFromFen(billSummary.Penalty),
 		TotalBet:      currency.NewMoneyFromFen(billSummary.TotalBet),
 		TotalGrab:     currency.NewMoneyFromFen(billSummary.TotalGrab),
+		Reward:        currency.NewMoneyFromFen(billSummary.Reward),
+		TotalIncome:   currency.NewMoneyFromFen(billSummary.TotalIncome),
 		Profit:        currency.NewMoneyFromFen(billSummary.Profit),
 		JoinedAt:      player.JoinedAt.UnixMilli(),
 		LeftAt:        timeToMs(player.LeftAt),
@@ -211,6 +234,8 @@ func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*Pla
 		Penalty:        currency.NewMoneyFromFen(agg.Penalty),
 		TotalBet:       currency.NewMoneyFromFen(agg.TotalBet),
 		TotalGrab:      currency.NewMoneyFromFen(agg.TotalGrab),
+		Reward:         currency.NewMoneyFromFen(agg.Reward),
+		TotalIncome:    currency.NewMoneyFromFen(agg.TotalIncome),
 		TotalSendCount: agg.TotalSendCount,
 		TotalGrabCount: agg.TotalGrabCount,
 		AvgProfit:      currency.NewMoneyFromFen(avgProfit),
@@ -218,8 +243,8 @@ func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*Pla
 }
 
 // playerSessionBillRowToItem 将 PlayerSessionBillRow 转换为 PlayerHistoryItem
-// 数据源来自 game_sessions + bill_record 聚合，不含 session_players 的
-// SeatNo/JoinedAt/LeftAt/Nickname/Avatar 字段，这些字段填零值。
+// 数据源来自 game_sessions + bill_record 聚合 + session_players 的
+// SeatNo/JoinedAt/LeftAt 字段。
 func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHistoryItem {
 	return PlayerHistoryItem{
 		SessionID:     converter.FormatID(row.SessionID),
@@ -232,6 +257,7 @@ func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHist
 		StartedAt:     timeToMs(row.StartedAt),
 		EndedAt:       timeToMs(row.EndedAt),
 		EndReason:     row.EndReason,
+		SeatNo:        row.SeatNo,
 		SendCount:     int(row.SendCount),
 		GrabCount:     int(row.GrabCount),
 		TotalSend:     currency.NewMoneyFromFen(row.TotalSend),
@@ -239,7 +265,11 @@ func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHist
 		Penalty:       currency.NewMoneyFromFen(row.Penalty),
 		TotalBet:      currency.NewMoneyFromFen(row.TotalBet),
 		TotalGrab:     currency.NewMoneyFromFen(row.TotalGrab),
+		Reward:        currency.NewMoneyFromFen(row.Reward),
+		TotalIncome:   currency.NewMoneyFromFen(row.TotalIncome),
 		Profit:        currency.NewMoneyFromFen(row.Profit),
+		JoinedAt:      timeToMs(row.JoinedAt),
+		LeftAt:        timeToMs(row.LeftAt),
 	}
 }
 

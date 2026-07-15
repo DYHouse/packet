@@ -35,6 +35,8 @@ type PlayerHistoryItem struct {
 	Penalty       currency.Money `json:"penalty"`
 	TotalBet      currency.Money `json:"total_bet"`
 	TotalGrab     currency.Money `json:"total_grab"`
+	Reward        currency.Money `json:"reward"`       // 系统奖励（罚款分发+特殊奖励）
+	TotalIncome   currency.Money `json:"total_income"` // 总收入（抢包+系统奖励）
 	Profit        currency.Money `json:"profit"`
 	JoinedAt      int64          `json:"joined_at"`
 	LeftAt        int64          `json:"left_at"`
@@ -77,6 +79,13 @@ type SendDetail struct {
 	StartedAt   int64          `json:"started_at"`
 }
 
+// RewardDetail 特殊奖励明细（顺子/豹子）
+type RewardDetail struct {
+	RewardType  int            `json:"reward_type"`  // 1顺子 2豹子
+	Amount      currency.Money `json:"amount"`      // 每玩家奖励金额
+	TriggerType int            `json:"trigger_type"` // 1保底 2概率
+}
+
 // RoundDetail 回合明细
 type RoundDetail struct {
 	RoundID     string         `json:"round_id"`
@@ -89,6 +98,7 @@ type RoundDetail struct {
 	Status      int            `json:"status"`
 	MyGrab      *GrabDetail    `json:"my_grab,omitempty"`
 	MySend      *SendDetail    `json:"my_send,omitempty"`
+	MyReward    *RewardDetail  `json:"my_reward,omitempty"`
 }
 
 // PlayerSessionDetailResp 单局详情响应
@@ -110,6 +120,8 @@ type PlayerStatsResp struct {
 	Penalty        currency.Money `json:"penalty"`
 	TotalBet       currency.Money `json:"total_bet"`
 	TotalGrab      currency.Money `json:"total_grab"`
+	Reward         currency.Money `json:"reward"`       // 系统奖励（罚款分发+特殊奖励）
+	TotalIncome    currency.Money `json:"total_income"` // 总收入（抢包+系统奖励）
 	TotalSendCount int64          `json:"total_send_count"`
 	TotalGrabCount int64          `json:"total_grab_count"`
 	AvgProfit      currency.Money `json:"avg_profit"`
