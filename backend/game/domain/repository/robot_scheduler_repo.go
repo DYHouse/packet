@@ -14,6 +14,9 @@ type RobotSchedulerRepository interface {
 	RemoveRobotFromRoom(ctx context.Context, roomID string, userID int64) error
 	// GetRoomRobots 获取房间内所有机器人 userID。
 	GetRoomRobots(ctx context.Context, roomID string) ([]int64, error)
+	// GetRoomPlayerRobots 获取房间内同时为玩家的机器人 userID（房间机器人集合与房间玩家集合的交集）。
+	// 因 RoomPlayersKey 为 HASH 类型，不能用 SINTER，底层使用 SMembers + HKeys 应用层求交集。
+	GetRoomPlayerRobots(ctx context.Context, roomID string) ([]int64, error)
 	// AcquireAssignLock 获取机器人分配锁。
 	// 返回 (locked, token, error)：locked=true 时 token 是本次持有的随机值，释放锁时需传入。
 	AcquireAssignLock(ctx context.Context, userID int64, roomID string, ttl time.Duration) (bool, string, error)

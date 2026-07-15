@@ -51,6 +51,38 @@ func (s *RobotSchedulerRedis) GetRoomRobots(ctx context.Context, roomID string) 
 	return ids, nil
 }
 
+// GetRoomPlayerRobots 获取房间内同时为玩家的机器人 userID 集合。
+// 因 RoomPlayersKey 为 HASH 类型，不能用 SINTER（SINTER 要求双方均为 SET），
+// 改用 SMembers 读取 RobotRoomKey（SET）+ HKeys 读取 RoomPlayersKey（HASH），应用层用 map 求交集。
+func (s *RobotSchedulerRedis) GetRoomPlayerRobots(ctx context.Context, roomID string) ([]int64, error) {
+	robotMembers, err := s.redis.SMembers(ctx, rediskeys.RobotRoomKey(roomID)).Result()
+	if err != nil {
+		return nil, err
+	}
+	playerMembers, err := s.redis.HKeys(ctx, rediskeys.RoomPlayersKey(roomID)).Result()
+	if err != nil {
+		return nil, err
+	}
+	// 以玩家集合构建 map，遍历机器人集合取交集
+	playerSet := make(map[string]struct{}, len(playerMembers))
+	for _, member := range playerMembers {
+		playerSet[member] = struct{}{}
+	}
+	ids := make([]int64, 0, len(robotMembers))
+	for _, member := range robotMembers {
+		if _, ok := playerSet[member]; !ok {
+			continue
+		}
+		userID, err := converter.ParseIDStrict(member)
+		if err != nil {
+			logger.Warn("parse room player robot userID failed", "member", member, "error", err)
+			continue
+		}
+		ids = append(ids, userID)
+	}
+	return ids, nil
+}
+
 // ClearRoomRobots 清空房间机器人
 func (s *RobotSchedulerRedis) ClearRoomRobots(ctx context.Context, roomID string) error {
 	return s.redis.Del(ctx, rediskeys.RobotRoomKey(roomID)).Err()

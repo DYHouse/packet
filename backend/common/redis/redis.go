@@ -33,6 +33,7 @@ type RedisClient interface {
 	SCard(ctx context.Context, key string) *redis.IntCmd
 	SIsMember(ctx context.Context, key string, member interface{}) *redis.BoolCmd
 	SPop(ctx context.Context, key string) *redis.StringCmd
+	SInter(ctx context.Context, keys ...string) *redis.StringSliceCmd
 	Pipeline() redis.Pipeliner
 	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
 	Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
@@ -226,6 +227,11 @@ func (c *client) SIsMember(ctx context.Context, key string, member interface{}) 
 // SPop 原子弹出并删除集合中的一个成员
 func (c *client) SPop(ctx context.Context, key string) *redis.StringCmd {
 	return c.rdb.SPop(ctx, key)
+}
+
+// SInter 求多个集合的交集
+func (c *client) SInter(ctx context.Context, keys ...string) *redis.StringSliceCmd {
+	return c.rdb.SInter(ctx, keys...)
 }
 
 // Pipeline 创建Pipeline

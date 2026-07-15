@@ -20,7 +20,7 @@ type ExceptionRecord struct {
 	ExceptionNo     string          `gorm:"uniqueIndex;size:32;not null" json:"exception_no"`
 	ExceptionType   ExceptionType   `gorm:"not null;index" json:"exception_type"`
 	BillID          int64           `gorm:"index" json:"bill_id"`
-	RoundTraceID    string          `gorm:"index;size:64" json:"round_trace_id"`
+	RoundTraceID    string          `gorm:"index;size:128" json:"round_trace_id"`
 	RoundID         int64           `gorm:"index" json:"round_id"`
 	BillType        int             `gorm:"index" json:"bill_type"`
 	UserID          int64           `gorm:"index" json:"user_id"`

@@ -4,7 +4,7 @@ import "time"
 
 type BillRecord struct {
 	ID               int64      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RoundTraceID     string     `gorm:"size:64;uniqueIndex:idx_round_trace_bill_user,priority:1" json:"round_trace_id"`
+	RoundTraceID     string     `gorm:"size:128;uniqueIndex:idx_round_trace_bill_user,priority:1" json:"round_trace_id"`
 	BizOrderNo       string     `gorm:"uniqueIndex;size:128" json:"biz_order_no"`
 	PlatformTransID  string     `gorm:"index;size:64" json:"platform_trans_id"`
 	BillType         int        `gorm:"not null;uniqueIndex:idx_round_trace_bill_user,priority:2;index:idx_session_user_type,priority:3" json:"bill_type"`
@@ -46,7 +46,7 @@ func (BillRecord) TableName() string {
 
 type RoundSettlement struct {
 	ID                 int64      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RoundTraceID       string     `gorm:"uniqueIndex;size:64" json:"round_trace_id"`
+	RoundTraceID       string     `gorm:"uniqueIndex;size:128" json:"round_trace_id"`
 	RoomID             int64      `gorm:"index;not null" json:"room_id"`
 	SessionID          int64      `gorm:"index;not null" json:"session_id"`
 	RoundID            int64      `gorm:"uniqueIndex;not null" json:"round_id"`

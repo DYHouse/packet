@@ -83,6 +83,22 @@ func (e *RobotBehaviorEngine) scheduleRetry(ctx context.Context, roomID string, 
 			"robot_user_id", robotUserID,
 			"retry_count", retryCount,
 		)
+		// 选座重试耗尽后让机器人离开房间，归还空闲池，避免观众机器人滞留
+		// 触发后续轮次 OnPacketCreated 误调度抢红包，并导致 robot pool reserve low
+		if action == "seat" {
+			if leaveErr := e.handleLeaveAction(ctx, roomID, robotUserID); leaveErr != nil {
+				logger.Error("robot leave after seat retry exhausted failed",
+					"room_id", roomID,
+					"robot_user_id", robotUserID,
+					"error", leaveErr,
+				)
+			} else {
+				logger.Info("robot left room after seat retry exhausted, returned to idle pool",
+					"room_id", roomID,
+					"robot_user_id", robotUserID,
+				)
+			}
+		}
 		return
 	}
 	delay := e.config.Behavior.ActionRetryDelay
@@ -167,6 +183,17 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 	}
 
 	if err != nil {
+		// grab 永久性错误（如观众机器人误触抢红包）重试必然失败，仅记录 warn 不重试
+		if action == "grab" && isPermanentGrabError(err) {
+			logger.Warn("robot grab skipped, permanent error",
+				"action", action,
+				"room_id", roomID,
+				"robot_user_id", robotUserID,
+				"retry_count", retryCount,
+				"error", err,
+			)
+			return
+		}
 		logger.Error("robot action failed",
 			"action", action,
 			"room_id", roomID,
@@ -239,11 +266,11 @@ func (e *RobotBehaviorEngine) handleLeaveAction(ctx context.Context, roomID stri
 	return err
 }
 
-// OnPacketCreated handles the packet created event by scheduling grab
-// actions for each robot in the room. Each robot may skip grabbing based
-// on the configured GrabSkipProb probability.
+// OnPacketCreated 处理红包创建事件，为房间内机器人调度抢红包任务。
+// 仅对玩家机器人调度抢红包任务，观众机器人不参与；每个机器人按
+// GrabSkipProb 概率决定是否跳过本次抢红包。
 func (e *RobotBehaviorEngine) OnPacketCreated(ctx context.Context, roomID string, roundID string) {
-	robotIDs, err := e.robotSchedulerRedis.GetRoomRobots(ctx, roomID)
+	robotIDs, err := e.robotSchedulerRedis.GetRoomPlayerRobots(ctx, roomID)
 	if err != nil {
 		logger.Error("failed to get room robots for packet created event",
 			"room_id", roomID,
@@ -263,15 +290,15 @@ func (e *RobotBehaviorEngine) OnPacketCreated(ctx context.Context, roomID string
 	}
 }
 
-// OnRoundSettle handles the round settled event by scheduling a send
-// action when the next sender (minPlayerID) is a robot in the room.
-// If isGameEnd is true, no send action is scheduled since the game is over.
+// OnRoundSettle 处理回合结算事件，当下一个发红包者（minPlayerID）为房间内
+// 机器人时调度 send 任务。使用玩家机器人交集避免观众机器人被误判为下一发包人。
+// 若 isGameEnd 为 true，表示游戏已结束，不再调度 send 任务。
 func (e *RobotBehaviorEngine) OnRoundSettle(ctx context.Context, roomID string, minPlayerID int64, isGameEnd bool) {
 	if isGameEnd {
 		return
 	}
 
-	robotIDs, err := e.robotSchedulerRedis.GetRoomRobots(ctx, roomID)
+	robotIDs, err := e.robotSchedulerRedis.GetRoomPlayerRobots(ctx, roomID)
 	if err != nil {
 		logger.Error("failed to get room robots for round settle event",
 			"room_id", roomID,
@@ -314,4 +341,23 @@ func (e *RobotBehaviorEngine) LeaveRoomNow(ctx context.Context, roomID string, r
 // a robot skips grabbing the current packet.
 func (e *RobotBehaviorEngine) shouldSkipGrab(prob float64) bool {
 	return rand.Float64() < prob
+}
+
+// isPermanentGrabError 判断 grab 错误是否为永久性错误（重试必然失败）。
+// 永久性错误包括：非玩家操作、不在房间、机器人不允许、非抢红包阶段、无玩家。
+// 这类错误重试无意义，应直接放弃以避免日志噪音与调度器空转。
+func isPermanentGrabError(err error) bool {
+	codes := []int{
+		message.CodeNotPlayer,
+		message.CodeNotInRoom,
+		message.CodeRobotNotAllowed,
+		message.CodeNotInGrabbingPhase,
+		message.CodeNoPlayers,
+	}
+	for _, code := range codes {
+		if message.IsErrorCode(err, code) {
+			return true
+		}
+	}
+	return false
 }

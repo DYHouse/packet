@@ -96,6 +96,8 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		events.RoomEventPlayerReady,
 		events.RoomEventSeatCancel,
 		events.RoomEventSpectatorKick,
+		events.RoomEventQueueJoin,
+		events.RoomEventQueueLeave,
 		events.RoomEventSubstitute:
 		// 所有已知房间事件类型均触发同步房间计数，无需按类型分发到独立 handler
 		handleErr = c.syncRoomCounts(ctx, event)

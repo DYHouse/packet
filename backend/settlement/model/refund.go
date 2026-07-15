@@ -5,7 +5,7 @@ import "time"
 type RefundAudit struct {
 	ID              int64      `gorm:"primaryKey;autoIncrement" json:"id"`
 	RefundOrderNo   string     `gorm:"uniqueIndex;size:64;not null" json:"refund_order_no"`
-	RoundTraceID    string     `gorm:"index;size:64" json:"round_trace_id"`
+	RoundTraceID    string     `gorm:"index;size:128" json:"round_trace_id"`
 	BatchID         string     `gorm:"index;size:32" json:"batch_id"`
 	RoomID          int64      `gorm:"not null" json:"room_id"`
 	SessionID       int64      `gorm:"not null" json:"session_id"`

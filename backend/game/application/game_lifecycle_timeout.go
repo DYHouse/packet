@@ -87,6 +87,15 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 			return nil
 		}
 
+		// 回合尚未创建时无有效 roundID 可传入罚款账单，跳过罚扣避免 parse id 空串告警与 round_id=0 语义错误。
+		if meta.CurrentRoundID == "" {
+			logger.Info("current round not started yet, skip send timeout penalty",
+				"room_id", roomID,
+				"user_id", userID,
+			)
+			return nil
+		}
+
 		roomIDInt := converter.ParseID(roomID)
 		sessionID := roomIDInt
 		if meta.CurrentSessionID != "" {
