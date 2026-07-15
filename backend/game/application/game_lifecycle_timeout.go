@@ -87,22 +87,23 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 			return nil
 		}
 
-		// 回合尚未创建时无有效 roundID 可传入罚款账单，跳过罚扣避免 parse id 空串告警与 round_id=0 语义错误。
-		if meta.CurrentRoundID == "" {
-			logger.Info("current round not started yet, skip send timeout penalty",
-				"room_id", roomID,
-				"user_id", userID,
-			)
-			return nil
-		}
-
+		// 发红包超时场景下 CurrentRoundID 通常为空（上一轮结算时被 HDEL 清除，
+		// 新回合因玩家未发包而尚未创建）。此时仍需执行罚款与强制发包，
+		// roundID 传 0 表示"回合尚未创建"的语义。
+		// 注意：不能因 CurrentRoundID 为空就跳过罚款，否则超时逻辑永远无法执行
+		// （上面的 CurrentRoundID != "" 检查与此处互斥，会导致所有情况都跳过）。
 		roomIDInt := converter.ParseID(roomID)
 		sessionID := roomIDInt
 		if meta.CurrentSessionID != "" {
 			sessionID = converter.ParseID(meta.CurrentSessionID)
 		}
 
-		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound), converter.ParseID(meta.CurrentRoundID))
+		var roundID int64
+		if meta.CurrentRoundID != "" {
+			roundID = converter.ParseID(meta.CurrentRoundID)
+		}
+
+		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound), roundID)
 		if err != nil {
 			logger.Error("apply penalty failed", "room_id", roomID, "user_id", userID, "error", err)
 			return nil

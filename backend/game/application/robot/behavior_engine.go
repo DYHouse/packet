@@ -2,6 +2,7 @@ package robot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -19,15 +20,31 @@ import (
 	"github.com/google/uuid"
 )
 
+// RobotActionExecutor 执行机器人具体动作（选座、准备、抢红包、发包、离开）。
+// 由 RobotPlayer 实现，提取接口以支持 behavior engine 的单元测试。
+type RobotActionExecutor interface {
+	SelectSeat(ctx context.Context, roomID string, robotUserID string) error
+	Ready(ctx context.Context, roomID string, robotUserID string) error
+	GrabPacket(ctx context.Context, roomID string, roundID string, robotUserID string) error
+	SendPacket(ctx context.Context, roomID string, robotUserID string) error
+	LeaveRoom(ctx context.Context, roomID string, robotUserID string) error
+}
+
+// RobotIdleMarker 将机器人标记为空闲并归还到可用池。
+// 由 RobotAccountService 实现，提取接口以支持 behavior engine 的单元测试。
+type RobotIdleMarker interface {
+	MarkRobotIdle(ctx context.Context, userID int64) error
+}
+
 // RobotBehaviorEngine drives delayed robot actions through the timeout
 // scheduler and reacts to game lifecycle events (packet created, round
 // settled, session ended) by scheduling the corresponding robot behavior.
 // It implements the RobotActionScheduler interface used by RobotPlayer.
 type RobotBehaviorEngine struct {
 	config              *config.RobotConfig
-	robotPlayer         *RobotPlayer
+	robotPlayer         RobotActionExecutor
 	scheduler           *scheduler.TimeoutScheduler
-	accountSvc          *RobotAccountService
+	accountSvc          RobotIdleMarker
 	grabSvc             *application.GrabService
 	robotSchedulerRedis repository.RobotSchedulerRepository
 }
@@ -35,9 +52,9 @@ type RobotBehaviorEngine struct {
 // NewRobotBehaviorEngine creates a new RobotBehaviorEngine instance.
 func NewRobotBehaviorEngine(
 	config *config.RobotConfig,
-	robotPlayer *RobotPlayer,
+	robotPlayer RobotActionExecutor,
 	scheduler *scheduler.TimeoutScheduler,
-	accountSvc *RobotAccountService,
+	accountSvc RobotIdleMarker,
 	grabSvc *application.GrabService,
 	robotSchedulerRedis repository.RobotSchedulerRepository,
 ) *RobotBehaviorEngine {
@@ -192,6 +209,31 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 				"retry_count", retryCount,
 				"error", err,
 			)
+			return
+		}
+		// seat 永久性错误：无空座时重试无意义（等待阶段座位只会被填满不会被释放），
+		// 直接让机器人离开房间归还空闲池，避免观众机器人滞留。
+		// 注意：不能依赖 scheduleRetry 的 "retry exhausted → leave" 路径，
+		// 因为游戏开始时 ClearAllRoomTimeouts 会清除 pending retry，
+		// 导致 retry exhausted 分支永远不执行，机器人永远无法离开。
+		if action == "seat" && errors.Is(err, ErrNoEmptySeat) {
+			logger.Warn("robot seat skipped, no empty seat available, leaving room",
+				"room_id", roomID,
+				"robot_user_id", robotUserID,
+				"retry_count", retryCount,
+			)
+			if leaveErr := e.handleLeaveAction(ctx, roomID, robotUserID); leaveErr != nil {
+				logger.Error("robot leave after no empty seat failed",
+					"room_id", roomID,
+					"robot_user_id", robotUserID,
+					"error", leaveErr,
+				)
+			} else {
+				logger.Info("robot left room after no empty seat, returned to idle pool",
+					"room_id", roomID,
+					"robot_user_id", robotUserID,
+				)
+			}
 			return
 		}
 		logger.Error("robot action failed",
