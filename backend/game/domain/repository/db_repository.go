@@ -93,7 +93,6 @@ type PlayerSessionRow struct {
 	TotalSend int64 // 分
 	TotalGrab int64 // 分
 	JoinedAt  time.Time
-	LeftAt    *time.Time
 	// game_sessions 字段
 	RoomNo       string
 	ConfigName   string
@@ -143,7 +142,6 @@ type PlayerSessionBillRow struct {
 	// session_players 字段
 	SeatNo    int
 	JoinedAt  *time.Time
-	LeftAt    *time.Time
 }
 
 // PlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）

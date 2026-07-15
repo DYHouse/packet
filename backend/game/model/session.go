@@ -47,7 +47,6 @@ type SessionPlayer struct {
 	IP          string     `json:"ip" gorm:"size:45"`
 	DeviceID    string     `json:"device_id" gorm:"size:100"`
 	JoinedAt    time.Time  `json:"joined_at" gorm:"index:idx_user_joined,priority:2"`
-	LeftAt      *time.Time `json:"left_at"`
 	CreatedAt   time.Time  `json:"created_at" gorm:"autoCreateTime"`
 }
 

@@ -106,7 +106,7 @@ func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTi
 	listSQL := `SELECT
        gs.session_id, gs.room_no, gs.config_name, gs.room_fee, gs.max_rounds, gs.actual_rounds,
        gs.status, gs.started_at, gs.ended_at, gs.end_reason,
-       MAX(sp.seat_no) AS seat_no, MAX(sp.joined_at) AS joined_at, MAX(sp.left_at) AS left_at,
+       MAX(sp.seat_no) AS seat_no, MAX(sp.joined_at) AS joined_at,
        COALESCE(SUM(CASE WHEN b.bill_type = 3 AND b.amount > 0 THEN b.amount ELSE 0 END), 0) AS total_grab,
        COALESCE(SUM(CASE WHEN b.bill_type = 4 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_send,
        COALESCE(SUM(CASE WHEN b.bill_type = 2 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS first_round_fee,

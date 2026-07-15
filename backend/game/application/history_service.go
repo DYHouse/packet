@@ -168,7 +168,7 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		roundDetails = append(roundDetails, rd)
 	}
 
-	// 9. 组装个人结果卡片（基于 bill 聚合 + player 的 seat_no/joined_at/left_at）
+	// 9. 组装个人结果卡片（基于 bill 聚合 + player 的 seat_no/joined_at）
 	myStats := PlayerHistoryItem{
 		SessionID:     converter.FormatID(session.SessionID),
 		RoomNo:        session.RoomNo,
@@ -192,7 +192,6 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		TotalIncome:   currency.NewMoneyFromFen(billSummary.TotalIncome),
 		Profit:        currency.NewMoneyFromFen(billSummary.Profit),
 		JoinedAt:      player.JoinedAt.UnixMilli(),
-		LeftAt:        timeToMs(player.LeftAt),
 	}
 
 	// 10. 组装响应
@@ -244,7 +243,7 @@ func (s *HistoryService) GetPlayerStats(ctx context.Context, userID int64) (*Pla
 
 // playerSessionBillRowToItem 将 PlayerSessionBillRow 转换为 PlayerHistoryItem
 // 数据源来自 game_sessions + bill_record 聚合 + session_players 的
-// SeatNo/JoinedAt/LeftAt 字段。
+// SeatNo/JoinedAt 字段。
 func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHistoryItem {
 	return PlayerHistoryItem{
 		SessionID:     converter.FormatID(row.SessionID),
@@ -269,7 +268,6 @@ func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHist
 		TotalIncome:   currency.NewMoneyFromFen(row.TotalIncome),
 		Profit:        currency.NewMoneyFromFen(row.Profit),
 		JoinedAt:      timeToMs(row.JoinedAt),
-		LeftAt:        timeToMs(row.LeftAt),
 	}
 }
 

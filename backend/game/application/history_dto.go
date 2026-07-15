@@ -39,7 +39,6 @@ type PlayerHistoryItem struct {
 	TotalIncome   currency.Money `json:"total_income"` // 总收入（抢包+系统奖励）
 	Profit        currency.Money `json:"profit"`
 	JoinedAt      int64          `json:"joined_at"`
-	LeftAt        int64          `json:"left_at"`
 }
 
 // PlayerHistoryResp 玩家历史对局列表响应
