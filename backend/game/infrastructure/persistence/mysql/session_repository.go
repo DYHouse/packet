@@ -88,9 +88,3 @@ func (r *gormSessionRepository) IncrementSessionPlayerSend(ctx context.Context, 
 			"total_send": gorm.Expr("total_send + ?", amount),
 		}).Error
 }
-
-func (r *gormSessionRepository) UpdateSessionPlayerProfit(ctx context.Context, sessionID, userID int64, totalProfit int64) error {
-	return r.db.WithContext(ctx).Model(&model.SessionPlayer{}).
-		Where("session_id = ? AND user_id = ?", sessionID, userID).
-		Update("total_profit", totalProfit).Error
-}

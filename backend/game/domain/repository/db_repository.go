@@ -25,7 +25,6 @@ type SessionDBRepository interface {
 	CreateOrUpdateSessionPlayer(ctx context.Context, player *model.SessionPlayer) error
 	IncrementSessionPlayerGrab(ctx context.Context, sessionID, userID int64, amount int64) error
 	IncrementSessionPlayerSend(ctx context.Context, sessionID, userID int64, amount int64) error
-	UpdateSessionPlayerProfit(ctx context.Context, sessionID, userID int64, totalProfit int64) error
 }
 
 type UserDBRepository interface {
@@ -81,14 +80,6 @@ type Transaction interface {
 	GrabRecordRepo() GrabRecordRepository
 	SpecialRewardRepo() SpecialRewardRepository
 	PenaltyRecordRepo() PenaltyRecordRepository
-}
-
-type PlayerStatsUpdate struct {
-	TotalSend   int64
-	TotalGrab   int64
-	TotalProfit int64
-	SendCount   int
-	GrabCount   int
 }
 
 // PlayerSessionRow 是 session_players + game_sessions 关联查询的行

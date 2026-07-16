@@ -43,7 +43,6 @@ type SessionPlayer struct {
 	GrabCount   int        `json:"grab_count"`
 	TotalSend   int64      `json:"total_send"`
 	TotalGrab   int64      `json:"total_grab"`
-	TotalProfit int64      `json:"total_profit"`
 	IP          string     `json:"ip" gorm:"size:45"`
 	DeviceID    string     `json:"device_id" gorm:"size:100"`
 	JoinedAt    time.Time  `json:"joined_at" gorm:"index:idx_user_joined,priority:2"`

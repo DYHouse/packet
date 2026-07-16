@@ -1,0 +1,8 @@
+- [x] `backend/game/model/session.go` 中 `SessionPlayer` 结构体不再包含 `TotalProfit` 字段
+- [x] `backend/game/domain/repository/db_repository.go` 中 `SessionDBRepository` 接口不再包含 `UpdateSessionPlayerProfit` 方法
+- [x] `backend/game/domain/repository/db_repository.go` 中 `PlayerStatsUpdate` 结构体已删除
+- [x] `backend/game/infrastructure/persistence/mysql/session_repository.go` 中 `UpdateSessionPlayerProfit` 方法实现已删除
+- [x] `backend/game/application/game_event_handler.go` 中 `handleSessionEnd` 事务内不再调用 `UpdateSessionPlayerProfit`，但 `UpdateSessionEnded` 调用与外层 `SettleGame` 调用保留
+- [x] `backend/` 目录执行 `go build ./game/...` 及排除 scripts/integration 的全量构建均编译通过（scripts 的 `main redeclared` 错误为预先存在的问题，与本次改动无关）
+- [x] 全代码库无残留对 `SessionPlayer.TotalProfit`、`UpdateSessionPlayerProfit`、`PlayerStatsUpdate` 的引用（Grep 验证 0 匹配）
+- [x] 未误删其他同名但属于不同结构体的字段（`FinalResult.TotalProfit` / `push.TotalProfit` / `PlayerStatsResp.TotalProfit` / `PlayerStatsBillAggregate.TotalProfit` / `RobotAccount.TotalProfit` 等均保留；`history_repository.go` 中 `AS total_profit` SQL 别名来自 bill_record 聚合，是实际数据源，保留）

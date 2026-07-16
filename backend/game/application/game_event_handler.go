@@ -355,13 +355,6 @@ func (h *GameEventHandler) handleSessionEnd(ctx context.Context, event *events.G
 			return fmt.Errorf("update session failed: %w", err)
 		}
 
-		// Update each player's total_profit from final results
-		for _, fr := range data.FinalResults {
-			if err := sessionRepo.UpdateSessionPlayerProfit(ctx, sessionIDInt64, parseInt64(fr.UserID), fr.TotalProfit); err != nil {
-				return fmt.Errorf("update session player total_profit failed: user_id=%d: %w", parseInt64(fr.UserID), err)
-			}
-		}
-
 		return nil
 	}); err != nil {
 		return err
