@@ -358,6 +358,12 @@ func (s *Server) writeAndHeartbeatPump(conn *connection.Connection) {
 			if err := conn.WebSocketConn().WriteMessage(websocket.TextMessage, msgData); err != nil {
 				return
 			}
+			// Drain 模式:Kicking 状态下 sendChan 已排空,说明 kicked 推送已发出,主动关闭连接
+			if conn.IsKicking() && len(conn.SendChan()) == 0 {
+				conn.WebSocketConn().WriteMessage(websocket.CloseMessage, []byte{})
+				conn.Close()
+				return
+			}
 		case <-heartbeatTicker.C:
 			if conn.IsHeartbeatTimeout() {
 				logger.Warn("connection heartbeat timeout", "conn_id", conn.ConnID)

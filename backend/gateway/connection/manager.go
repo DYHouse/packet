@@ -172,7 +172,9 @@ func (m *Manager) kickLocalConnection(connID string) {
 		c.Send(data)
 	}
 
-	c.Close()
+	// 标记为 Kicking 状态,由 writeAndHeartbeatPump drain 完 sendChan(含 kicked 推送)后自行关闭。
+	// 不立即 Close,避免 kicked 推送滞留在 sendChan 里丢失。
+	c.MarkKicking()
 	m.localConnections.Delete(connID)
 	m.userConnections.Delete(c.UserID)
 	atomic.AddInt64(&m.connectionCount, -1)

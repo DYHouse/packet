@@ -19,6 +19,9 @@ const (
 	StatusConnecting ConnStatus = iota
 	StatusAuthed
 	StatusDisconnected
+	// StatusKicking 表示连接已被标记为踢出,等待 writeAndHeartbeatPump drain 完 sendChan 后自行关闭。
+	// 此状态下 Send 仍可工作(允许 kicked 推送塞入),Close 仍可被外部调用(兜底)。
+	StatusKicking
 	StatusClosed
 )
 
@@ -76,6 +79,21 @@ func (c *Connection) GetStatus() ConnStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status
+}
+
+// MarkKicking 将连接状态置为 StatusKicking,通知 writeAndHeartbeatPump 进入 drain 模式。
+// 不关闭 sendChan/closeChan/wsConn,让 writePump 自然 flush 完待发送数据(如 kicked 推送)后自行关闭。
+func (c *Connection) MarkKicking() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.status = StatusKicking
+}
+
+// IsKicking 返回连接是否处于 drain 模式。
+func (c *Connection) IsKicking() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.status == StatusKicking
 }
 
 func (c *Connection) UpdateHeartbeat() {
