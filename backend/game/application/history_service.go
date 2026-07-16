@@ -111,6 +111,20 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		return nil, message.NewError(message.CodeHistoryQueryFailed)
 	}
 
+	// 5.2 查询玩家在每个 round 的罚款扣款明细（bill_type=8）
+	playerPenalties, err := s.dbRepo.HistoryDBRepo().ListPlayerRoundPenalties(sessionID, userID)
+	if err != nil {
+		logger.Error("failed to list player round penalties", "user_id", userID, "session_id", sessionID, "error", err)
+		return nil, message.NewError(message.CodeHistoryQueryFailed)
+	}
+
+	// 5.3 查询玩家在每个 round 收到的罚款分红（bill_type=10）
+	playerPenaltyDists, err := s.dbRepo.HistoryDBRepo().ListPlayerRoundPenaltyDistributions(sessionID, userID)
+	if err != nil {
+		logger.Error("failed to list player round penalty distributions", "user_id", userID, "session_id", sessionID, "error", err)
+		return nil, message.NewError(message.CodeHistoryQueryFailed)
+	}
+
 	// 6. 构建 round_id -> grabRecord 索引
 	grabByRound := make(map[int64]model.RoundGrabRecord, len(grabRecords))
 	for i := range grabRecords {
@@ -127,6 +141,18 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 	rewardByRound := make(map[int64]model.SpecialReward, len(specialRewards))
 	for i := range specialRewards {
 		rewardByRound[specialRewards[i].RoundID] = specialRewards[i]
+	}
+
+	// 7.2 构建 round_id -> Penalty 索引
+	penaltyByRound := make(map[int64]repository.PlayerRoundPenaltyRow, len(playerPenalties))
+	for i := range playerPenalties {
+		penaltyByRound[playerPenalties[i].RoundID] = playerPenalties[i]
+	}
+
+	// 7.3 构建 round_id -> PenaltyDistribution 索引
+	penaltyDistByRound := make(map[int64]repository.PlayerRoundPenaltyDistRow, len(playerPenaltyDists))
+	for i := range playerPenaltyDists {
+		penaltyDistByRound[playerPenaltyDists[i].RoundID] = playerPenaltyDists[i]
 	}
 
 	// 8. 组装回合明细
@@ -163,6 +189,20 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 				RewardType:  sr.RewardType,
 				Amount:      currency.NewMoneyFromFen(sr.Amount),
 				TriggerType: sr.TriggerType,
+			}
+		}
+		// 填充罚款扣款明细（bill_type=8）
+		if p, ok := penaltyByRound[rounds[i].RoundID]; ok {
+			rd.MyPenalty = &PenaltyDetail{
+				PenaltyType: p.PenaltyType,
+				Amount:      currency.NewMoneyFromFen(p.Amount),
+				Count:       p.Count,
+			}
+		}
+		// 填充罚款分红明细（bill_type=10）
+		if pd, ok := penaltyDistByRound[rounds[i].RoundID]; ok {
+			rd.MyPenaltyDistribution = &PenaltyDistributionDetail{
+				Amount: currency.NewMoneyFromFen(pd.Amount),
 			}
 		}
 		roundDetails = append(roundDetails, rd)

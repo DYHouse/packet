@@ -222,3 +222,42 @@ func (r *gormHistoryRepository) ListSessionSpecialRewards(sessionID int64) ([]mo
 	}
 	return rewards, nil
 }
+
+// ListPlayerRoundPenalties 查询玩家在会话内每个 round 的罚款扣款明细。
+// 数据源：bill_record（bill_type=8 罚款收入，amount<0 表示支出）。
+// 按 round_id/round_no 分组聚合，过滤 status=1（Success）与 user_id!=0。
+// 与会话级 summary 的 penalty 字段同源，保证 round 级与 session 级对账一致。
+func (r *gormHistoryRepository) ListPlayerRoundPenalties(sessionID, userID int64) ([]repository.PlayerRoundPenaltyRow, error) {
+	query := `SELECT round_id, round_no,
+       ABS(SUM(amount)) AS amount,
+       MAX(penalty_type) AS penalty_type,
+       COUNT(*) AS count
+       FROM bill_record
+       WHERE session_id = ? AND user_id = ? AND bill_type = 8
+         AND amount < 0 AND status = 1 AND user_id != 0
+       GROUP BY round_id, round_no
+       ORDER BY round_no ASC`
+	var rows []repository.PlayerRoundPenaltyRow
+	if err := r.db.Raw(query, sessionID, userID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListPlayerRoundPenaltyDistributions 查询玩家在会话内每个 round 收到的罚款分红。
+// 数据源：bill_record（bill_type=10 罚款分发，amount>0 表示收入）。
+// 按 round_id/round_no 分组聚合，过滤 status=1（Success）与 user_id!=0（排除平台总账行）。
+// 与会话级 summary 的 reward 字段中 bill_type=10 部分同源，保证对账一致。
+func (r *gormHistoryRepository) ListPlayerRoundPenaltyDistributions(sessionID, userID int64) ([]repository.PlayerRoundPenaltyDistRow, error) {
+	query := `SELECT round_id, round_no, SUM(amount) AS amount
+       FROM bill_record
+       WHERE session_id = ? AND user_id = ? AND bill_type = 10
+         AND amount > 0 AND status = 1 AND user_id != 0
+       GROUP BY round_id, round_no
+       ORDER BY round_no ASC`
+	var rows []repository.PlayerRoundPenaltyDistRow
+	if err := r.db.Raw(query, sessionID, userID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}

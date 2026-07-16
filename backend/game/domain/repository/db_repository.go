@@ -141,8 +141,8 @@ type PlayerSessionBillRow struct {
 	GrabCount     int64 // bill_type=3 计数
 	SendCount     int64 // bill_type=4 计数
 	// session_players 字段
-	SeatNo    int
-	JoinedAt  *time.Time
+	SeatNo   int
+	JoinedAt *time.Time
 }
 
 // PlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）
@@ -175,6 +175,22 @@ type PlayerStatsBillAggregate struct {
 	TotalGrabCount int64
 }
 
+// PlayerRoundPenaltyRow 玩家在某个 round 的罚款扣款明细（基于 bill_record 聚合）
+type PlayerRoundPenaltyRow struct {
+	RoundID     int64
+	RoundNo     int
+	Amount      int64  // ABS(SUM(amount))，正数表示支出
+	PenaltyType string // bill_record.penalty_type
+	Count       int    // 该 round 内被罚款次数
+}
+
+// PlayerRoundPenaltyDistRow 玩家在某个 round 收到的罚款分红明细（基于 bill_record 聚合）
+type PlayerRoundPenaltyDistRow struct {
+	RoundID int64
+	RoundNo int
+	Amount  int64 // SUM(amount)，正数表示收入
+}
+
 // HistoryDBRepository 玩家历史记录查询仓储
 type HistoryDBRepository interface {
 	GetSessionRounds(sessionID int64) ([]model.Round, error)
@@ -188,6 +204,10 @@ type HistoryDBRepository interface {
 	GetPlayerSendRounds(sessionID, userID int64) ([]model.Round, error)
 	// ListSessionSpecialRewards 查询会话内所有特殊奖励记录（顺子/豹子，按 round_no 升序）
 	ListSessionSpecialRewards(sessionID int64) ([]model.SpecialReward, error)
+	// ListPlayerRoundPenalties 查询玩家在会话内每个 round 的罚款扣款明细（bill_type=8 且 amount<0）
+	ListPlayerRoundPenalties(sessionID, userID int64) ([]PlayerRoundPenaltyRow, error)
+	// ListPlayerRoundPenaltyDistributions 查询玩家在会话内每个 round 收到的罚款分红（bill_type=10 且 amount>0 且 user_id!=0）
+	ListPlayerRoundPenaltyDistributions(sessionID, userID int64) ([]PlayerRoundPenaltyDistRow, error)
 }
 
 type DBRepository interface {

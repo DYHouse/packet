@@ -81,23 +81,37 @@ type SendDetail struct {
 // RewardDetail 特殊奖励明细（顺子/豹子）
 type RewardDetail struct {
 	RewardType  int            `json:"reward_type"`  // 1顺子 2豹子
-	Amount      currency.Money `json:"amount"`      // 每玩家奖励金额
+	Amount      currency.Money `json:"amount"`       // 每玩家奖励金额
 	TriggerType int            `json:"trigger_type"` // 1保底 2概率
+}
+
+// PenaltyDetail 罚款明细（玩家被罚款，基于 bill_record bill_type=8 聚合）
+type PenaltyDetail struct {
+	PenaltyType string         `json:"penalty_type"` // 罚款类型，如 SendTimeout/ReplaceTimeout
+	Amount      currency.Money `json:"amount"`       // 罚款金额（正数，表示支出）
+	Count       int            `json:"count"`        // 罚款次数
+}
+
+// PenaltyDistributionDetail 罚款分红明细（玩家收到罚款分红，基于 bill_record bill_type=10 聚合）
+type PenaltyDistributionDetail struct {
+	Amount currency.Money `json:"amount"` // 分红金额（正数，表示收入）
 }
 
 // RoundDetail 回合明细
 type RoundDetail struct {
-	RoundID     string         `json:"round_id"`
-	RoundNo     int            `json:"round_no"`
-	SenderID    string         `json:"sender_id"`
-	SenderType  string         `json:"sender_type"`
-	TotalAmount currency.Money `json:"total_amount"`
-	StartedAt   int64          `json:"started_at"`
-	EndedAt     int64          `json:"ended_at"`
-	Status      int            `json:"status"`
-	MyGrab      *GrabDetail    `json:"my_grab,omitempty"`
-	MySend      *SendDetail    `json:"my_send,omitempty"`
-	MyReward    *RewardDetail  `json:"my_reward,omitempty"`
+	RoundID               string                     `json:"round_id"`
+	RoundNo               int                        `json:"round_no"`
+	SenderID              string                     `json:"sender_id"`
+	SenderType            string                     `json:"sender_type"`
+	TotalAmount           currency.Money             `json:"total_amount"`
+	StartedAt             int64                      `json:"started_at"`
+	EndedAt               int64                      `json:"ended_at"`
+	Status                int                        `json:"status"`
+	MyGrab                *GrabDetail                `json:"my_grab,omitempty"`
+	MySend                *SendDetail                `json:"my_send,omitempty"`
+	MyReward              *RewardDetail              `json:"my_reward,omitempty"`
+	MyPenalty             *PenaltyDetail             `json:"my_penalty,omitempty"`
+	MyPenaltyDistribution *PenaltyDistributionDetail `json:"my_penalty_distribution,omitempty"`
 }
 
 // PlayerSessionDetailResp 单局详情响应
