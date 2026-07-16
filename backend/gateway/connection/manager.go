@@ -298,29 +298,6 @@ func (m *Manager) MarkDisconnected(conn *Connection) {
 	m.emitEvent(conn, string(EventDisconnected), roomID)
 }
 
-func (m *Manager) CleanupOldConnection(userID string) {
-	m.deleteConnectionMapping(userID)
-
-	if oldConnIDI, ok := m.userConnections.Load(userID); ok {
-		oldConnID := oldConnIDI.(string)
-		if oldConn, ok := m.localConnections.Load(oldConnID); ok {
-			c := oldConn.(*Connection)
-			c.Close()
-		}
-		m.localConnections.Delete(oldConnID)
-		m.userConnections.Delete(userID)
-		atomic.AddInt64(&m.connectionCount, -1)
-	}
-}
-
-func (m *Manager) deleteConnectionMapping(userID string) {
-	if m.redis == nil {
-		return
-	}
-	key := rediskeys.GatewayConnKey(userID)
-	m.redis.Del(m.ctx, key)
-}
-
 func (m *Manager) GetPlayerRoom(userID string) string {
 	if m.redis == nil {
 		return ""

@@ -262,16 +262,17 @@ func (s *Server) handleConnection(ctx context.Context, conn *connection.Connecti
 		return
 	}
 
-	roomID := s.connMgr.GetPlayerRoom(conn.UserID)
+	// 统一注册连接(含踢人逻辑),无论用户是否在房间中
+	// Register 的 Lua 脚本会原子检测旧连接并触发踢人(同节点 + 跨节点)
+	if err := s.connMgr.Register(conn); err != nil {
+		logger.Error("failed to register connection", "conn_id", conn.ConnID, "error", err)
+		s.sendError(conn, "", "", message.CodeConnectionLimit)
+		return
+	}
 
-	if roomID != "" {
-		s.handleReconnect(ctx, conn, roomID)
-	} else {
-		if err := s.connMgr.Register(conn); err != nil {
-			logger.Error("failed to register connection", "conn_id", conn.ConnID, "error", err)
-			s.sendError(conn, "", "", message.CodeConnectionLimit)
-			return
-		}
+	// 注册成功后,判断是否需要恢复房间状态
+	if roomID := s.connMgr.GetPlayerRoom(conn.UserID); roomID != "" {
+		s.restoreRoomState(ctx, conn, roomID)
 	}
 
 	s.wg.Add(1)
@@ -288,14 +289,9 @@ func (s *Server) handleConnection(ctx context.Context, conn *connection.Connecti
 	s.readPump(ctx, conn)
 }
 
-func (s *Server) handleReconnect(ctx context.Context, conn *connection.Connection, roomID string) {
-	s.connMgr.CleanupOldConnection(conn.UserID)
-
-	if err := s.connMgr.Register(conn); err != nil {
-		s.sendError(conn, "", "", message.CodeConnectionLimit)
-		return
-	}
-
+// restoreRoomState 只负责发送 reconnect 命令恢复房间状态,不执行任何连接清理。
+// 踢人逻辑已由 Register 的 Lua 脚本统一处理。
+func (s *Server) restoreRoomState(ctx context.Context, conn *connection.Connection, roomID string) {
 	reconnectReq := reconnectRequest{
 		Cmd:       "reconnect",
 		RequestID: "rc_" + conn.ConnID,
