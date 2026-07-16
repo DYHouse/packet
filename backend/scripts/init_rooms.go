@@ -78,6 +78,7 @@ func main() {
 		&model.RoundGrabRecord{},
 		&model.Packet{},
 		&model.SpecialReward{},
+		&model.PenaltyRecord{},
 		&model.User{},
 		&model.RobotAccount{},
 		&settlementModel.BillRecord{},
@@ -85,6 +86,8 @@ func main() {
 		&settlementModel.RefundAudit{},
 		&settlementModel.ExceptionRecord{},
 		&settlementModel.PlatformCallLog{},
+		&settlementModel.PenaltyDistribution{},
+		&settlementModel.PenaltyDistributionRecipient{},
 	); err != nil {
 		log.Fatalf("migrate tables failed: %v", err)
 	}

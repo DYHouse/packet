@@ -12,7 +12,9 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/cashparty/backend/game/domain/round"
+	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
+	"github.com/cashparty/backend/game/model"
 	settlementApplication "github.com/cashparty/backend/settlement/application"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
 )
@@ -22,9 +24,10 @@ type PenaltyService struct {
 	policy           *round.PenaltyPolicy
 	settleAppService *settlementApplication.SettleAppService
 	redisTTL         config.RedisTTLConfig
+	dbRepo           repository.DBRepository
 }
 
-func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, settleAppService *settlementApplication.SettleAppService, redisTTL config.RedisTTLConfig) *PenaltyService {
+func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, settleAppService *settlementApplication.SettleAppService, redisTTL config.RedisTTLConfig, dbRepo repository.DBRepository) *PenaltyService {
 	if policy == nil {
 		policy = round.DefaultPenaltyPolicy()
 	}
@@ -33,6 +36,7 @@ func NewPenaltyService(redis cRedis.RedisClient, policy *round.PenaltyPolicy, se
 		policy:           policy,
 		settleAppService: settleAppService,
 		redisTTL:         redisTTL,
+		dbRepo:           dbRepo,
 	}
 }
 
@@ -90,6 +94,28 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 			"user_id", userID,
 			"error", err)
 		deductErr = err
+	}
+
+	// 同步持久化到 DB（与 DeductPenaltyToPlatform 调用后）
+	penaltyRecord := &model.PenaltyRecord{
+		RoomID:       roomIDInt,
+		SessionID:    sessionID,
+		RoundID:      currentRoundID,
+		RoundNo:      currentRound,
+		UserID:       userIDInt,
+		PenaltyType:  penaltyType.String(),
+		Amount:       amount,
+		Count:        int(count),
+		KickRequired: kickRequired,
+		DeductStatus: model.PenaltyDeductProcessing,
+	}
+	if err := s.dbRepo.PenaltyRecordRepo().Create(ctx, penaltyRecord); err != nil {
+		logger.Warn("persist penalty record failed",
+			"room_id", roomID,
+			"user_id", userID,
+			"round_id", currentRoundID,
+			"error", err)
+		// 不阻塞主流程，记录已写入 Redis，后续对账补偿
 	}
 
 	logger.Info("penalty applied",

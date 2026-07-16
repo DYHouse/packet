@@ -486,7 +486,7 @@ func newTestGameLifecycleService(
 	idGen *mockIDGenerator,
 ) *GameLifecycleService {
 	return NewGameLifecycleService(
-		repo, broadcaster, eventPublisher,
+		repo, nil, broadcaster, eventPublisher,
 		schedulerInst, testRedisClient,
 		newTestLockCfg(), newTestTimeoutCfg(), newTestRedisTTL(),
 		nil, nil, nil, // penaltyService, settleAppService, grabService（测试路径不依赖）

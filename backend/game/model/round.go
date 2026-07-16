@@ -14,9 +14,9 @@ const (
 
 type Round struct {
 	RoundID       int64       `json:"round_id" gorm:"primaryKey"`
-	SessionID     int64       `json:"session_id" gorm:"index:idx_session_roundno,priority:1;index:idx_session_sender,priority:1;not null"`
+	SessionID     int64       `json:"session_id" gorm:"uniqueIndex:idx_session_roundno,priority:1;index:idx_session_sender,priority:1;not null"`
 	RoomID        int64       `json:"room_id" gorm:"index;not null"`
-	RoundNo       int         `json:"round_no" gorm:"not null;index:idx_session_roundno,priority:2;index:idx_session_sender,priority:3"`
+	RoundNo       int         `json:"round_no" gorm:"not null;uniqueIndex:idx_session_roundno,priority:2;index:idx_session_sender,priority:3"`
 	Status        RoundStatus `json:"status" gorm:"default:0;index"`
 	SenderID      int64       `json:"sender_id" gorm:"default:0;index:idx_session_sender,priority:2"`
 	SenderType    string      `json:"sender_type" gorm:"size:20;default:''"`

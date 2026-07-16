@@ -59,8 +59,11 @@ func (g *TraceIDGenerator) GeneratePenaltyDeductTraceID(roomID, sessionID, userI
 	return fmt.Sprintf("PENALTY_DED_%d_%d_%d_%d", roomID, sessionID, userID, roundNo)
 }
 
-func (g *TraceIDGenerator) GeneratePenaltyDistTraceID(roomID, sessionID int64) string {
-	return fmt.Sprintf("PENALTY_DIST_%d_%d", roomID, sessionID)
+// GeneratePenaltyDistTraceID 基于房间+会话+轮次确定性生成罚款分发 traceID。
+// 包含 roundNo 维度以提升可追溯性，便于按 round 维度定位分发账目。
+// 重试时可复现，作为 BizOrderNo 的基础。
+func (g *TraceIDGenerator) GeneratePenaltyDistTraceID(roomID, sessionID int64, roundNo int) string {
+	return fmt.Sprintf("PENALTY_DIST_%d_%d_%d", roomID, sessionID, roundNo)
 }
 
 // GenerateGameSettleTraceID 游戏结算 traceID（基于 sessionID 确定性生成，重试时可复现）。

@@ -354,6 +354,10 @@ func (m *mockTransaction) PlatformCallLogRepo() settlementRepository.PlatformCal
 	return nil
 }
 
+func (m *mockTransaction) PenaltyDistributionRepo() settlementRepository.PenaltyDistributionRepository {
+	return nil
+}
+
 // mockDBRepository 数据库仓储桩件，WithTransaction 直接调用 fn 并传入 mockTransaction。
 type mockDBRepository struct {
 	billRepo            settlementRepository.BillRepository
@@ -378,6 +382,10 @@ func (m *mockDBRepository) ExceptionRepo() settlementRepository.ExceptionReposit
 }
 
 func (m *mockDBRepository) PlatformCallLogRepo() settlementRepository.PlatformCallLogRepository {
+	return nil
+}
+
+func (m *mockDBRepository) PenaltyDistributionRepo() settlementRepository.PenaltyDistributionRepository {
 	return nil
 }
 

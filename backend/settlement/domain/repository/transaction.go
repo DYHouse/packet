@@ -12,6 +12,7 @@ type Transaction interface {
 	SettlementQueryRepo() SettlementQueryRepository
 	ExceptionRepo() ExceptionRepository
 	PlatformCallLogRepo() PlatformCallLogRepository
+	PenaltyDistributionRepo() PenaltyDistributionRepository
 }
 
 // DBRepository 数据库仓储接口，提供事务编排能力。
@@ -24,5 +25,6 @@ type DBRepository interface {
 	SettlementQueryRepo() SettlementQueryRepository
 	ExceptionRepo() ExceptionRepository
 	PlatformCallLogRepo() PlatformCallLogRepository
+	PenaltyDistributionRepo() PenaltyDistributionRepository
 	WithTransaction(ctx context.Context, fn func(tx Transaction) error) error
 }

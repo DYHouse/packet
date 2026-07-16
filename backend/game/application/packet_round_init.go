@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cashparty/backend/common/converter"
@@ -12,6 +13,7 @@ import (
 	"github.com/cashparty/backend/game/model"
 	"github.com/cashparty/backend/settlement/domain"
 	settlementDto "github.com/cashparty/backend/settlement/dto"
+	"gorm.io/gorm"
 )
 
 type initRoundResult struct {
@@ -96,6 +98,17 @@ func (p *PacketOrchestrator) initRoundCore(
 }
 
 func (p *PacketOrchestrator) createRoundRecord(ctx context.Context, roomID, sessionID int64, roundNo int) (*model.Round, error) {
+	// 先查询是否已有 Pending round（罚款时预创建的）- 保留快路径查询
+	existing, err := p.dbRepo.RoundDBRepo().GetRoundBySessionAndRoundNo(ctx, sessionID, roundNo)
+	if err == nil && existing != nil {
+		// 复用预创建的 round，保留原 roundID 和 created_at
+		return existing, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("query round failed: %w", err)
+	}
+
+	// 不存在则幂等创建（INSERT IGNORE + 查询，并发安全）
 	roundID, err := p.idGen.GenerateInt64()
 	if err != nil {
 		return nil, fmt.Errorf("generate round id: %w", err)
@@ -107,15 +120,7 @@ func (p *PacketOrchestrator) createRoundRecord(ctx context.Context, roomID, sess
 		RoundNo:   roundNo,
 		Status:    model.RoundStatusPending,
 	}
-	if err := p.dbRepo.RoundDBRepo().CreateRound(ctx, round); err != nil {
-		logger.Error("create round record failed",
-			"room_id", roomID,
-			"session_id", sessionID,
-			"round_no", roundNo,
-			"error", err)
-		return nil, err
-	}
-	return round, nil
+	return p.dbRepo.RoundDBRepo().CreateOrGetRound(ctx, round)
 }
 
 func (p *PacketOrchestrator) updateRoundDeductSuccess(ctx context.Context, roundID int64, deductScene, deductStatus int, deductAmount int64, batchID string) error {

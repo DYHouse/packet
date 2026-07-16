@@ -43,12 +43,14 @@ type PenaltyDeductRequest struct {
 }
 
 type PenaltyDistributeRequest struct {
-	RoomID     int64
-	SessionID  int64
-	RoundID    int64
-	Amount     int64
-	Recipients []int64
-	Reason     string
+	RoomID       int64
+	SessionID    int64
+	RoundID      int64
+	RoundNo      int    // 下一轮编号（inter-round 罚款场景下为 CurrentRound + 1）
+	Amount       int64
+	Recipients   []int64
+	Reason       string
+	TriggerPhase string // 触发阶段：inter_round（轮间触发）/ in_round（轮内触发）
 }
 
 type FirstRoundDeductRequest struct {

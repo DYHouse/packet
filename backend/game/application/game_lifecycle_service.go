@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/async"
@@ -17,8 +19,10 @@ import (
 	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/domain/room"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis/scripts"
+	"github.com/cashparty/backend/game/model"
 	"github.com/cashparty/backend/game/scheduler"
 	settlementApplication "github.com/cashparty/backend/settlement/application"
+	"gorm.io/gorm"
 )
 
 // GameEndCallback is invoked from endGameWithOptions after a game ends. It is
@@ -48,6 +52,7 @@ type ResumeGameRequest struct {
 //   - game_lifecycle_endgame.go：游戏结束（HandleDeductFailure/EndGameWithOptions/handleKickAndReplace）
 type GameLifecycleService struct {
 	repo             repository.RoomRepository
+	dbRepo           repository.DBRepository
 	broadcaster      events.Broadcaster
 	eventPublisher   events.GameEventPublisher
 	scheduler        *scheduler.TimeoutScheduler
@@ -69,6 +74,7 @@ type GameLifecycleService struct {
 // NewGameLifecycleService 创建游戏生命周期服务。
 func NewGameLifecycleService(
 	repo repository.RoomRepository,
+	dbRepo repository.DBRepository,
 	broadcaster events.Broadcaster,
 	eventPublisher events.GameEventPublisher,
 	schedulerInst *scheduler.TimeoutScheduler,
@@ -88,6 +94,7 @@ func NewGameLifecycleService(
 	}
 	return &GameLifecycleService{
 		repo:             repo,
+		dbRepo:           dbRepo,
 		broadcaster:      broadcaster,
 		eventPublisher:   eventPublisher,
 		scheduler:        schedulerInst,
@@ -279,4 +286,38 @@ func (s *GameLifecycleService) ResumeGame(ctx context.Context, req *ResumeGameRe
 	}
 
 	return nil
+}
+
+// ensureNextRound 确保下一轮 round 存在，用于 inter-round 罚款场景。
+// 罚款根因是下一轮未发包，故应关联到下一轮 roundID。
+// 如果下一轮 round 已存在（SendPacket 已创建），则复用；
+// 如果不存在，则预创建 Pending round，后续 SendPacket 时复用。
+// 查询/创建失败时返回 error，调用方降级为 roundID=0，不阻塞罚款流程。
+func (s *GameLifecycleService) ensureNextRound(ctx context.Context, roomID, sessionID int64, roundNo int) (int64, error) {
+	// 先查询是否已有 round（快路径）
+	existing, err := s.dbRepo.RoundDBRepo().GetRoundBySessionAndRoundNo(ctx, sessionID, roundNo)
+	if err == nil && existing != nil {
+		return existing.RoundID, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, fmt.Errorf("query round failed: %w", err)
+	}
+
+	// 预创建 Pending round（INSERT IGNORE + 查询，并发安全）
+	roundID, err := s.idGen.GenerateInt64()
+	if err != nil {
+		return 0, fmt.Errorf("generate round id: %w", err)
+	}
+	round := &model.Round{
+		RoundID:   roundID,
+		SessionID: sessionID,
+		RoomID:    roomID,
+		RoundNo:   roundNo,
+		Status:    model.RoundStatusPending,
+	}
+	created, err := s.dbRepo.RoundDBRepo().CreateOrGetRound(ctx, round)
+	if err != nil {
+		return 0, fmt.Errorf("create round failed: %w", err)
+	}
+	return created.RoundID, nil
 }

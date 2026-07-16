@@ -37,14 +37,18 @@ type UserDBRepository interface {
 
 type RoundDBRepository interface {
 	CreateRound(ctx context.Context, round *model.Round) error
+	// CreateOrGetRound 按 (session_id, round_no) 幂等创建 round。
+	// 冲突时返回已存在的 round 记录（INSERT IGNORE + 查询模式，与 user_repository 一致）。
+	CreateOrGetRound(ctx context.Context, round *model.Round) (*model.Round, error)
 	UpdateRoundStatus(ctx context.Context, roundID int64, status model.RoundStatus) error
 	UpdateRoundDeductInfo(ctx context.Context, roundID int64, deductScene, deductStatus int, deductAmount int64, batchID string) error
 	UpdateRoundFailed(ctx context.Context, roundID int64, reason string) error
 	UpdateRoundSender(ctx context.Context, roundID int64, senderID int64, senderType string) error
 	UpdateRoundAmount(ctx context.Context, roundID int64, totalAmount, commission int64) error
 	GetRoundByRoundID(ctx context.Context, roundID int64) (*model.Round, error)
+	GetRoundBySessionAndRoundNo(ctx context.Context, sessionID int64, roundNo int) (*model.Round, error)
 	UpdateRoundSending(ctx context.Context, roundID, senderID int64, senderType string, startedAt time.Time) error
-	UpdateRoundEnded(ctx context.Context, roundID, settleTraceID int64, endedAt time.Time) error
+	UpdateRoundEnded(ctx context.Context, roundID int64, settleTraceID int64, endedAt time.Time) error
 }
 
 // PacketDBRepository 红包数据库仓储接口
@@ -63,6 +67,11 @@ type SpecialRewardRepository interface {
 	CreateSpecialReward(ctx context.Context, reward *model.SpecialReward) error
 }
 
+// PenaltyRecordRepository 罚款记录数据库仓储接口
+type PenaltyRecordRepository interface {
+	Create(ctx context.Context, record *model.PenaltyRecord) error
+}
+
 type Transaction interface {
 	RoomDBRepo() RoomDBRepository
 	SessionDBRepo() SessionDBRepository
@@ -71,6 +80,7 @@ type Transaction interface {
 	PacketDBRepo() PacketDBRepository
 	GrabRecordRepo() GrabRecordRepository
 	SpecialRewardRepo() SpecialRewardRepository
+	PenaltyRecordRepo() PenaltyRecordRepository
 }
 
 type PlayerStatsUpdate struct {
@@ -199,6 +209,7 @@ type DBRepository interface {
 	PacketDBRepo() PacketDBRepository
 	GrabRecordRepo() GrabRecordRepository
 	SpecialRewardRepo() SpecialRewardRepository
+	PenaltyRecordRepo() PenaltyRecordRepository
 	WithTransaction(ctx context.Context, fn func(tx Transaction) error) error
 }
 

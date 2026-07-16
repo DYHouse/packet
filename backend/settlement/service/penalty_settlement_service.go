@@ -13,6 +13,7 @@ import (
 	"github.com/cashparty/backend/settlement/domain"
 	"github.com/cashparty/backend/settlement/domain/repository"
 	"github.com/cashparty/backend/settlement/dto"
+	smodel "github.com/cashparty/backend/settlement/model"
 )
 
 // PenaltySettlementService 负责罚款相关结算操作：从用户扣款上交平台、将平台罚款分配给指定接收方。
@@ -103,6 +104,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 			Amount:       -req.Amount,
 			Status:       domain.BillStatusProcessing,
 			Remark:       fmt.Sprintf("惩罚扣款,类型:%s,回合:%d", req.PenaltyType, req.RoundNo),
+			PenaltyType:  req.PenaltyType,
 		}
 		if s.robotChecker == nil {
 			return fmt.Errorf("robot checker is nil")
@@ -125,6 +127,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 			Amount:       req.Amount,
 			Status:       domain.BillStatusSuccess,
 			Remark:       fmt.Sprintf("惩罚收入,来自用户:%d,类型:%s", req.UserID, req.PenaltyType),
+			PenaltyType:  req.PenaltyType,
 		}
 
 		// 同一事务创建两个 Bill，保证账目配对（含 RPC，事务仅包裹 DB 写入片段）
@@ -246,7 +249,7 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 }
 
 func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Context, tx repository.Transaction, req *dto.PenaltyDistributeRequest) error {
-	roundTraceID := s.traceIDGen.GeneratePenaltyDistTraceID(req.RoomID, req.SessionID)
+	roundTraceID := s.traceIDGen.GeneratePenaltyDistTraceID(req.RoomID, req.SessionID, req.RoundNo)
 	billRepo := tx.BillRepo()
 
 	// 幂等检查：若已存在同 traceID + BillType + PlatformAccountID 的 Success 状态 bill，直接返回 nil。
@@ -306,7 +309,54 @@ func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Con
 		}
 	}
 
-	return billRepo.CreateBills(ctx, allBills)
+	if err := billRepo.CreateBills(ctx, allBills); err != nil {
+		return err
+	}
+
+	// 持久化罚款分发记录
+	shareAmount := int64(0)
+	if len(req.Recipients) > 0 && req.Amount > 0 {
+		shareAmount = req.Amount / int64(len(req.Recipients))
+	}
+	distribution := &smodel.PenaltyDistribution{
+		RoomID:         req.RoomID,
+		SessionID:      req.SessionID,
+		RoundID:        req.RoundID,
+		RoundNo:        req.RoundNo,
+		TriggerType:    req.Reason,
+		TotalAmount:    req.Amount,
+		ShareAmount:    shareAmount,
+		RecipientCount: len(req.Recipients),
+		PlatformBillID: platformBill.ID,
+	}
+	if err := tx.PenaltyDistributionRepo().Create(ctx, distribution); err != nil {
+		logger.Warn("persist penalty distribution failed",
+			"room_id", req.RoomID,
+			"session_id", req.SessionID,
+			"round_id", req.RoundID,
+			"error", err)
+		// 不阻塞主流程，bills 已创建
+	} else if len(allBills) > 1 {
+		// 创建接收方明细
+		recipients := make([]*smodel.PenaltyDistributionRecipient, 0, len(allBills)-1)
+		for i := 1; i < len(allBills); i++ {
+			recipients = append(recipients, &smodel.PenaltyDistributionRecipient{
+				DistributionID: distribution.ID,
+				UserID:         allBills[i].UserID,
+				Amount:         allBills[i].Amount,
+				BillID:         allBills[i].ID,
+			})
+		}
+		if err := tx.PenaltyDistributionRepo().CreateRecipients(ctx, recipients); err != nil {
+			logger.Warn("persist penalty distribution recipients failed",
+				"room_id", req.RoomID,
+				"session_id", req.SessionID,
+				"round_id", req.RoundID,
+				"error", err)
+		}
+	}
+
+	return nil
 }
 
 // createExceptionRecord 创建异常记录并关联到账单，供人工对账。

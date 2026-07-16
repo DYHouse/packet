@@ -6,18 +6,12 @@ type PenaltyType int
 
 const (
 	PenaltyTypeSendTimeout PenaltyType = iota + 1
-	PenaltyTypeLeaveDuringGame
-	PenaltyTypeDisconnectTimeout
 )
 
 func (t PenaltyType) String() string {
 	switch t {
 	case PenaltyTypeSendTimeout:
 		return "send_timeout"
-	case PenaltyTypeLeaveDuringGame:
-		return "leave_during_game"
-	case PenaltyTypeDisconnectTimeout:
-		return "disconnect_timeout"
 	default:
 		return "unknown"
 	}
@@ -27,10 +21,6 @@ func ParsePenaltyType(s string) PenaltyType {
 	switch s {
 	case "send_timeout":
 		return PenaltyTypeSendTimeout
-	case "leave_during_game":
-		return PenaltyTypeLeaveDuringGame
-	case "disconnect_timeout":
-		return PenaltyTypeDisconnectTimeout
 	default:
 		return PenaltyTypeSendTimeout
 	}

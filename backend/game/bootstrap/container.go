@@ -245,7 +245,7 @@ func (c *Container) InitAppServices() {
 	)
 
 	// PenaltyService 依赖 SettleAppSvc，故在 SettleAppSvc 创建之后构造。
-	c.PenaltyService = application.NewPenaltyService(c.Redis, nil, c.SettleAppSvc, *c.RedisTTL)
+	c.PenaltyService = application.NewPenaltyService(c.Redis, nil, c.SettleAppSvc, *c.RedisTTL, c.DBRepo)
 
 	c.HistoryService = application.NewHistoryService(c.DBRepo)
 
@@ -293,6 +293,7 @@ func (c *Container) InitAppServices() {
 
 	c.GameLifecycleSvc = application.NewGameLifecycleService(
 		c.RoomRepo,
+		c.DBRepo,
 		c.Broadcaster,
 		c.GameEventPublisher,
 		c.TimeoutScheduler,

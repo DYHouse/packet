@@ -91,6 +91,11 @@ type BillRecord struct {
 	IsRobot          bool
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// 关联字段：惩罚/奖励业务的溯源标识，便于反向查询关联实体
+	PenaltyType           string
+	PenaltyRecordID       int64
+	SpecialRewardID       int64
+	PenaltyDistributionID int64
 }
 
 // TransitionTo 校验状态转换的合法性，作为状态机守卫方法。

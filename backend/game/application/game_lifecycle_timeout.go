@@ -87,23 +87,21 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 			return nil
 		}
 
-		// 发红包超时场景下 CurrentRoundID 通常为空（上一轮结算时被 HDEL 清除，
-		// 新回合因玩家未发包而尚未创建）。此时仍需执行罚款与强制发包，
-		// roundID 传 0 表示"回合尚未创建"的语义。
-		// 注意：不能因 CurrentRoundID 为空就跳过罚款，否则超时逻辑永远无法执行
-		// （上面的 CurrentRoundID != "" 检查与此处互斥，会导致所有情况都跳过）。
 		roomIDInt := converter.ParseID(roomID)
 		sessionID := roomIDInt
 		if meta.CurrentSessionID != "" {
 			sessionID = converter.ParseID(meta.CurrentSessionID)
 		}
 
-		var roundID int64
-		if meta.CurrentRoundID != "" {
-			roundID = converter.ParseID(meta.CurrentRoundID)
+		// 预创建下一轮 Pending round（罚款根因 = 下一轮未发包）
+		nextRoundNo := int(meta.CurrentRound) + 1
+		roundID, err := s.ensureNextRound(ctx, roomIDInt, sessionID, nextRoundNo)
+		if err != nil {
+			logger.Error("ensure next round failed", "room_id", roomID, "session_id", meta.CurrentSessionID, "round_no", nextRoundNo, "error", err)
+			roundID = 0
 		}
 
-		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, int(meta.CurrentRound), roundID)
+		result, err := s.penaltyService.ApplyPenalty(ctx, roomID, userID, round.PenaltyTypeSendTimeout, meta.RoomFee, sessionID, nextRoundNo, roundID)
 		if err != nil {
 			logger.Error("apply penalty failed", "room_id", roomID, "user_id", userID, "error", err)
 			return nil
@@ -181,18 +179,23 @@ func (s *GameLifecycleService) OnReplaceTimeout(ctx context.Context, roomID stri
 			recipientIDs = append(recipientIDs, converter.ParseID(r))
 		}
 
-		roundID := int64(0)
-		if meta.CurrentRoundID != "" {
-			roundID = converter.ParseID(meta.CurrentRoundID)
+		// 预创建下一轮 Pending round（罚款根因 = 下一轮未发包）
+		nextRoundNo := int(meta.CurrentRound) + 1
+		roundID, err := s.ensureNextRound(ctx, roomIDInt, sessionID, nextRoundNo)
+		if err != nil {
+			logger.Error("ensure next round failed", "room_id", roomID, "session_id", meta.CurrentSessionID, "round_no", nextRoundNo, "error", err)
+			roundID = 0
 		}
 
 		distReq := &settlementDto.PenaltyDistributeRequest{
-			RoomID:     roomIDInt,
-			SessionID:  sessionID,
-			RoundID:    roundID,
-			Amount:     meta.RoomFee,
-			Recipients: recipientIDs,
-			Reason:     "replacement_timeout",
+			RoomID:       roomIDInt,
+			SessionID:    sessionID,
+			RoundID:      roundID,
+			RoundNo:      nextRoundNo,
+			Amount:       meta.RoomFee,
+			Recipients:   recipientIDs,
+			Reason:       "replacement_timeout",
+			TriggerPhase: "inter_round",
 		}
 
 		if err := s.settleAppService.DistributePenaltyFromPlatform(ctx, distReq); err != nil {

@@ -89,6 +89,10 @@ func (m *mockTransaction) PlatformCallLogRepo() repository.PlatformCallLogReposi
 	return nil
 }
 
+func (m *mockTransaction) PenaltyDistributionRepo() repository.PenaltyDistributionRepository {
+	return nil
+}
+
 // ============================================================================
 // repository.DBRepository 桩件
 // ============================================================================
@@ -120,6 +124,10 @@ func (m *mockDBRepository) ExceptionRepo() repository.ExceptionRepository {
 }
 
 func (m *mockDBRepository) PlatformCallLogRepo() repository.PlatformCallLogRepository {
+	return nil
+}
+
+func (m *mockDBRepository) PenaltyDistributionRepo() repository.PenaltyDistributionRepository {
 	return nil
 }
 

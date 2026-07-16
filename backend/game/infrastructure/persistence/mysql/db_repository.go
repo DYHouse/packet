@@ -21,6 +21,7 @@ type DBRepositoryImpl struct {
 	packetRepo        repository.PacketDBRepository
 	grabRecordRepo    repository.GrabRecordRepository
 	specialRewardRepo repository.SpecialRewardRepository
+	penaltyRecordRepo repository.PenaltyRecordRepository
 }
 
 func NewDBRepository(db *gorm.DB) repository.DBRepository {
@@ -35,6 +36,7 @@ func NewDBRepository(db *gorm.DB) repository.DBRepository {
 		packetRepo:        NewGormPacketRepository(db),
 		grabRecordRepo:    NewGormGrabRecordRepository(db),
 		specialRewardRepo: NewGormSpecialRewardRepository(db),
+		penaltyRecordRepo: NewGormPenaltyRecordRepository(db),
 	}
 }
 
@@ -50,6 +52,9 @@ func (r *DBRepositoryImpl) PacketDBRepo() repository.PacketDBRepository     { re
 func (r *DBRepositoryImpl) GrabRecordRepo() repository.GrabRecordRepository { return r.grabRecordRepo }
 func (r *DBRepositoryImpl) SpecialRewardRepo() repository.SpecialRewardRepository {
 	return r.specialRewardRepo
+}
+func (r *DBRepositoryImpl) PenaltyRecordRepo() repository.PenaltyRecordRepository {
+	return r.penaltyRecordRepo
 }
 
 func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx repository.Transaction) error) error {
@@ -70,6 +75,7 @@ type GormTransactionImpl struct {
 	packetRepo        repository.PacketDBRepository
 	grabRecordRepo    repository.GrabRecordRepository
 	specialRewardRepo repository.SpecialRewardRepository
+	penaltyRecordRepo repository.PenaltyRecordRepository
 }
 
 func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
@@ -82,6 +88,7 @@ func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
 		packetRepo:        NewGormPacketRepository(db),
 		grabRecordRepo:    NewGormGrabRecordRepository(db),
 		specialRewardRepo: NewGormSpecialRewardRepository(db),
+		penaltyRecordRepo: NewGormPenaltyRecordRepository(db),
 	}
 }
 
@@ -95,4 +102,7 @@ func (t *GormTransactionImpl) GrabRecordRepo() repository.GrabRecordRepository {
 }
 func (t *GormTransactionImpl) SpecialRewardRepo() repository.SpecialRewardRepository {
 	return t.specialRewardRepo
+}
+func (t *GormTransactionImpl) PenaltyRecordRepo() repository.PenaltyRecordRepository {
+	return t.penaltyRecordRepo
 }

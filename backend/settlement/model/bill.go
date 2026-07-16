@@ -38,6 +38,11 @@ type BillRecord struct {
 	IsRobot          bool       `gorm:"default:false;index" json:"is_robot"`
 	CreatedAt        time.Time  `gorm:"autoCreateTime;index:idx_user_session,priority:3" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	// 关联字段：惩罚/奖励业务的溯源标识，便于反向查询关联实体
+	PenaltyType           string `json:"penalty_type" gorm:"size:32;index;default:''"`
+	PenaltyRecordID       int64  `json:"penalty_record_id" gorm:"index;default:0"`
+	SpecialRewardID       int64  `json:"special_reward_id" gorm:"index;default:0"`
+	PenaltyDistributionID int64  `json:"penalty_distribution_id" gorm:"index;default:0"`
 }
 
 func (BillRecord) TableName() string {

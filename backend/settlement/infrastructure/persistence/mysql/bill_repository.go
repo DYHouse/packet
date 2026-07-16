@@ -312,6 +312,11 @@ func billModelToDomain(m *model.BillRecord) *domain.BillRecord {
 		IsRobot:          m.IsRobot,
 		CreatedAt:        m.CreatedAt,
 		UpdatedAt:        m.UpdatedAt,
+		// 关联字段映射
+		PenaltyType:           m.PenaltyType,
+		PenaltyRecordID:       m.PenaltyRecordID,
+		SpecialRewardID:       m.SpecialRewardID,
+		PenaltyDistributionID: m.PenaltyDistributionID,
 	}
 }
 
@@ -356,6 +361,11 @@ func billDomainToModel(d *domain.BillRecord) *model.BillRecord {
 		IsRobot:          d.IsRobot,
 		CreatedAt:        d.CreatedAt,
 		UpdatedAt:        d.UpdatedAt,
+		// 关联字段映射
+		PenaltyType:           d.PenaltyType,
+		PenaltyRecordID:       d.PenaltyRecordID,
+		SpecialRewardID:       d.SpecialRewardID,
+		PenaltyDistributionID: d.PenaltyDistributionID,
 	}
 }
 
