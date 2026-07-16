@@ -436,8 +436,12 @@ func (s *RobotSchedulerService) cleanupEndedRooms(ctx context.Context) {
 			continue
 		}
 
-		// Only recycle when the room is idle or interrupted (game ended).
-		if state.Status != int(roomDom.RoomStatusIdle) && state.Status != int(roomDom.RoomStatusInterrupted) {
+		// 仅回收 Idle 状态房间的残留机器人。
+		// 不回收 Interrupted 状态：该状态是等待替补的过渡态（30s 窗口），
+		// EndGame 尚未执行，players 仍未转为 spectators，
+		// 此时调用 LeaveRoom 会因玩家仍在 playersKey 中而被 Lua 脚本拒绝（错误码 16）。
+		// Interrupted 状态会在 OnReplaceTimeout 触发 EndGame 后转为 Idle，届时下一轮扫描即可回收。
+		if state.Status != int(roomDom.RoomStatusIdle) {
 			continue
 		}
 

@@ -266,6 +266,7 @@ func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Con
 		RoomID:       req.RoomID,
 		SessionID:    req.SessionID,
 		RoundID:      req.RoundID,
+		RoundNo:      req.RoundNo,
 		UserID:       dto.PlatformAccountID,
 		Amount:       -req.Amount,
 		Status:       domain.BillStatusSuccess,
@@ -286,17 +287,18 @@ func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Con
 			}
 
 			shareBill := &domain.BillRecord{
-				RoundTraceID: roundTraceID,
-				BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, domain.BillTypePenaltyDistribute, recipientID),
-				BillType:     domain.BillTypePenaltyDistribute,
-				RoomID:       req.RoomID,
-				SessionID:    req.SessionID,
-				RoundID:      req.RoundID,
-				UserID:       recipientID,
-				Amount:       amount,
-				Status:       domain.BillStatusSuccess,
-				Remark:       fmt.Sprintf("罚款分红,总额:%d,原因:%s", req.Amount, req.Reason),
-			}
+			RoundTraceID: roundTraceID,
+			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, domain.BillTypePenaltyDistribute, recipientID),
+			BillType:     domain.BillTypePenaltyDistribute,
+			RoomID:       req.RoomID,
+			SessionID:    req.SessionID,
+			RoundID:      req.RoundID,
+			RoundNo:      req.RoundNo,
+			UserID:       recipientID,
+			Amount:       amount,
+			Status:       domain.BillStatusSuccess,
+			Remark:       fmt.Sprintf("罚款分红,总额:%d,原因:%s", req.Amount, req.Reason),
+		}
 			if s.robotChecker == nil {
 				return fmt.Errorf("robot checker is nil")
 			}
