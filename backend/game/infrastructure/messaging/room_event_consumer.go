@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
-	"strconv"
 	"time"
 
+	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/kafka"
 	lockScripts "github.com/cashparty/backend/common/lock/scripts"
 	"github.com/cashparty/backend/common/logger"
@@ -195,23 +195,6 @@ func (c *RoomEventConsumer) Close() error {
 	return c.consumer.Close()
 }
 
-// getCurrentRoundID 从 game_sessions.current_round 反查当前 round_id。
-// 返回 (roundID, roundNo, error)；round 不存在时返回 (0, 0, nil)。
-func (c *RoomEventConsumer) getCurrentRoundID(ctx context.Context, sessionID int64) (int64, int, error) {
-	session, err := c.dbRepo.SessionDBRepo().GetSessionByID(ctx, sessionID)
-	if err != nil {
-		return 0, 0, err
-	}
-	if session == nil || session.CurrentRound == 0 {
-		return 0, 0, nil
-	}
-	round, err := c.dbRepo.RoundDBRepo().GetRoundBySessionAndRoundNo(ctx, sessionID, session.CurrentRound)
-	if err != nil {
-		return 0, 0, err
-	}
-	return round.RoundID, round.RoundNo, nil
-}
-
 // handleSubstitute 处理替补事件：
 // 1. 标记被替者 snapshot 离开（left_reason='substituted', replaced_by=替补者）
 // 2. 插入替补者 snapshot（source='substitute'）
@@ -233,24 +216,16 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 			"trace_id", event.TraceID)
 		return c.syncRoomCounts(ctx, event)
 	}
-	sessionID, _ := strconv.ParseInt(meta.CurrentSessionID, 10, 64)
-	if sessionID == 0 {
-		sessionID = parseRoomIDAsSessionID(event.RoomID)
-	}
 
-	roundID, roundNo, err := c.getCurrentRoundID(ctx, sessionID)
-	if err != nil {
-		// round 查询失败仅告警，不阻断 session_players 落地
-		logger.Warn("substitute: get current round failed",
-			"session_id", sessionID,
-			"error", err)
-	}
+	// 所有 ID 统一从 RoomMeta 拿（Redis 中已有，无需查 DB）
+	sessionID := converter.ParseID(meta.CurrentSessionID)
+	roundID := converter.ParseID(meta.CurrentRoundID)
+	roundNo := meta.CurrentRound
+	roomIDInt := converter.ParseID(event.RoomID)
 
-	// 通过 snapshot 表反查被替者 user_id（被替者在替补事件前持有该座位）
-	replacedUserID, _ := c.lookupSeatOwnerBeforeSubstitute(ctx, event.RoomID, payload.SeatNo, event.UserID)
-	replacedUserIDInt, _ := strconv.ParseInt(replacedUserID, 10, 64)
-
-	substituteUserIDInt, _ := strconv.ParseInt(event.UserID, 10, 64)
+	// 通过 snapshot 表反查被替者 user_id（替补事件发布时 Redis 已更新为替补者，无法直接反查）
+	replacedUserIDInt := c.lookupSeatOwnerBeforeSubstitute(ctx, sessionID, roundID, payload.SeatNo, event.UserID)
+	substituteUserIDInt := converter.ParseID(event.UserID)
 	now := time.Now()
 
 	// 事务内更新 snapshot + session_players（多表一致性）
@@ -284,7 +259,6 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 		// 3. 替补者首次入会话则插入 session_player（聚合表一人一行）
 		// 注：session_players 表仅做聚合统计，不加 status/left_at 字段
 		// 玩家流转状态由 round_player_snapshot 事实表记录
-		roomIDInt := parseRoomIDAsSessionID(event.RoomID)
 		if err := tx.SessionDBRepo().UpsertPlayer(ctx, &model.SessionPlayer{
 			SessionID: sessionID,
 			RoomID:    roomIDInt,
@@ -306,41 +280,29 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 	return c.syncRoomCounts(ctx, event)
 }
 
-// lookupSeatOwnerBeforeSubstitute 通过 Redis 反查某座位在被替补前的 owner。
-// 由于替补事件发布时 Redis 已更新为替补者，无法直接反查原 owner。
-// 实现策略：从 room_player_snapshot 表查该座位最近一个活跃玩家。
-// 若查不到则返回空字符串（仅影响 snapshot 标记，不阻断主流程）。
-func (c *RoomEventConsumer) lookupSeatOwnerBeforeSubstitute(ctx context.Context, roomID string, seatNo int, substituteUserID string) (string, error) {
-	// 从 Redis RoomSpectatorsKey 反查被替者是否已成为旁观者（部分场景被替者会被加入旁观）
-	// 简化实现：直接从 snapshot 表反查
-	meta, err := c.roomRepo.GetRoomMeta(ctx, roomID)
-	if err != nil || meta == nil || meta.CurrentSessionID == "" {
-		return "", err
+// lookupSeatOwnerBeforeSubstitute 从 snapshot 表反查某座位在被替补前的 owner。
+// 替补事件发布时 Redis 已更新为替补者，无法直接反查原 owner，
+// 故从 round_player_snapshot 表查该座位最近一个活跃玩家（active_end IS NULL）。
+// 返回 user_id；查不到返回 0（仅影响 snapshot 标记，不阻断主流程）。
+func (c *RoomEventConsumer) lookupSeatOwnerBeforeSubstitute(ctx context.Context, sessionID, roundID int64, seatNo int, substituteUserID string) int64 {
+	if roundID == 0 {
+		return 0
 	}
-	sessionID, _ := strconv.ParseInt(meta.CurrentSessionID, 10, 64)
-	if sessionID == 0 {
-		return "", nil
-	}
-	roundID, _, err := c.getCurrentRoundID(ctx, sessionID)
-	if err != nil || roundID == 0 {
-		return "", err
-	}
-
-	// 查该轮该座位最近一个活跃玩家（active_end IS NULL），排除替补者本身
+	subInt := converter.ParseID(substituteUserID)
 	active, err := c.dbRepo.SnapshotDBRepo().ListActiveSeats(ctx, sessionID, roundID)
 	if err != nil {
-		return "", err
+		logger.Warn("lookup seat owner: list active seats failed",
+			"session_id", sessionID,
+			"round_id", roundID,
+			"error", err)
+		return 0
 	}
 	for _, snap := range active {
-		if snap.SeatNo != nil && *snap.SeatNo == seatNo {
-			subInt, _ := strconv.ParseInt(substituteUserID, 10, 64)
-			if snap.UserID == subInt {
-				continue
-			}
-			return strconv.FormatInt(snap.UserID, 10), nil
+		if snap.SeatNo != nil && *snap.SeatNo == seatNo && snap.UserID != subInt {
+			return snap.UserID
 		}
 	}
-	return "", nil
+	return 0
 }
 
 // handleSpectatorKick 处理旁观者被踢：仅标记 snapshot 离开
@@ -360,33 +322,21 @@ func (c *RoomEventConsumer) handleSeatCancel(ctx context.Context, event *events.
 	return c.syncRoomCounts(ctx, event)
 }
 
-// markSnapshotLeft 通用辅助：标记玩家在某轮离开
+// markSnapshotLeft 通用辅助：从 RoomMeta 拿 sessionID/roundID，标记玩家在某轮离开
 func (c *RoomEventConsumer) markSnapshotLeft(ctx context.Context, event *events.RoomEvent, reason string) error {
 	meta, err := c.roomRepo.GetRoomMeta(ctx, event.RoomID)
-	if err != nil || meta == nil || meta.CurrentSessionID == "" {
+	if err != nil {
 		return err
 	}
-	sessionID, _ := strconv.ParseInt(meta.CurrentSessionID, 10, 64)
-	if sessionID == 0 {
+	if meta == nil || meta.CurrentSessionID == "" || meta.CurrentRoundID == "" {
 		return nil
 	}
-	roundID, _, err := c.getCurrentRoundID(ctx, sessionID)
-	if err != nil || roundID == 0 {
-		return err
-	}
-	userIDInt, _ := strconv.ParseInt(event.UserID, 10, 64)
-	if userIDInt == 0 {
+	sessionID := converter.ParseID(meta.CurrentSessionID)
+	roundID := converter.ParseID(meta.CurrentRoundID)
+	userIDInt := converter.ParseID(event.UserID)
+	if sessionID == 0 || roundID == 0 || userIDInt == 0 {
 		return nil
 	}
 	return c.dbRepo.SnapshotDBRepo().MarkPlayerLeft(ctx, sessionID, roundID, userIDInt,
 		time.Now(), reason, 0)
-}
-
-// parseRoomIDAsSessionID 从 roomID 解析出 int64 ID（作为 session_id 的兜底来源）
-func parseRoomIDAsSessionID(roomID string) int64 {
-	id, err := strconv.ParseInt(roomID, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return id
 }
