@@ -196,10 +196,9 @@ func (c *RoomEventConsumer) Close() error {
 }
 
 // handleSubstitute 处理替补事件：
-// 1. 标记被替者 snapshot 离开（left_reason='substituted'）
-// 2. 插入替补者 snapshot（source='substitute'）
-// 3. 替补者首次入会话则插入 session_player（聚合表一人一行）
-// 4. 同步 rooms 表计数
+// 1. 插入替补者 snapshot（source='substitute'）
+// 2. 替补者首次入会话则插入 session_player（聚合表一人一行）
+// 3. 同步 rooms 表计数
 func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.RoomEvent) error {
 	var payload events.SubstitutePayload
 	if err := event.GetPayload(&payload); err != nil {
@@ -222,23 +221,12 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 	roundID := converter.ParseID(meta.CurrentRoundID)
 	roundNo := meta.CurrentRound
 	roomIDInt := converter.ParseID(event.RoomID)
-
-	// 通过 snapshot 表反查被替者 user_id（替补事件发布时 Redis 已更新为替补者，无法直接反查）
-	replacedUserIDInt := c.lookupSeatOwnerBeforeSubstitute(ctx, sessionID, roundID, payload.SeatNo, event.UserID)
 	substituteUserIDInt := converter.ParseID(event.UserID)
 	now := time.Now()
 
 	// 事务内更新 snapshot + session_players（多表一致性）
 	if err := c.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
-		// 1. 标记被替者离开
-		if replacedUserIDInt > 0 && roundID > 0 {
-			if err := tx.SnapshotRepo().MarkPlayerLeft(ctx, sessionID, roundID, replacedUserIDInt,
-				now, "substituted"); err != nil {
-				return fmt.Errorf("mark replaced player left failed: %w", err)
-			}
-		}
-
-		// 2. 插入替补者 snapshot
+		// 1. 插入替补者 snapshot
 		if roundID > 0 {
 			seatNo := payload.SeatNo
 			if err := tx.SnapshotRepo().AddPlayerMidRound(ctx, &model.RoundPlayerSnapshot{
@@ -256,7 +244,7 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 			}
 		}
 
-		// 3. 替补者首次入会话则插入 session_player（聚合表一人一行）
+		// 2. 替补者首次入会话则插入 session_player（聚合表一人一行）
 		// 注：session_players 表仅做聚合统计，不加 status/left_at 字段
 		// 玩家流转状态由 round_player_snapshot 事实表记录
 		if err := tx.SessionDBRepo().UpsertPlayer(ctx, &model.SessionPlayer{
@@ -276,33 +264,8 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 		return err
 	}
 
-	// 4. 同步 rooms 表计数（移出事务，遵循 §15 短事务原则）
+	// 3. 同步 rooms 表计数（移出事务，遵循 §15 短事务原则）
 	return c.syncRoomCounts(ctx, event)
-}
-
-// lookupSeatOwnerBeforeSubstitute 从 snapshot 表反查某座位在被替补前的 owner。
-// 替补事件发布时 Redis 已更新为替补者，无法直接反查原 owner，
-// 故从 round_player_snapshot 表查该座位最近一个活跃玩家（active_end IS NULL）。
-// 返回 user_id；查不到返回 0（仅影响 snapshot 标记，不阻断主流程）。
-func (c *RoomEventConsumer) lookupSeatOwnerBeforeSubstitute(ctx context.Context, sessionID, roundID int64, seatNo int, substituteUserID string) int64 {
-	if roundID == 0 {
-		return 0
-	}
-	subInt := converter.ParseID(substituteUserID)
-	active, err := c.dbRepo.SnapshotDBRepo().ListActiveSeats(ctx, sessionID, roundID)
-	if err != nil {
-		logger.Warn("lookup seat owner: list active seats failed",
-			"session_id", sessionID,
-			"round_id", roundID,
-			"error", err)
-		return 0
-	}
-	for _, snap := range active {
-		if snap.SeatNo != nil && *snap.SeatNo == seatNo && snap.UserID != subInt {
-			return snap.UserID
-		}
-	}
-	return 0
 }
 
 // handleSpectatorKick 处理旁观者被踢：仅标记 snapshot 离开

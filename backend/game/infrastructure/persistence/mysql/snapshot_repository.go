@@ -70,13 +70,3 @@ func (r *gormSnapshotRepository) ListByUser(ctx context.Context, sessionID, user
 		Find(&snapshots).Error
 	return snapshots, err
 }
-
-// ListActiveSeats 查询某轮当前活跃的座位（active_end IS NULL）
-func (r *gormSnapshotRepository) ListActiveSeats(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error) {
-	var snapshots []*model.RoundPlayerSnapshot
-	err := r.db.WithContext(ctx).
-		Where("session_id = ? AND round_id = ? AND active_end IS NULL", sessionID, roundID).
-		Order("seat_no ASC").
-		Find(&snapshots).Error
-	return snapshots, err
-}

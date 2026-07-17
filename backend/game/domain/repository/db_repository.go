@@ -87,8 +87,6 @@ type SnapshotRepository interface {
 	ListByRound(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error)
 	// ListByUser 查询某玩家在某会话的所有参与轮次
 	ListByUser(ctx context.Context, sessionID, userID int64) ([]*model.RoundPlayerSnapshot, error)
-	// ListActiveSeats 查询某轮当前活跃的座位（active_end IS NULL）
-	ListActiveSeats(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error)
 }
 
 type Transaction interface {
