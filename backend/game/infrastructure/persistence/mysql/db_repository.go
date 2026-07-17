@@ -22,6 +22,7 @@ type DBRepositoryImpl struct {
 	grabRecordRepo    repository.GrabRecordRepository
 	specialRewardRepo repository.SpecialRewardRepository
 	penaltyRecordRepo repository.PenaltyRecordRepository
+	snapshotRepo      repository.SnapshotRepository
 }
 
 func NewDBRepository(db *gorm.DB) repository.DBRepository {
@@ -37,6 +38,7 @@ func NewDBRepository(db *gorm.DB) repository.DBRepository {
 		grabRecordRepo:    NewGormGrabRecordRepository(db),
 		specialRewardRepo: NewGormSpecialRewardRepository(db),
 		penaltyRecordRepo: NewGormPenaltyRecordRepository(db),
+		snapshotRepo:      NewGormSnapshotRepository(db),
 	}
 }
 
@@ -56,6 +58,7 @@ func (r *DBRepositoryImpl) SpecialRewardRepo() repository.SpecialRewardRepositor
 func (r *DBRepositoryImpl) PenaltyRecordRepo() repository.PenaltyRecordRepository {
 	return r.penaltyRecordRepo
 }
+func (r *DBRepositoryImpl) SnapshotDBRepo() repository.SnapshotRepository { return r.snapshotRepo }
 
 func (r *DBRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx repository.Transaction) error) error {
 	return r.db.WithContext(ctx).Transaction(func(gormTx *gorm.DB) error {
@@ -76,6 +79,7 @@ type GormTransactionImpl struct {
 	grabRecordRepo    repository.GrabRecordRepository
 	specialRewardRepo repository.SpecialRewardRepository
 	penaltyRecordRepo repository.PenaltyRecordRepository
+	snapshotRepo      repository.SnapshotRepository
 }
 
 func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
@@ -89,6 +93,7 @@ func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
 		grabRecordRepo:    NewGormGrabRecordRepository(db),
 		specialRewardRepo: NewGormSpecialRewardRepository(db),
 		penaltyRecordRepo: NewGormPenaltyRecordRepository(db),
+		snapshotRepo:      NewGormSnapshotRepository(db),
 	}
 }
 
@@ -106,3 +111,4 @@ func (t *GormTransactionImpl) SpecialRewardRepo() repository.SpecialRewardReposi
 func (t *GormTransactionImpl) PenaltyRecordRepo() repository.PenaltyRecordRepository {
 	return t.penaltyRecordRepo
 }
+func (t *GormTransactionImpl) SnapshotRepo() repository.SnapshotRepository { return t.snapshotRepo }

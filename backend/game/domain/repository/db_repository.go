@@ -25,6 +25,9 @@ type SessionDBRepository interface {
 	CreateOrUpdateSessionPlayer(ctx context.Context, player *model.SessionPlayer) error
 	IncrementSessionPlayerGrab(ctx context.Context, sessionID, userID int64, amount int64) error
 	IncrementSessionPlayerSend(ctx context.Context, sessionID, userID int64, amount int64) error
+	// UpsertPlayer 插入或更新玩家聚合记录（用于替补者首次入会话）
+	// 幂等：按 (session_id, user_id) 唯一索引冲突时忽略
+	UpsertPlayer(ctx context.Context, player *model.SessionPlayer) error
 }
 
 type UserDBRepository interface {
@@ -71,6 +74,23 @@ type PenaltyRecordRepository interface {
 	Create(ctx context.Context, record *model.PenaltyRecord) error
 }
 
+// SnapshotRepository 轮次玩家快照仓储接口
+type SnapshotRepository interface {
+	// BatchCreateOnRoundStart round 开始时批量插入玩家快照
+	BatchCreateOnRoundStart(ctx context.Context, snapshots []*model.RoundPlayerSnapshot) error
+	// MarkPlayerLeft 标记玩家在某轮离开（被踢/离座/替补）
+	// 乐观锁：WHERE active_end IS NULL 避免重复标记
+	MarkPlayerLeft(ctx context.Context, sessionID, roundID, userID int64, leftAt time.Time, reason string, replacedBy int64) error
+	// AddPlayerMidRound 中途加入（替补/重新入座/成为旁观者）
+	AddPlayerMidRound(ctx context.Context, snapshot *model.RoundPlayerSnapshot) error
+	// ListByRound 查询某轮的所有玩家快照
+	ListByRound(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error)
+	// ListByUser 查询某玩家在某会话的所有参与轮次
+	ListByUser(ctx context.Context, sessionID, userID int64) ([]*model.RoundPlayerSnapshot, error)
+	// ListActiveSeats 查询某轮当前活跃的座位（active_end IS NULL）
+	ListActiveSeats(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error)
+}
+
 type Transaction interface {
 	RoomDBRepo() RoomDBRepository
 	SessionDBRepo() SessionDBRepository
@@ -80,6 +100,7 @@ type Transaction interface {
 	GrabRecordRepo() GrabRecordRepository
 	SpecialRewardRepo() SpecialRewardRepository
 	PenaltyRecordRepo() PenaltyRecordRepository
+	SnapshotRepo() SnapshotRepository
 }
 
 // PlayerSessionRow 是 session_players + game_sessions 关联查询的行
@@ -221,6 +242,7 @@ type DBRepository interface {
 	GrabRecordRepo() GrabRecordRepository
 	SpecialRewardRepo() SpecialRewardRepository
 	PenaltyRecordRepo() PenaltyRecordRepository
+	SnapshotDBRepo() SnapshotRepository
 	WithTransaction(ctx context.Context, fn func(tx Transaction) error) error
 }
 

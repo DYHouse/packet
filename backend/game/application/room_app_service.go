@@ -349,13 +349,14 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	}
 
 	if s.publisher != nil && subResult.Player != nil {
+		traceID := trace.FromContext(ctx)
 		if err := s.publisher.PublishRoomEvent(ctx, events.NewSubstituteEvent(
 			roomID, subResult.SubstituteUserID, subResult.SeatNo,
-			subResult.Player.Nickname, subResult.Player.Avatar)); err != nil {
+			subResult.Player.Nickname, subResult.Player.Avatar, traceID)); err != nil {
 			logger.Warn("publish substitute event failed",
 				"room_id", roomID,
 				"user_id", subResult.SubstituteUserID,
-				"trace_id", trace.FromContext(ctx),
+				"trace_id", traceID,
 				"error", err)
 		}
 	}

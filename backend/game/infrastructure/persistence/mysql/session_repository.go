@@ -88,3 +88,18 @@ func (r *gormSessionRepository) IncrementSessionPlayerSend(ctx context.Context, 
 			"total_send": gorm.Expr("total_send + ?", amount),
 		}).Error
 }
+
+// UpsertPlayer 插入或更新玩家聚合记录（用于替补者首次入会话）
+// 幂等：按 (session_id, user_id) 唯一索引冲突时忽略
+func (r *gormSessionRepository) UpsertPlayer(ctx context.Context, player *model.SessionPlayer) error {
+	return r.db.WithContext(ctx).
+		Where("session_id = ? AND user_id = ?", player.SessionID, player.UserID).
+		Assign(model.SessionPlayer{
+			RoomID:   player.RoomID,
+			Nickname: player.Nickname,
+			Avatar:   player.Avatar,
+			SeatNo:   player.SeatNo,
+			JoinedAt: player.JoinedAt,
+		}).
+		FirstOrCreate(player).Error
+}

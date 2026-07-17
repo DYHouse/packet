@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
@@ -64,6 +65,16 @@ func (p *PacketOrchestrator) initRoundCore(
 		return nil, message.NewError(message.CodeSystemError)
 	}
 
+	// 写入 round_player_snapshot（失败仅告警，不阻断 round 创建）
+	// snapshot 是辅助事实表，不应影响游戏主流程
+	if err := p.writeRoundSnapshots(ctx, roomID, sessionID, round.RoundID, roundNo, step.senderID); err != nil {
+		logger.Warn("write round snapshots failed",
+			"room_id", roomID,
+			"round_id", round.RoundID,
+			"round_no", roundNo,
+			"error", err)
+	}
+
 	batchID, err := step.deductFn(ctx, roomID, round.RoundID)
 	if err != nil {
 		return nil, message.NewError(message.CodeSystemError)
@@ -121,6 +132,58 @@ func (p *PacketOrchestrator) createRoundRecord(ctx context.Context, roomID, sess
 		Status:    model.RoundStatusPending,
 	}
 	return p.dbRepo.RoundDBRepo().CreateOrGetRound(ctx, round)
+}
+
+// writeRoundSnapshots 从 Redis 读取当前玩家 + 旁观者状态，批量写入 round_player_snapshot。
+// 失败仅告警，不阻断 round 创建（snapshot 是辅助事实表，不应影响游戏主流程）。
+func (p *PacketOrchestrator) writeRoundSnapshots(ctx context.Context, roomID string, sessionID, roundID int64, roundNo int, senderID int64) error {
+	stateData, err := p.repo.GetRoomStateData(ctx, roomID)
+	if err != nil {
+		return fmt.Errorf("get room state data failed: %w", err)
+	}
+
+	now := time.Now()
+	snapshots := make([]*model.RoundPlayerSnapshot, 0, len(stateData.Players)+len(stateData.Spectators))
+
+	// 玩家快照
+	for _, player := range stateData.Players {
+		seatNo := player.SeatNo
+		userID := converter.ParseID(player.UserID)
+		snapshots = append(snapshots, &model.RoundPlayerSnapshot{
+			SessionID:   sessionID,
+			RoundID:     roundID,
+			RoundNo:     roundNo,
+			UserID:      userID,
+			Role:        "player",
+			SeatNo:      &seatNo,
+			IsSender:    userID == senderID,
+			JoinedAt:    now,
+			ActiveStart: now,
+			Source:      "initial",
+		})
+	}
+
+	// 旁观者快照（seat_no 为 null）
+	for _, spectator := range stateData.Spectators {
+		snapshots = append(snapshots, &model.RoundPlayerSnapshot{
+			SessionID:   sessionID,
+			RoundID:     roundID,
+			RoundNo:     roundNo,
+			UserID:      converter.ParseID(spectator.UserID),
+			Role:        "spectator",
+			SeatNo:      nil,
+			IsSender:    false,
+			JoinedAt:    now,
+			ActiveStart: now,
+			Source:      "initial",
+		})
+	}
+
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	return p.dbRepo.SnapshotDBRepo().BatchCreateOnRoundStart(ctx, snapshots)
 }
 
 func (p *PacketOrchestrator) updateRoundDeductSuccess(ctx context.Context, roundID int64, deductScene, deductStatus int, deductAmount int64, batchID string) error {

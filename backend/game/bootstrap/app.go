@@ -232,7 +232,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 func (a *Application) Start(ctx context.Context) error {
 	nodeID := idgen.GetNodeIDString()
 
-	roomEventConsumer, err := createRoomEventConsumer(a.config, a.Container.DBRepo, a.Container.Redis, nodeID)
+	roomEventConsumer, err := createRoomEventConsumer(a.config, a.Container.DBRepo, a.Container.RoomRepo, a.Container.Redis, nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to create room event consumer: %w", err)
 	}

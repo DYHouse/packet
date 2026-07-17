@@ -86,6 +86,10 @@ var codeMessages = map[int]string{
 	5003: "Error de cola de mensajes",                                 // CodeKafkaError
 	5004: "Error de API de plataforma",                                // CodePlatformAPIError
 	5005: "Fallo al adquirir bloqueo",                                 // CodeLockFailed
+	6001: "Error al consultar el historial",                           // CodeHistoryQueryFailed
+	6002: "La sesión no existe",                                       // CodeSessionNotFound
+	6003: "El jugador no está en la sesión",                           // CodePlayerNotInSession
+	6004: "Parámetros del historial inválidos",                         // CodeHistoryParamInvalid
 }
 
 // ==================== 踢出原因消息映射 ====================

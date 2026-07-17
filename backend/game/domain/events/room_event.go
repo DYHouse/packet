@@ -215,9 +215,9 @@ func NewQueueLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 	return event
 }
 
-func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar string) *RoomEvent {
+func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar, traceID string) *RoomEvent {
 	event := &RoomEvent{
-		EventHeader: message.NewEventHeader(""),
+		EventHeader: message.NewEventHeader(traceID),
 		EventType:   RoomEventSubstitute,
 		RoomID:      roomID,
 		UserID:      userID,

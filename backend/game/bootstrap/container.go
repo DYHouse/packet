@@ -453,7 +453,7 @@ func (c *Container) initSettlementSchedulers() {
 }
 
 func (c *Container) NewRoomEventConsumer(cfg kafka.ConsumerConfig) (*messaging.RoomEventConsumer, error) {
-	return messaging.NewRoomEventConsumer(c.DBRepo, c.Redis, cfg)
+	return messaging.NewRoomEventConsumer(c.DBRepo, c.RoomRepo, c.Redis, cfg)
 }
 
 // StartSchedulers starts all registered schedulers.

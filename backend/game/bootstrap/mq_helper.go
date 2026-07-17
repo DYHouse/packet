@@ -31,6 +31,7 @@ func createKafkaProducer(cfg *gameconfig.Config) (kafka.KafkaProducer, error) {
 func createRoomEventConsumer(
 	cfg *gameconfig.Config,
 	dbRepo repository.DBRepository,
+	roomRepo repository.RoomRepository,
 	redis cRedis.RedisClient,
 	nodeID string,
 ) (*messaging.RoomEventConsumer, error) {
@@ -39,7 +40,7 @@ func createRoomEventConsumer(
 		kafka.TopicRoomEvents,
 		fmt.Sprintf("game-room-events-%s", nodeID),
 	)
-	return messaging.NewRoomEventConsumer(dbRepo, redis, consumerCfg)
+	return messaging.NewRoomEventConsumer(dbRepo, roomRepo, redis, consumerCfg)
 }
 
 // createGameEventConsumer 构造 GameEventConsumer。

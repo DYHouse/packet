@@ -81,6 +81,7 @@ func main() {
 		&model.PenaltyRecord{},
 		&model.User{},
 		&model.RobotAccount{},
+		&model.RoundPlayerSnapshot{},
 		&settlementModel.BillRecord{},
 		&settlementModel.RoundSettlement{},
 		&settlementModel.RefundAudit{},
