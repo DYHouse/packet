@@ -83,10 +83,6 @@ type SnapshotRepository interface {
 	MarkPlayerLeft(ctx context.Context, sessionID, roundID, userID int64, leftAt time.Time, reason string) error
 	// AddPlayerMidRound 中途加入（替补/重新入座/成为旁观者）
 	AddPlayerMidRound(ctx context.Context, snapshot *model.RoundPlayerSnapshot) error
-	// ListByRound 查询某轮的所有玩家快照
-	ListByRound(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error)
-	// ListByUser 查询某玩家在某会话的所有参与轮次
-	ListByUser(ctx context.Context, sessionID, userID int64) ([]*model.RoundPlayerSnapshot, error)
 }
 
 type Transaction interface {

@@ -50,23 +50,3 @@ func (r *gormSnapshotRepository) MarkPlayerLeft(ctx context.Context, sessionID, 
 func (r *gormSnapshotRepository) AddPlayerMidRound(ctx context.Context, snapshot *model.RoundPlayerSnapshot) error {
 	return r.db.WithContext(ctx).Create(snapshot).Error
 }
-
-// ListByRound 查询某轮的所有玩家快照
-func (r *gormSnapshotRepository) ListByRound(ctx context.Context, sessionID, roundID int64) ([]*model.RoundPlayerSnapshot, error) {
-	var snapshots []*model.RoundPlayerSnapshot
-	err := r.db.WithContext(ctx).
-		Where("session_id = ? AND round_id = ?", sessionID, roundID).
-		Order("seat_no ASC, active_start ASC").
-		Find(&snapshots).Error
-	return snapshots, err
-}
-
-// ListByUser 查询某玩家在某会话的所有参与轮次
-func (r *gormSnapshotRepository) ListByUser(ctx context.Context, sessionID, userID int64) ([]*model.RoundPlayerSnapshot, error) {
-	var snapshots []*model.RoundPlayerSnapshot
-	err := r.db.WithContext(ctx).
-		Where("session_id = ? AND user_id = ?", sessionID, userID).
-		Order("round_no ASC, active_start ASC").
-		Find(&snapshots).Error
-	return snapshots, err
-}
