@@ -196,7 +196,7 @@ func (c *RoomEventConsumer) Close() error {
 }
 
 // handleSubstitute 处理替补事件：
-// 1. 标记被替者 snapshot 离开（left_reason='substituted', replaced_by=替补者）
+// 1. 标记被替者 snapshot 离开（left_reason='substituted'）
 // 2. 插入替补者 snapshot（source='substitute'）
 // 3. 替补者首次入会话则插入 session_player（聚合表一人一行）
 // 4. 同步 rooms 表计数
@@ -233,7 +233,7 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 		// 1. 标记被替者离开
 		if replacedUserIDInt > 0 && roundID > 0 {
 			if err := tx.SnapshotRepo().MarkPlayerLeft(ctx, sessionID, roundID, replacedUserIDInt,
-				now, "substituted", substituteUserIDInt); err != nil {
+				now, "substituted"); err != nil {
 				return fmt.Errorf("mark replaced player left failed: %w", err)
 			}
 		}
@@ -338,5 +338,5 @@ func (c *RoomEventConsumer) markSnapshotLeft(ctx context.Context, event *events.
 		return nil
 	}
 	return c.dbRepo.SnapshotDBRepo().MarkPlayerLeft(ctx, sessionID, roundID, userIDInt,
-		time.Now(), reason, 0)
+		time.Now(), reason)
 }

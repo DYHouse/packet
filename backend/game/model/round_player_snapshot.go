@@ -17,7 +17,6 @@ type RoundPlayerSnapshot struct {
 	ActiveStart time.Time  `json:"active_start" gorm:"type:datetime(3)"`                      // 本轮成为活跃玩家/旁观者的时刻
 	ActiveEnd   *time.Time `json:"active_end,omitempty" gorm:"type:datetime(3);index"`         // 本轮离开时刻（NULL 表示仍活跃）
 	LeftReason  string     `json:"left_reason" gorm:"size:30"`                                // kicked / substituted / user_request / timeout / disconnect
-	ReplacedBy  int64      `json:"replaced_by,omitempty"`                                     // 替补者 user_id
 	Source      string     `json:"source" gorm:"size:20;default:'initial'"`                   // initial / substitute / rejoin
 	CreatedAt   time.Time  `json:"created_at" gorm:"type:datetime(3);autoCreateTime"`
 	UpdatedAt   time.Time  `json:"updated_at" gorm:"type:datetime(3);autoUpdateTime"`

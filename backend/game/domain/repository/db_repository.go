@@ -80,7 +80,7 @@ type SnapshotRepository interface {
 	BatchCreateOnRoundStart(ctx context.Context, snapshots []*model.RoundPlayerSnapshot) error
 	// MarkPlayerLeft 标记玩家在某轮离开（被踢/离座/替补）
 	// 乐观锁：WHERE active_end IS NULL 避免重复标记
-	MarkPlayerLeft(ctx context.Context, sessionID, roundID, userID int64, leftAt time.Time, reason string, replacedBy int64) error
+	MarkPlayerLeft(ctx context.Context, sessionID, roundID, userID int64, leftAt time.Time, reason string) error
 	// AddPlayerMidRound 中途加入（替补/重新入座/成为旁观者）
 	AddPlayerMidRound(ctx context.Context, snapshot *model.RoundPlayerSnapshot) error
 	// ListByRound 查询某轮的所有玩家快照

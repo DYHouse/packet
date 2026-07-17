@@ -28,18 +28,14 @@ func (r *gormSnapshotRepository) BatchCreateOnRoundStart(ctx context.Context, sn
 
 // MarkPlayerLeft 标记玩家在某轮离开（被踢/离座/替补）
 // 乐观锁：WHERE active_end IS NULL 避免重复标记
-func (r *gormSnapshotRepository) MarkPlayerLeft(ctx context.Context, sessionID, roundID, userID int64, leftAt time.Time, reason string, replacedBy int64) error {
-	updates := map[string]interface{}{
-		"active_end":  leftAt,
-		"left_reason": reason,
-	}
-	if replacedBy != 0 {
-		updates["replaced_by"] = replacedBy
-	}
+func (r *gormSnapshotRepository) MarkPlayerLeft(ctx context.Context, sessionID, roundID, userID int64, leftAt time.Time, reason string) error {
 	result := r.db.WithContext(ctx).Model(&model.RoundPlayerSnapshot{}).
 		Where("session_id = ? AND round_id = ? AND user_id = ? AND active_end IS NULL",
 			sessionID, roundID, userID).
-		Updates(updates)
+		Updates(map[string]interface{}{
+			"active_end":  leftAt,
+			"left_reason": reason,
+		})
 	if result.Error != nil {
 		return result.Error
 	}
