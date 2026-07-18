@@ -74,9 +74,11 @@ func (g *TraceIDGenerator) GeneratePenaltyDistTraceID(roomID, sessionID int64, r
 	return fmt.Sprintf("PENALTY_DIST_%d_%d_%d", roomID, sessionID, roundNo)
 }
 
-// GenerateGameSettleTraceID 游戏结算 traceID（基于 sessionID 确定性生成，重试时可复现）。
-func (g *TraceIDGenerator) GenerateGameSettleTraceID(sessionID int64) string {
-	return fmt.Sprintf("GAME_SETTLE_%d", sessionID)
+// GenerateSettleBizOrderNo 生成游戏结算 BizOrderNo（基于 sessionID+userID 确定性，重试时可复现）。
+// 专用于 platform.Settle 调用幂等兜底，不创建对应 bill_record。
+// 资金移动由 SessionPayoutService 通过 bill_type=12 (SessionCredit) 完成。
+func (g *TraceIDGenerator) GenerateSettleBizOrderNo(sessionID int64, userID int64) string {
+	return fmt.Sprintf("GAME_SETTLE_%d_%d", sessionID, userID)
 }
 
 // GenerateSessionCreditTraceID 会话级入账 traceID（基于 sessionID+userID 确定性生成，重试时可复现）。

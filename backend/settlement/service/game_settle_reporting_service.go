@@ -253,7 +253,7 @@ func (s *GameSettleReportingService) settlePlayer(ctx context.Context, sessionID
 
 	gameResult := reward.DetermineGameResult(payOut, betAmount)
 
-	bizOrderNo := s.traceIDGen.GenerateBizOrderNo(s.traceIDGen.GenerateGameSettleTraceID(sessionID), domain.BillTypeGameSettle, userID)
+	bizOrderNo := s.traceIDGen.GenerateSettleBizOrderNo(sessionID, userID)
 
 	settleReq := &platform.SettleRequest{
 		BizID:           bizOrderNo,
