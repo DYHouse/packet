@@ -297,14 +297,25 @@ func (s *RoomAppService) handleCountdownAfterSeat(ctx context.Context, roomID st
 // tryAutoSubstitute 座位释放后尝试从排队队列自动替补。
 // 替补前会逐个校验排队者余额，余额不足者被移出队列并通知，继续下一位。
 // 返回替补结果（nil 表示无替补）。
+//
+// 行为按房间状态分流：
+//   - Waiting（游戏已结束）：自动入座仅为下一局凑齐人数，不扣替补费、不发 Substitute 事件，
+//     改发 PlayerReady 事件（仅同步 rooms 表计数）。session_players 与 round_player_snapshot
+//     由下一局 startGameCore → handleSessionStart 统一创建。排队队列跨 session 持久，不清空。
+//   - Playing/Interrupted（游戏中）：中途替补，扣替补费 + 发 Substitute 事件
+//     （消费者写 session_players 与 round_player_snapshot）。
 func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, seatNo int) *repository.SubstituteResult {
-	// 取房间元信息用于余额校验
+	// 取房间元信息用于余额校验与状态分流
 	meta, metaErr := s.repo.GetRoomMeta(ctx, roomID)
 	if metaErr != nil || meta == nil {
 		logger.Warn("auto substitute: failed to get room meta",
 			"room_id", roomID, "seat_no", seatNo, "error", metaErr)
 		return nil
 	}
+
+	// 游戏结束后（Waiting）自动入座 = 为下一局凑齐人数，不是中途替补：
+	// 不扣替补费、不发 Substitute 事件（避免写入已结束 session 的 session_players/snapshot）。
+	isWaitingSubstitute := meta.Status == roomDom.RoomStatusWaiting
 
 	// 余额校验：逐个检查排队者，余额不足者移出队列并通知
 	if s.settleAppService != nil {
@@ -355,48 +366,66 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 		return nil
 	}
 
-	// 同步扣款替补费（Lua 入座成功后立即扣款，失败则结束游戏）。
-	// 与 PacketOrchestrator 扣款失败处理一致：调用 HandleDeductFailure 广播中断 + 异步 EndGame。
+	// 同步扣款替补费（仅中途替补才扣款）。
+	// Waiting 状态下（游戏已结束）自动入座不扣替补费：入座仅为下一局凑齐人数，
+	// 当前 session 已结束，无替补费产生。session_players 由下一局 handleSessionStart 统一创建。
 	// 机器人替补由 DeductSubstituteFee 内部 robotChecker 判断后走虚拟钱包通道，无 platform.Debit RPC。
 	// 幂等：DeductSubstituteFee 内部 GetBillByTraceTypeAndUser 检测到已 Success 的 bill 直接跳过。
-	substituteFee := calculateSubstituteFee(meta.RoomFee)
-	if substituteFee > 0 && s.settleAppService != nil {
-		deductReq := &dto.SubstituteFeeDeductRequest{
-			RoomID:    converter.ParseID(roomID),
-			SessionID: converter.ParseID(meta.CurrentSessionID),
-			UserID:    converter.ParseID(subResult.SubstituteUserID),
-			RoundNo:   meta.CurrentRound,
-			Amount:    substituteFee,
-		}
-		if err := s.settleAppService.DeductSubstituteFee(ctx, deductReq); err != nil {
-			logger.Error("auto substitute: deduct substitute fee failed, ending game",
-				"room_id", roomID,
-				"seat_no", seatNo,
-				"substitute_user_id", subResult.SubstituteUserID,
-				"amount", substituteFee,
-				"error", err)
-			if s.deductFailureHandler != nil {
-				s.deductFailureHandler.HandleDeductFailure(ctx, roomID, meta,
-					message.ReasonSubstituteFeeDeductFailed, err)
+	if !isWaitingSubstitute {
+		substituteFee := calculateSubstituteFee(meta.RoomFee)
+		if substituteFee > 0 && s.settleAppService != nil {
+			deductReq := &dto.SubstituteFeeDeductRequest{
+				RoomID:    converter.ParseID(roomID),
+				SessionID: converter.ParseID(meta.CurrentSessionID),
+				UserID:    converter.ParseID(subResult.SubstituteUserID),
+				RoundNo:   meta.CurrentRound,
+				Amount:    substituteFee,
 			}
-			return nil
+			if err := s.settleAppService.DeductSubstituteFee(ctx, deductReq); err != nil {
+				logger.Error("auto substitute: deduct substitute fee failed, ending game",
+					"room_id", roomID,
+					"seat_no", seatNo,
+					"substitute_user_id", subResult.SubstituteUserID,
+					"amount", substituteFee,
+					"error", err)
+				if s.deductFailureHandler != nil {
+					s.deductFailureHandler.HandleDeductFailure(ctx, roomID, meta,
+						message.ReasonSubstituteFeeDeductFailed, err)
+				}
+				return nil
+			}
+			logger.Info("auto substitute: substitute fee deducted",
+				"room_id", roomID,
+				"substitute_user_id", subResult.SubstituteUserID,
+				"amount", substituteFee)
 		}
-		logger.Info("auto substitute: substitute fee deducted",
-			"room_id", roomID,
-			"substitute_user_id", subResult.SubstituteUserID,
-			"amount", substituteFee)
 	}
 
+	// 事件发布：按房间状态分流
+	// - Waiting：发 PlayerReady 事件（消费者仅 syncRoomCounts，不写 session_players/snapshot）
+	// - Playing/Interrupted：发 Substitute 事件（消费者写 session_players 与 round_player_snapshot）
 	if s.publisher != nil && subResult.Player != nil {
 		traceID := trace.FromContext(ctx)
-		if err := s.publisher.PublishRoomEvent(ctx, events.NewSubstituteEvent(
-			roomID, subResult.SubstituteUserID, subResult.SeatNo,
-			subResult.Player.Nickname, subResult.Player.Avatar, traceID, "queue")); err != nil {
-			logger.Warn("publish substitute event failed",
-				"room_id", roomID,
-				"user_id", subResult.SubstituteUserID,
-				"trace_id", traceID,
-				"error", err)
+		if isWaitingSubstitute {
+			if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReadyEvent(
+				roomID, subResult.SubstituteUserID, subResult.SeatNo,
+				subResult.Player.Nickname, subResult.Player.Avatar)); err != nil {
+				logger.Warn("publish player_ready event failed (waiting substitute)",
+					"room_id", roomID,
+					"user_id", subResult.SubstituteUserID,
+					"trace_id", traceID,
+					"error", err)
+			}
+		} else {
+			if err := s.publisher.PublishRoomEvent(ctx, events.NewSubstituteEvent(
+				roomID, subResult.SubstituteUserID, subResult.SeatNo,
+				subResult.Player.Nickname, subResult.Player.Avatar, traceID, "queue")); err != nil {
+				logger.Warn("publish substitute event failed",
+					"room_id", roomID,
+					"user_id", subResult.SubstituteUserID,
+					"trace_id", traceID,
+					"error", err)
+			}
 		}
 	}
 

@@ -52,6 +52,10 @@ redis.call('HSET', roomHashKey, 'current_round', 0)
 redis.call('HDEL', roomHashKey, 'next_sender_id')
 redis.call('HDEL', roomHashKey, 'countdown_end_time')
 redis.call('HDEL', roomHashKey, 'started_at')
+-- 清理已结束 session/round 的引用，避免后续逻辑误用旧 sessionID/roundID。
+-- 对结算无影响：SettleGame 的 sessionID 来自 Kafka 事件 payload，SettleRound 在 EndGame 前已执行且有幂等检查。
+redis.call('HDEL', roomHashKey, 'current_session_id')
+redis.call('HDEL', roomHashKey, 'current_round_id')
 
 -- 清理座位占用状态
 redis.call('DEL', seatsKey)
