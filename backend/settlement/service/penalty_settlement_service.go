@@ -275,13 +275,14 @@ func (s *PenaltySettlementService) DeductSubstituteFee(ctx context.Context, req 
 		}
 
 		// 步骤 4：构建 playerBill（玩家侧扣款，amount 为负，status=Processing）。
+		// RoundID 由调用方按场景传入：中断替补关联当前轮次；自动入座（Waiting）场景为 0。
 		playerBill := &domain.BillRecord{
 			RoundTraceID: roundTraceID,
 			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, domain.BillTypeSubstituteFee, req.UserID),
 			BillType:     domain.BillTypeSubstituteFee,
 			RoomID:       req.RoomID,
 			SessionID:    req.SessionID,
-			RoundID:      0,    // 替补费无特定 round 关联，但 RoundNo 记录补位发生时的轮次
+			RoundID:      req.RoundID,
 			RoundNo:      req.RoundNo,
 			UserID:       req.UserID,
 			Amount:       -req.Amount,
@@ -305,7 +306,7 @@ func (s *PenaltySettlementService) DeductSubstituteFee(ctx context.Context, req 
 			BillType:     domain.BillTypeSubstituteFee,
 			RoomID:       req.RoomID,
 			SessionID:    req.SessionID,
-			RoundID:      0,
+			RoundID:      req.RoundID,
 			RoundNo:      req.RoundNo,
 			UserID:       dto.PlatformAccountID,
 			Amount:       req.Amount,

@@ -378,6 +378,7 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 				RoomID:    converter.ParseID(roomID),
 				SessionID: converter.ParseID(meta.CurrentSessionID),
 				UserID:    converter.ParseID(subResult.SubstituteUserID),
+				RoundID:   converter.ParseID(meta.CurrentRoundID),
 				RoundNo:   meta.CurrentRound,
 				Amount:    substituteFee,
 			}

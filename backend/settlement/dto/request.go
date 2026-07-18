@@ -50,7 +50,8 @@ type SubstituteFeeDeductRequest struct {
 	RoomID    int64
 	SessionID int64
 	UserID    int64
-	RoundNo   int // 补位发生时的轮次，用于区分同一玩家多次补位
+	RoundID   int64 // 中断替补关联的当前轮次 ID（中断替补场景必填；自动入座场景为 0）
+	RoundNo   int   // 补位发生时的轮次，用于区分同一玩家多次补位
 	Amount    int64
 }
 

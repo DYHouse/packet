@@ -324,6 +324,7 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 					RoomID:    converter.ParseID(req.RoomID),
 					SessionID: converter.ParseID(meta.CurrentSessionID),
 					UserID:    converter.ParseID(req.UserID),
+					RoundID:   converter.ParseID(meta.CurrentRoundID),
 					RoundNo:   currentRound,
 					Amount:    substituteFee,
 				}
