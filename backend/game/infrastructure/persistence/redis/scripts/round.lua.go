@@ -101,9 +101,12 @@ return {0, results, status}  -- LuaErrSuccess
 // LuaSettleRound 结算回合（优化版）
 // KEYS: [roundStateKey, grabbersKey, playersKey, roomHashKey, availablePacketsKey, sessionPlayerTotalsKey]
 // ARGV: [roundID, now, packetInfoPrefix]
-// 返回: {code, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount, finalResults}
+// 返回: {code, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount}
 // results 格式: {userID, grabAmount, nickname, position, avatar, isAutoAssigned, packetID}
-// finalResults 格式: {userID, nickname, avatar, totalAmount, rank}
+// 注意：finalResults 不再由 Lua 生成，改由 Go 侧 LeaderboardService.BuildFinalLeaderboard
+// 从 MySQL session_players LEFT JOIN bill_record 聚合，保证含被踢/替补玩家。
+// sessionPlayerTotalsKey 仍保留作为实时累加缓存，但游戏结束时不再 DEL，
+// 由 Go 侧 CleanupRedisTotals 在 DB 排行榜构建完成后清理。
 // 错误码: LuaErrRoomNotFound(1,回合不存在), LuaErrIdempotent(2,已结算), LuaErrRoomFullTotal(3,阶段不允许)
 const luaSettleRound = `
 local roundStateKey = KEYS[1]
@@ -120,23 +123,23 @@ local packetInfoPrefix = ARGV[3]
 -- 幂等性检查：检查回合状态
 local phase = redis.call('HGET', roundStateKey, 'phase')
 if not phase then
-    return {1, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrRoomNotFound(回合不存在)
+    return {1, 0, '', 0, '', 0, {}, 0, 0}  -- LuaErrRoomNotFound(回合不存在)
 end
 
 -- 如果已经结算，返回成功但不重复执行
 if phase == 'SETTLED' or phase == 'WAIT_SEND' or phase == 'GAME_END' then
     -- 返回已结算的标记，让调用方知道这是幂等性返回
-    return {2, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrIdempotent
+    return {2, 0, '', 0, '', 0, {}, 0, 0}  -- LuaErrIdempotent
 end
 
 -- 只允许在GRABBING或SETTLING阶段结算
 if phase ~= 'GRABBING' and phase ~= 'SETTLING' then
-    return {3, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrRoomFullTotal(阶段不允许)
+    return {3, 0, '', 0, '', 0, {}, 0, 0}  -- LuaErrRoomFullTotal(阶段不允许)
 end
 
 local roundInfo = redis.call('HGETALL', roundStateKey)
 if not roundInfo or #roundInfo == 0 then
-    return {1, 0, '', 0, '', 0, {}, 0, 0, {}}  -- LuaErrRoomNotFound(回合不存在)
+    return {1, 0, '', 0, '', 0, {}, 0, 0}  -- LuaErrRoomNotFound(回合不存在)
 end
 
 local roundData = {}
@@ -254,42 +257,11 @@ if roundNo >= maxRounds then
 	redis.call('HSET', roundStateKey, 'phase', 'GAME_END')
 end
 
--- 游戏结束时返回 FinalResults
-local finalResults = {}
-if isGameEnd == 1 and sessionPlayerTotalsKey and sessionPlayerTotalsKey ~= '' then
-    local allTotals = redis.call('HGETALL', sessionPlayerTotalsKey)
-    local totalsList = {}
+-- finalResults 不再由 Lua 生成（被踢玩家在 playersKey 中已被删除导致 nickname/avatar 为空，
+-- 替补玩家未抢包则不在 session_player_totals 中完全缺席）。
+-- 改由 Go 侧 LeaderboardService.BuildFinalLeaderboard 从 MySQL session_players
+-- LEFT JOIN bill_record 聚合，保证含所有参与玩家（原始/被踢/替补）。
+-- sessionPlayerTotalsKey 不再在此 DEL，由 Go 侧 CleanupRedisTotals 清理。
 
-    for i = 1, #allTotals, 2 do
-        local userID = allTotals[i]
-        local total = tonumber(allTotals[i + 1]) or 0
-
-        -- 从 playersKey 获取昵称和头像
-        local nickname = ''
-        local avatar = ''
-        local playerData = redis.call('HGET', playersKey, userID)
-        if playerData then
-            local player = cjson.decode(playerData)
-            nickname = player.nickname or ''
-            avatar = player.avatar or ''
-        end
-
-        table.insert(totalsList, {userID, nickname, avatar, total})
-    end
-
-    -- 按金额降序排序
-    table.sort(totalsList, function(a, b)
-        return a[4] > b[4]
-    end)
-
-    -- 添加排名
-    for i, t in ipairs(totalsList) do
-        table.insert(finalResults, {t[1], t[2], t[3], t[4], i})
-    end
-
-    -- 清理累计金额数据
-    redis.call('DEL', sessionPlayerTotalsKey)
-end
-
-return {0, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount, finalResults}  -- LuaErrSuccess
+return {0, roundNo, senderID, totalAmount, minAmountPlayer, isGameEnd, results, rewardType, rewardAmount}  -- LuaErrSuccess
 `

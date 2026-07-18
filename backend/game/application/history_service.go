@@ -125,6 +125,13 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		return nil, message.NewError(message.CodeHistoryQueryFailed)
 	}
 
+	// 5.4 查询玩家在每个 round 的替补费扣款明细（bill_type=14）
+	playerSubstituteFees, err := s.dbRepo.HistoryDBRepo().ListPlayerRoundSubstituteFees(sessionID, userID)
+	if err != nil {
+		logger.Error("failed to list player round substitute fees", "user_id", userID, "session_id", sessionID, "error", err)
+		return nil, message.NewError(message.CodeHistoryQueryFailed)
+	}
+
 	// 6. 构建 round_id -> grabRecord 索引
 	grabByRound := make(map[int64]model.RoundGrabRecord, len(grabRecords))
 	for i := range grabRecords {
@@ -153,6 +160,12 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 	penaltyDistByRound := make(map[int64]repository.PlayerRoundPenaltyDistRow, len(playerPenaltyDists))
 	for i := range playerPenaltyDists {
 		penaltyDistByRound[playerPenaltyDists[i].RoundID] = playerPenaltyDists[i]
+	}
+
+	// 7.4 构建 round_id -> SubstituteFee 索引
+	substituteFeeByRound := make(map[int64]repository.PlayerRoundSubstituteFeeRow, len(playerSubstituteFees))
+	for i := range playerSubstituteFees {
+		substituteFeeByRound[playerSubstituteFees[i].RoundID] = playerSubstituteFees[i]
 	}
 
 	// 8. 组装回合明细
@@ -205,6 +218,13 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 				Amount: currency.NewMoneyFromFen(pd.Amount),
 			}
 		}
+		// 填充替补费扣款明细（bill_type=14）
+		if sf, ok := substituteFeeByRound[rounds[i].RoundID]; ok {
+			rd.MySubstituteFee = &SubstituteFeeDetail{
+				Amount: currency.NewMoneyFromFen(sf.Amount),
+				Count:  sf.Count,
+			}
+		}
 		roundDetails = append(roundDetails, rd)
 	}
 
@@ -226,6 +246,7 @@ func (s *HistoryService) GetPlayerSessionDetail(ctx context.Context, userID int6
 		TotalSend:     currency.NewMoneyFromFen(billSummary.TotalSend),
 		FirstRoundFee: currency.NewMoneyFromFen(billSummary.FirstRoundFee),
 		Penalty:       currency.NewMoneyFromFen(billSummary.Penalty),
+		SubstituteFee: currency.NewMoneyFromFen(billSummary.SubstituteFee),
 		TotalBet:      currency.NewMoneyFromFen(billSummary.TotalBet),
 		TotalGrab:     currency.NewMoneyFromFen(billSummary.TotalGrab),
 		Reward:        currency.NewMoneyFromFen(billSummary.Reward),
@@ -302,6 +323,7 @@ func playerSessionBillRowToItem(row *repository.PlayerSessionBillRow) PlayerHist
 		TotalSend:     currency.NewMoneyFromFen(row.TotalSend),
 		FirstRoundFee: currency.NewMoneyFromFen(row.FirstRoundFee),
 		Penalty:       currency.NewMoneyFromFen(row.Penalty),
+		SubstituteFee: currency.NewMoneyFromFen(row.SubstituteFee),
 		TotalBet:      currency.NewMoneyFromFen(row.TotalBet),
 		TotalGrab:     currency.NewMoneyFromFen(row.TotalGrab),
 		Reward:        currency.NewMoneyFromFen(row.Reward),

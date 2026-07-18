@@ -17,28 +17,29 @@ type PlayerHistoryReq struct {
 
 // PlayerHistoryItem 玩家历史对局列表项（含会话信息 + 玩家个人数据）
 type PlayerHistoryItem struct {
-	SessionID     string         `json:"session_id"`
-	RoomNo        string         `json:"room_no"`
-	ConfigName    string         `json:"config_name"`
-	RoomFee       currency.Money `json:"room_fee"`
-	MaxRounds     int            `json:"max_rounds"`
-	ActualRounds  int            `json:"actual_rounds"`
-	Status        int            `json:"status"`
-	StartedAt     int64          `json:"started_at"`
-	EndedAt       int64          `json:"ended_at"`
-	EndReason     string         `json:"end_reason"`
-	SeatNo        int            `json:"seat_no"`
-	SendCount     int            `json:"send_count"`
-	GrabCount     int            `json:"grab_count"`
-	TotalSend     currency.Money `json:"total_send"`
-	FirstRoundFee currency.Money `json:"first_round_fee"`
-	Penalty       currency.Money `json:"penalty"`
-	TotalBet      currency.Money `json:"total_bet"`
-	TotalGrab     currency.Money `json:"total_grab"`
-	Reward        currency.Money `json:"reward"`       // 系统奖励（罚款分发+特殊奖励）
-	TotalIncome   currency.Money `json:"total_income"` // 总收入（抢包+系统奖励）
-	Profit        currency.Money `json:"profit"`
-	JoinedAt      int64          `json:"joined_at"`
+	SessionID      string         `json:"session_id"`
+	RoomNo         string         `json:"room_no"`
+	ConfigName     string         `json:"config_name"`
+	RoomFee        currency.Money `json:"room_fee"`
+	MaxRounds      int            `json:"max_rounds"`
+	ActualRounds   int            `json:"actual_rounds"`
+	Status         int            `json:"status"`
+	StartedAt      int64          `json:"started_at"`
+	EndedAt        int64          `json:"ended_at"`
+	EndReason      string         `json:"end_reason"`
+	SeatNo         int            `json:"seat_no"`
+	SendCount      int            `json:"send_count"`
+	GrabCount      int            `json:"grab_count"`
+	TotalSend      currency.Money `json:"total_send"`
+	FirstRoundFee  currency.Money `json:"first_round_fee"`
+	Penalty        currency.Money `json:"penalty"`
+	SubstituteFee  currency.Money `json:"substitute_fee"` // 替补费扣款（bill_type=14，正数表示支出）
+	TotalBet       currency.Money `json:"total_bet"`
+	TotalGrab      currency.Money `json:"total_grab"`
+	Reward         currency.Money `json:"reward"`        // 系统奖励（罚款分发+特殊奖励）
+	TotalIncome    currency.Money `json:"total_income"` // 总收入（抢包+系统奖励）
+	Profit         currency.Money `json:"profit"`
+	JoinedAt       int64          `json:"joined_at"`
 }
 
 // PlayerHistoryResp 玩家历史对局列表响应
@@ -97,6 +98,12 @@ type PenaltyDistributionDetail struct {
 	Amount currency.Money `json:"amount"` // 分红金额（正数，表示收入）
 }
 
+// SubstituteFeeDetail 替补费扣款明细（玩家替补加入时扣款，基于 bill_record bill_type=14 聚合）
+type SubstituteFeeDetail struct {
+	Amount currency.Money `json:"amount"` // 替补费金额（正数，表示支出）
+	Count  int            `json:"count"`  // 扣款次数（通常为 1）
+}
+
 // RoundDetail 回合明细
 type RoundDetail struct {
 	RoundID               string                     `json:"round_id"`
@@ -112,6 +119,7 @@ type RoundDetail struct {
 	MyReward              *RewardDetail              `json:"my_reward,omitempty"`
 	MyPenalty             *PenaltyDetail             `json:"my_penalty,omitempty"`
 	MyPenaltyDistribution *PenaltyDistributionDetail `json:"my_penalty_distribution,omitempty"`
+	MySubstituteFee       *SubstituteFeeDetail       `json:"my_substitute_fee,omitempty"`
 }
 
 // PlayerSessionDetailResp 单局详情响应

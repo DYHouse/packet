@@ -145,16 +145,17 @@ type PlayerSessionBillRow struct {
 	EndedAt      *time.Time
 	EndReason    string
 	// bill_record 聚合字段（分）
-	TotalGrab     int64 // bill_type=3 求和
-	TotalSend     int64 // bill_type=4 求和（ABS）
-	FirstRoundFee int64 // bill_type=2 求和（ABS）
-	Penalty       int64 // bill_type=8 求和（ABS）
-	TotalBet      int64 // bill_type IN (2,4,8) 且 amount<0 求和（ABS）
-	TotalIncome   int64 // bill_type IN (3,10,11) 且 amount>0 求和
-	Reward        int64 // 系统奖励求和（bill_type IN (10,11)）
-	Profit        int64 // TotalIncome - TotalBet
-	GrabCount     int64 // bill_type=3 计数
-	SendCount     int64 // bill_type=4 计数
+	TotalGrab      int64 // bill_type=3 求和
+	TotalSend      int64 // bill_type=4 求和（ABS）
+	FirstRoundFee  int64 // bill_type=2 求和（ABS）
+	Penalty        int64 // bill_type=8 求和（ABS）
+	SubstituteFee  int64 // bill_type=14 求和（ABS），替补费扣款
+	TotalBet       int64 // bill_type IN (2,4,8,14) 且 amount<0 求和（ABS）
+	TotalIncome    int64 // bill_type IN (3,10,11) 且 amount>0 求和
+	Reward         int64 // 系统奖励求和（bill_type IN (10,11)）
+	Profit         int64 // TotalIncome - TotalBet
+	GrabCount      int64 // bill_type=3 计数
+	SendCount      int64 // bill_type=4 计数
 	// session_players 字段
 	SeatNo   int
 	JoinedAt *time.Time
@@ -166,6 +167,7 @@ type PlayerSessionBillSummary struct {
 	TotalSend     int64
 	FirstRoundFee int64
 	Penalty       int64
+	SubstituteFee int64 // bill_type=14 求和（ABS），替补费扣款
 	TotalBet      int64
 	TotalIncome   int64
 	Reward        int64
@@ -182,6 +184,7 @@ type PlayerStatsBillAggregate struct {
 	TotalSend      int64
 	FirstRoundFee  int64
 	Penalty        int64
+	SubstituteFee  int64 // bill_type=14 求和（ABS），替补费扣款
 	TotalBet       int64
 	TotalIncome    int64
 	Reward         int64
@@ -206,6 +209,22 @@ type PlayerRoundPenaltyDistRow struct {
 	Amount  int64 // SUM(amount)，正数表示收入
 }
 
+// PlayerRoundSubstituteFeeRow 玩家在某个 round 的替补费扣款明细（基于 bill_record 聚合，bill_type=14）
+type PlayerRoundSubstituteFeeRow struct {
+	RoundID int64
+	RoundNo int
+	Amount  int64 // ABS(SUM(amount))，正数表示支出
+	Count   int   // 该 round 内被扣替补费次数（通常为 1）
+}
+
+// SessionLeaderboardRow 会话排行榜行（基于 session_players LEFT JOIN bill_record 聚合）
+type SessionLeaderboardRow struct {
+	UserID      int64
+	Nickname    string
+	Avatar      string
+	TotalProfit int64 // 分；收入(3,10,11) - 支出(2,4,8,14)
+}
+
 // HistoryDBRepository 玩家历史记录查询仓储
 type HistoryDBRepository interface {
 	GetSessionRounds(sessionID int64) ([]model.Round, error)
@@ -223,6 +242,13 @@ type HistoryDBRepository interface {
 	ListPlayerRoundPenalties(sessionID, userID int64) ([]PlayerRoundPenaltyRow, error)
 	// ListPlayerRoundPenaltyDistributions 查询玩家在会话内每个 round 收到的罚款分红（bill_type=10 且 amount>0 且 user_id!=0）
 	ListPlayerRoundPenaltyDistributions(sessionID, userID int64) ([]PlayerRoundPenaltyDistRow, error)
+	// ListPlayerRoundSubstituteFees 查询玩家在会话内每个 round 的替补费扣款明细（bill_type=14 且 amount<0）
+	ListPlayerRoundSubstituteFees(sessionID, userID int64) ([]PlayerRoundSubstituteFeeRow, error)
+	// GetSessionLeaderboard 查询会话完整排行榜（含所有参与玩家：原始/被踢/替补）。
+	// 数据源：session_players LEFT JOIN bill_record 一次聚合。
+	// total_profit 口径：收入(bill_type IN 3,10,11) - 支出(bill_type IN 2,4,8,14)。
+	// 包含替补费(14)和罚款(8支出/10分红)，排除 SessionCredit(12)。
+	GetSessionLeaderboard(sessionID int64) ([]SessionLeaderboardRow, error)
 }
 
 type DBRepository interface {

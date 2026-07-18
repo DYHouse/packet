@@ -30,17 +30,18 @@ import (
 // 在游戏结束时通过异步任务回调 GameLifecycleService.EndGameWithOptions。
 // 从 GameAppService 拆分（Phase 2.1），保持原有业务逻辑完全不变。
 type RoundSettlementService struct {
-	repo           repository.RoomRepository
-	broadcaster    events.Broadcaster
-	eventPublisher events.GameEventPublisher
-	redis          cRedis.RedisClient
-	commissionCfg  *game.CommissionConfig
-	timeoutCfg     *config.TimeoutConfig
-	lockCfg        *config.LockConfig
-	scheduler      *scheduler.TimeoutScheduler
-	taskRunner     async.TaskRunner
-	idGen          idgen.IDGenerator
-	gameEnder      GameEnder
+	repo             repository.RoomRepository
+	broadcaster      events.Broadcaster
+	eventPublisher   events.GameEventPublisher
+	redis            cRedis.RedisClient
+	commissionCfg    *game.CommissionConfig
+	timeoutCfg       *config.TimeoutConfig
+	lockCfg          *config.LockConfig
+	scheduler        *scheduler.TimeoutScheduler
+	taskRunner       async.TaskRunner
+	idGen            idgen.IDGenerator
+	gameEnder        GameEnder
+	leaderboardSvc   *LeaderboardService
 }
 
 // NewRoundSettlementService 创建单局结算服务。
@@ -77,6 +78,12 @@ func NewRoundSettlementService(
 // 供结算完成且游戏结束时通过异步任务回调结束游戏。
 func (s *RoundSettlementService) SetGameEnder(e GameEnder) {
 	s.gameEnder = e
+}
+
+// SetLeaderboardService 注入排行榜构建服务，
+// 供游戏结束时从 MySQL session_players + bill_record 构建完整排行榜。
+func (s *RoundSettlementService) SetLeaderboardService(ls *LeaderboardService) {
+	s.leaderboardSvc = ls
 }
 
 // SettleRound 执行单局结算。
@@ -167,20 +174,21 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 			rewardAmount = converter.ParseInt64(res[8])
 		}
 
+		// 游戏结束时从 MySQL 构建完整排行榜（含被踢/替补玩家）。
+		// 替代原从 Lua res[9] 读取 finalResults 的方式（原方式会漏掉替补玩家、
+		// 被踢玩家 nickname/avatar 为空）。失败时降级为空 finalResults，
+		// 前端显示空排行榜，记 Error 日志，不阻塞游戏结束流程。
 		var finalResults []push.GameResult
-		if isGameEnd && len(res) > 9 {
-			if arr, ok := res[9].([]interface{}); ok {
-				for _, item := range arr {
-					if tuple, ok := item.([]interface{}); ok && len(tuple) >= 5 {
-						finalResults = append(finalResults, push.GameResult{
-							UserID:      converter.ParseString(tuple[0]),
-							Nickname:    converter.ParseString(tuple[1]),
-							Avatar:      converter.ParseString(tuple[2]),
-							TotalProfit: currency.NewMoneyFromFen(converter.ParseInt64(tuple[3])),
-							Rank:        int32(converter.ParseInt(tuple[4])),
-						})
-					}
-				}
+		if isGameEnd && s.leaderboardSvc != nil && meta != nil {
+			fr, err := s.leaderboardSvc.BuildFinalLeaderboard(ctx, meta.CurrentSessionID)
+			if err != nil {
+				logger.Error("build final leaderboard failed",
+					"room_id", roomID,
+					"session_id", meta.CurrentSessionID,
+					"error", err)
+			} else {
+				finalResults = fr
+				s.leaderboardSvc.CleanupRedisTotals(ctx, meta.CurrentSessionID)
 			}
 		}
 

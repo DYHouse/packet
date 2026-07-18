@@ -311,10 +311,12 @@ func (c *Container) InitAppServices() {
 	// 装配跨 Service 依赖（接口注入避免循环依赖）：
 	//   PacketOrchestrator  --(DeductFailureHandler)--> GameLifecycleService
 	//   RoundSettlementSvc  --(GameEnder)------------> GameLifecycleService
+	//   RoundSettlementSvc  --(LeaderboardService)---> DBRepository（构建完整排行榜）
 	//   GameLifecycleSvc    --(PacketInitiator)-----> PacketOrchestrator
 	//   GameLifecycleSvc    --(RoundSettler)---------> RoundSettlementSvc
 	c.PacketOrchestrator.SetDeductFailureHandler(c.GameLifecycleSvc)
 	c.RoundSettlementSvc.SetGameEnder(c.GameLifecycleSvc)
+	c.RoundSettlementSvc.SetLeaderboardService(application.NewLeaderboardService(c.DBRepo, c.Redis))
 	c.GameLifecycleSvc.SetPacketInitiator(c.PacketOrchestrator)
 	c.GameLifecycleSvc.SetRoundSettler(c.RoundSettlementSvc)
 

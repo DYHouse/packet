@@ -111,11 +111,12 @@ func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTi
        COALESCE(SUM(CASE WHEN b.bill_type = 4 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_send,
        COALESCE(SUM(CASE WHEN b.bill_type = 2 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS first_round_fee,
        COALESCE(SUM(CASE WHEN b.bill_type = 8 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS penalty,
-       COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_bet,
+       COALESCE(SUM(CASE WHEN b.bill_type = 14 AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS substitute_fee,
+       COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8,14) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_bet,
        COALESCE(SUM(CASE WHEN b.bill_type IN (3,10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0) AS total_income,
        COALESCE(SUM(CASE WHEN b.bill_type IN (10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0) AS reward,
        COALESCE(SUM(CASE WHEN b.bill_type IN (3,10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0)
-         - COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS profit,
+         - COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8,14) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS profit,
        COALESCE(SUM(CASE WHEN b.bill_type = 3 THEN 1 ELSE 0 END), 0) AS grab_count,
        COALESCE(SUM(CASE WHEN b.bill_type = 4 THEN 1 ELSE 0 END), 0) AS send_count
        FROM ` + join + `
@@ -135,17 +136,19 @@ func (r *gormHistoryRepository) ListPlayerSessionsWithBill(userID int64, startTi
 
 // GetPlayerSessionBillSummary 单局个人结果卡片（基于 bill_record 聚合）。
 // 按 (session_id, user_id) 聚合，profit = total_income - total_bet。
+// total_bet 包含替补费（bill_type=14），确保与排行榜口径一致。
 func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID int64) (*repository.PlayerSessionBillSummary, error) {
 	query := `SELECT
        COALESCE(SUM(CASE WHEN bill_type = 3 AND amount > 0 THEN amount ELSE 0 END), 0) AS total_grab,
        COALESCE(SUM(CASE WHEN bill_type = 4 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_send,
        COALESCE(SUM(CASE WHEN bill_type = 2 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS first_round_fee,
        COALESCE(SUM(CASE WHEN bill_type = 8 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS penalty,
-       COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_bet,
+       COALESCE(SUM(CASE WHEN bill_type = 14 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS substitute_fee,
+       COALESCE(SUM(CASE WHEN bill_type IN (2,4,8,14) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_bet,
        COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS total_income,
        COALESCE(SUM(CASE WHEN bill_type IN (10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS reward,
        COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0)
-         - COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS profit,
+         - COALESCE(SUM(CASE WHEN bill_type IN (2,4,8,14) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS profit,
        COALESCE(SUM(CASE WHEN bill_type = 3 THEN 1 ELSE 0 END), 0) AS grab_count,
        COALESCE(SUM(CASE WHEN bill_type = 4 THEN 1 ELSE 0 END), 0) AS send_count
        FROM bill_record
@@ -159,6 +162,7 @@ func (r *gormHistoryRepository) GetPlayerSessionBillSummary(userID, sessionID in
 
 // AggregatePlayerStatsFromBill 玩家累计统计（基于 bill_record 聚合）。
 // 内层按 session_id 分组计算每局盈亏，外层汇总 games/win/各总额。
+// total_bet 包含替补费（bill_type=14），确保与单局 summary 口径一致。
 func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*repository.PlayerStatsBillAggregate, error) {
 	query := `SELECT
        COUNT(*) AS total_games,
@@ -167,6 +171,7 @@ func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*rep
        COALESCE(SUM(total_send), 0) AS total_send,
        COALESCE(SUM(first_round_fee), 0) AS first_round_fee,
        COALESCE(SUM(penalty), 0) AS penalty,
+       COALESCE(SUM(substitute_fee), 0) AS substitute_fee,
        COALESCE(SUM(total_bet), 0) AS total_bet,
        COALESCE(SUM(total_income), 0) AS total_income,
        COALESCE(SUM(reward), 0) AS reward,
@@ -180,11 +185,12 @@ func (r *gormHistoryRepository) AggregatePlayerStatsFromBill(userID int64) (*rep
                COALESCE(SUM(CASE WHEN bill_type = 4 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_send,
                COALESCE(SUM(CASE WHEN bill_type = 2 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS first_round_fee,
                COALESCE(SUM(CASE WHEN bill_type = 8 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS penalty,
-               COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_bet,
+               COALESCE(SUM(CASE WHEN bill_type = 14 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS substitute_fee,
+               COALESCE(SUM(CASE WHEN bill_type IN (2,4,8,14) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_bet,
                COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS total_income,
                COALESCE(SUM(CASE WHEN bill_type IN (10,11) AND amount > 0 THEN amount ELSE 0 END), 0) AS reward,
                COALESCE(SUM(CASE WHEN bill_type IN (3,10,11) AND amount > 0 THEN amount ELSE 0 END), 0)
-                 - COALESCE(SUM(CASE WHEN bill_type IN (2,4,8) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS profit,
+                 - COALESCE(SUM(CASE WHEN bill_type IN (2,4,8,14) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS profit,
                COALESCE(SUM(CASE WHEN bill_type = 3 THEN 1 ELSE 0 END), 0) AS grab_count,
                COALESCE(SUM(CASE WHEN bill_type = 4 THEN 1 ELSE 0 END), 0) AS send_count
            FROM bill_record
@@ -257,6 +263,56 @@ func (r *gormHistoryRepository) ListPlayerRoundPenaltyDistributions(sessionID, u
        ORDER BY round_no ASC`
 	var rows []repository.PlayerRoundPenaltyDistRow
 	if err := r.db.Raw(query, sessionID, userID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListPlayerRoundSubstituteFees 查询玩家在会话内每个 round 的替补费扣款明细。
+// 数据源：bill_record（bill_type=14 替补费，amount<0 表示支出）。
+// 按 round_id/round_no 分组聚合，过滤 status=1（Success）与 user_id!=0。
+// 替补费关联到"替补玩家加入后的下一轮" round（由扣款调用方传入 EnsureNextRound 创建的 roundID）。
+// 与会话级 summary 的 substitute_fee 字段同源，保证 round 级与 session 级对账一致。
+func (r *gormHistoryRepository) ListPlayerRoundSubstituteFees(sessionID, userID int64) ([]repository.PlayerRoundSubstituteFeeRow, error) {
+	query := `SELECT round_id, round_no,
+       ABS(SUM(amount)) AS amount,
+       COUNT(*) AS count
+       FROM bill_record
+       WHERE session_id = ? AND user_id = ? AND bill_type = 14
+         AND amount < 0 AND status = 1 AND user_id != 0
+       GROUP BY round_id, round_no
+       ORDER BY round_no ASC`
+	var rows []repository.PlayerRoundSubstituteFeeRow
+	if err := r.db.Raw(query, sessionID, userID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// GetSessionLeaderboard 查询会话完整排行榜（含所有参与玩家：原始/被踢/替补）。
+// 数据源：session_players LEFT JOIN bill_record，一次聚合。
+// session_players 作为基准表保证含被踢玩家（踢人仅删 Redis 不删 DB）和替补玩家（替补时 UpsertPlayer 写入）。
+// total_profit 口径：收入(bill_type IN 3,10,11) - 支出(bill_type IN 2,4,8,14)。
+// 包含替补费(14)和罚款(8支出/10分红)，排除 SessionCredit(12)。
+// 按 total_profit 降序返回，调用方据此生成 rank。
+func (r *gormHistoryRepository) GetSessionLeaderboard(sessionID int64) ([]repository.SessionLeaderboardRow, error) {
+	query := `SELECT
+       sp.user_id AS user_id,
+       sp.nickname AS nickname,
+       sp.avatar AS avatar,
+       COALESCE(SUM(CASE WHEN b.bill_type IN (3,10,11) AND b.amount > 0 THEN b.amount ELSE 0 END), 0)
+         - COALESCE(SUM(CASE WHEN b.bill_type IN (2,4,8,14) AND b.amount < 0 THEN ABS(b.amount) ELSE 0 END), 0) AS total_profit
+       FROM session_players sp
+       LEFT JOIN bill_record b
+         ON b.session_id = sp.session_id
+         AND b.user_id = sp.user_id
+         AND b.status = 1
+         AND b.bill_type != 12
+       WHERE sp.session_id = ?
+       GROUP BY sp.user_id, sp.nickname, sp.avatar
+       ORDER BY total_profit DESC`
+	var rows []repository.SessionLeaderboardRow
+	if err := r.db.Raw(query, sessionID).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
