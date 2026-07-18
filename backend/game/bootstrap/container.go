@@ -348,6 +348,13 @@ func (c *Container) InitAppServices() {
 	c.SeatAppService.SetRoomAppService(c.RoomAppService)
 	c.GameAppService.SetRoomAppService(c.RoomAppService)
 
+	// 注入扣款失败处理器（替补费扣款失败时结束游戏，与 PacketOrchestrator 模式一致）
+	c.RoomAppService.SetDeductFailureHandler(c.GameLifecycleSvc)
+	c.SeatAppService.SetDeductFailureHandler(c.GameLifecycleSvc)
+
+	// 注入机器人身份识别器（观众补位时短路机器人，机器人不扣替补费）
+	c.SeatAppService.SetRobotChecker(c.robotChecker)
+
 	if c.TimeoutScheduler != nil {
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeSeat, c.SeatAppService.HandleSeatTimeout)
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeReady, c.SeatAppService.HandleReadyTimeout)

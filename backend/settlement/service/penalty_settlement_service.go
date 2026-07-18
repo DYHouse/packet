@@ -248,6 +248,197 @@ func (s *PenaltySettlementService) DeductPenaltyToPlatform(ctx context.Context, 
 	})
 }
 
+// DeductSubstituteFee 扣除真人替补玩家的替补费。
+// 每次补位事件独立扣款（以 roundNo 区分同一玩家多次补位），金额由 game 层通过
+// commissionCfg.Calculate(meta.RoomFee) 计算后传入，作为平台佣金收入。
+// 机器人替补由调用方在 game 层通过 robotChecker.IsRobot 短路判断后不调用本方法。
+// 扣款流程参照 DeductPenaltyToPlatform（15 步标准扣款模式）。
+func (s *PenaltySettlementService) DeductSubstituteFee(ctx context.Context, req *dto.SubstituteFeeDeductRequest) error {
+	// 步骤 1：生成确定性 traceID（含 roundNo 维度，区分同一玩家多次补位）。
+	roundTraceID := s.traceIDGen.GenerateSubstituteFeeTraceID(req.SessionID, req.UserID, req.RoundNo)
+	// 步骤 2：分布式锁（按 userID + traceID 粒度，防止并发/重试导致重复扣款）。
+	// WithRedisLock 底层基于 redsync（随机 token + Lua 脚本释放），避免 TTL 过期后误删他人锁。
+	lockKey := rediskeys.SubstituteFeeDeductLockKey(req.UserID, roundTraceID)
+
+	return lock.WithRedisLock(ctx, lockKey, int(s.lockCfg.SubstituteFeeDeductLockTTL.Seconds()), func() error {
+		// 步骤 3：幂等检查。若已存在同 traceID + BillType + userID 的非 Failed 状态 bill，直接返回 nil。
+		//   - Success：已扣款成功，跳过
+		//   - Processing：扣款进行中，跳过
+		//   - Failed：允许重新创建 bill 并重试扣款
+		existingBill, err := s.billRepo.GetBillByTraceTypeAndUser(ctx, roundTraceID, domain.BillTypeSubstituteFee, req.UserID)
+		if err == nil && existingBill != nil && existingBill.Status != domain.BillStatusFailed {
+			logger.Info("substitute fee bill already exists, skipping",
+				"round_trace_id", roundTraceID,
+				"bill_id", existingBill.ID,
+				"status", existingBill.Status)
+			return nil
+		}
+
+		// 步骤 4：构建 playerBill（玩家侧扣款，amount 为负，status=Processing）。
+		playerBill := &domain.BillRecord{
+			RoundTraceID: roundTraceID,
+			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, domain.BillTypeSubstituteFee, req.UserID),
+			BillType:     domain.BillTypeSubstituteFee,
+			RoomID:       req.RoomID,
+			SessionID:    req.SessionID,
+			RoundID:      0,    // 替补费无特定 round 关联，但 RoundNo 记录补位发生时的轮次
+			RoundNo:      req.RoundNo,
+			UserID:       req.UserID,
+			Amount:       -req.Amount,
+			Status:       domain.BillStatusProcessing,
+			Remark:       fmt.Sprintf("替补费扣款,会话:%d,用户:%d,轮次:%d", req.SessionID, req.UserID, req.RoundNo),
+		}
+		// 步骤 5：robotChecker 守卫（fail-closed：nil 或查询失败必须中止，不得 fallback）。
+		if s.robotChecker == nil {
+			return fmt.Errorf("robot checker is nil")
+		}
+		isRobot, err := s.robotChecker.IsRobot(ctx, req.UserID)
+		if err != nil {
+			return fmt.Errorf("check robot failed: %w", err)
+		}
+		playerBill.IsRobot = isRobot
+
+		// 步骤 6：构建 platformBill（平台侧收入，amount 为正，status=Success，无 RPC）。
+		platformBill := &domain.BillRecord{
+			RoundTraceID: roundTraceID,
+			BizOrderNo:   s.traceIDGen.GenerateBizOrderNo(roundTraceID, domain.BillTypeSubstituteFee, dto.PlatformAccountID),
+			BillType:     domain.BillTypeSubstituteFee,
+			RoomID:       req.RoomID,
+			SessionID:    req.SessionID,
+			RoundID:      0,
+			RoundNo:      req.RoundNo,
+			UserID:       dto.PlatformAccountID,
+			Amount:       req.Amount,
+			Status:       domain.BillStatusSuccess,
+			Remark:       fmt.Sprintf("替补费收入,来自用户:%d,会话:%d,轮次:%d", req.UserID, req.SessionID, req.RoundNo),
+		}
+
+		// 步骤 7：短事务创建成对 bill（仅包裹 DB 写入片段，遵循 §5.4 短事务原则）。
+		if err := s.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
+			return tx.BillRepo().CreateBillsPair(ctx, playerBill, platformBill)
+		}); err != nil {
+			return fmt.Errorf("create substitute fee bills failed: %w", err)
+		}
+
+		// 步骤 8：机器人虚拟通道（跳过 platform.Debit，直接走虚拟钱包扣款）。
+		// 正常情况下 game 层已通过 robotChecker 短路，不会对机器人调用本方法；
+		// 此处保留机器人分支作为防御性兜底，确保 service 层独立可用。
+		if isRobot {
+			if err := s.virtualBalance.Deduct(ctx, req.UserID, req.Amount); err != nil {
+				s.billRepo.UpdateBillStatus(ctx, playerBill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
+				return fmt.Errorf("robot virtual deduct substitute fee failed: %w", err)
+			}
+			balanceAfter, _ := s.virtualBalance.GetBalance(ctx, req.UserID)
+			if err := playerBill.TransitionTo(domain.BillStatusSuccess); err != nil {
+				logger.Error("invalid bill status transition", "bill_id", playerBill.ID, "error", err)
+				return err
+			}
+			return s.billRepo.UpdateBillSuccess(ctx, playerBill.ID, domain.BillStatusProcessing, 0, balanceAfter)
+		}
+
+		// 步骤 9：真人分支 - 获取平台用户 ID。
+		platformUserID, err := s.userIDConvert.GetPlatformUserID(ctx, req.UserID)
+		if err != nil {
+			s.billRepo.UpdateBillStatus(ctx, playerBill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
+			return fmt.Errorf("get platform user id failed: %w", err)
+		}
+
+		// 步骤 10：构造 platform.DebitRequest（BizID 作为平台幂等键，RoundID 用 sessionID 占位）。
+		debitReq := &platform.DebitRequest{
+			BizID:    playerBill.BizOrderNo,
+			RoundID:  fmt.Sprintf("%d", req.SessionID),
+			GameID:   s.cfg.GameID,
+			GameCode: s.cfg.GameCode,
+			UserID:   platformUserID,
+			Currency: s.cfg.Currency,
+			Amount:   platform.FormatAmount(req.Amount),
+			Reason:   playerBill.Remark,
+			GameName: s.cfg.GameName,
+		}
+
+		// 步骤 11：创建平台调用日志（失败仅 Warn，不阻断主流程）。
+		callLog, callLogErr := s.callMgr.CreateLog(ctx, &dto.CallLogCreateParams{
+			TraceID:        resolveTraceID(ctx),
+			CallType:       domain.CallTypeDebit,
+			BizOrderNo:     playerBill.BizOrderNo,
+			UserID:         playerBill.UserID,
+			PlatformUserID: platformUserID,
+			SessionID:      playerBill.SessionID,
+			RoundID:        0,
+			Amount:         req.Amount,
+			Currency:       s.cfg.Currency,
+			ReqBody:        debitReq,
+			NodeID:         resolveNodeID(),
+		})
+		if callLogErr != nil {
+			logger.Warn("create call log failed", "biz_order_no", playerBill.BizOrderNo, "error", callLogErr)
+		}
+
+		// 步骤 12：调用 platform.Debit RPC。
+		result, err := s.platform.Debit(ctx, debitReq)
+		if err != nil {
+			s.billRepo.UpdateBillStatus(ctx, playerBill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error())
+			if callLog != nil {
+				logStatus := domain.CallLogStatusFailed
+				if isTimeoutError(err) {
+					logStatus = domain.CallLogStatusTimeout
+				}
+				s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
+					ID:           callLog.ID,
+					Status:       logStatus,
+					ErrorMessage: err.Error(),
+					RequestTime:  callLog.RequestTime,
+				})
+			}
+			return fmt.Errorf("debit substitute fee failed: %w", err)
+		}
+
+		// 步骤 13：解析余额（fail-closed：平台可能已扣款但响应无法解析，标记 Failed + 异常记录供人工对账）。
+		balanceAfter, err := platform.ParseAmount(result.Data.Balance.Amount)
+		if err != nil {
+			logger.Error("parse balance amount failed after successful debit, mark bill as failed",
+				"bill_id", playerBill.ID, "raw_amount", result.Data.Balance.Amount, "error", err)
+			if updateErr := s.billRepo.UpdateBillStatus(ctx, playerBill.ID, domain.BillStatusProcessing, domain.BillStatusFailed, err.Error()); updateErr != nil {
+				logger.Error("update bill to failed after parse amount error", "bill_id", playerBill.ID, "error", updateErr)
+			}
+			if callLog != nil {
+				s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
+					ID:          callLog.ID,
+					RespBody:    result,
+					Status:      domain.CallLogStatusSuccess,
+					RequestTime: callLog.RequestTime,
+				})
+			}
+			detail := fmt.Sprintf("替补费扣款 ParseAmount 解析失败,平台可能已扣款但余额无法解析,需人工对账, user_id: %d, raw_amount: %s, error: %s", req.UserID, result.Data.Balance.Amount, err.Error())
+			if excErr := s.createExceptionRecord(ctx, playerBill, domain.ExceptionTypeDebitFailed, detail); excErr != nil {
+				logger.Error("create exception record for parse amount failure failed", "bill_id", playerBill.ID, "error", excErr)
+			}
+			return fmt.Errorf("parse amount failed for substitute fee debit, bill_id: %d, user_id: %d: %w", playerBill.ID, req.UserID, err)
+		}
+
+		// 步骤 14：状态机转换 + 更新 bill 为成功。
+		if err := playerBill.TransitionTo(domain.BillStatusSuccess); err != nil {
+			logger.Error("invalid bill status transition", "bill_id", playerBill.ID, "error", err)
+			return err
+		}
+		if err := s.billRepo.UpdateBillSuccess(ctx, playerBill.ID, domain.BillStatusProcessing, 0, balanceAfter); err != nil {
+			return err
+		}
+
+		// 步骤 15：更新平台调用日志为成功。
+		if callLog != nil {
+			s.callMgr.UpdateLog(ctx, &dto.CallLogUpdateParams{
+				ID:          callLog.ID,
+				RespBody:    result,
+				Status:      domain.CallLogStatusSuccess,
+				RequestTime: callLog.RequestTime,
+			})
+		}
+
+		return nil
+	})
+}
+
 func (s *PenaltySettlementService) DistributePenaltyFromPlatform(ctx context.Context, tx repository.Transaction, req *dto.PenaltyDistributeRequest) error {
 	roundTraceID := s.traceIDGen.GeneratePenaltyDistTraceID(req.RoomID, req.SessionID, req.RoundNo)
 	billRepo := tx.BillRepo()

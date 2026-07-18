@@ -21,15 +21,16 @@ import (
 )
 
 type RoomAppService struct {
-	repo               repository.RoomRepository
-	dbRepo             repository.DBRepository
-	userService        *UserService
-	broadcaster        events.Broadcaster
-	publisher          events.RoomEventPublisher
-	scheduler          *scheduler.TimeoutScheduler
-	settleAppService   *settlementApplication.SettleAppService
-	resumeGameCallback ResumeGameCallback
-	taskRunner         async.TaskRunner
+	repo                 repository.RoomRepository
+	dbRepo               repository.DBRepository
+	userService          *UserService
+	broadcaster          events.Broadcaster
+	publisher            events.RoomEventPublisher
+	scheduler            *scheduler.TimeoutScheduler
+	settleAppService     *settlementApplication.SettleAppService
+	resumeGameCallback   ResumeGameCallback
+	taskRunner           async.TaskRunner
+	deductFailureHandler DeductFailureHandler
 }
 
 // ResumeGameCallback 由 GameAppService 注入，用于自动上座补满后恢复中断游戏
@@ -38,6 +39,12 @@ type ResumeGameCallback func(ctx context.Context, roomID string, currentRound in
 // SetResumeGameCallback 注入恢复游戏回调（避免与 GameAppService 循环依赖）
 func (s *RoomAppService) SetResumeGameCallback(cb ResumeGameCallback) {
 	s.resumeGameCallback = cb
+}
+
+// SetDeductFailureHandler 注入扣款失败处理器（GameLifecycleService），
+// 用于替补费扣款失败时结束游戏（与 PacketOrchestrator 模式一致）。
+func (s *RoomAppService) SetDeductFailureHandler(h DeductFailureHandler) {
+	s.deductFailureHandler = h
 }
 
 func NewRoomAppService(
@@ -173,8 +180,8 @@ func (s *RoomAppService) JoinAndAutoSeat(ctx context.Context, req *JoinRoomReque
 		return joinResult, nil
 	}
 
-	// 游戏进行中（非中断态）不自动上座
-	if meta.Status == roomDom.RoomStatusPlaying {
+	// 仅等待状态（RoomStatusWaiting=1）允许自动选座；其他状态（Playing=2/Interrupted=4）保持观战
+	if meta.Status != roomDom.RoomStatusWaiting {
 		return joinResult, nil
 	}
 
@@ -348,11 +355,43 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 		return nil
 	}
 
+	// 同步扣款替补费（Lua 入座成功后立即扣款，失败则结束游戏）。
+	// 与 PacketOrchestrator 扣款失败处理一致：调用 HandleDeductFailure 广播中断 + 异步 EndGame。
+	// 机器人替补由 DeductSubstituteFee 内部 robotChecker 判断后走虚拟钱包通道，无 platform.Debit RPC。
+	// 幂等：DeductSubstituteFee 内部 GetBillByTraceTypeAndUser 检测到已 Success 的 bill 直接跳过。
+	substituteFee := calculateSubstituteFee(meta.RoomFee)
+	if substituteFee > 0 && s.settleAppService != nil {
+		deductReq := &dto.SubstituteFeeDeductRequest{
+			RoomID:    converter.ParseID(roomID),
+			SessionID: converter.ParseID(meta.CurrentSessionID),
+			UserID:    converter.ParseID(subResult.SubstituteUserID),
+			RoundNo:   meta.CurrentRound,
+			Amount:    substituteFee,
+		}
+		if err := s.settleAppService.DeductSubstituteFee(ctx, deductReq); err != nil {
+			logger.Error("auto substitute: deduct substitute fee failed, ending game",
+				"room_id", roomID,
+				"seat_no", seatNo,
+				"substitute_user_id", subResult.SubstituteUserID,
+				"amount", substituteFee,
+				"error", err)
+			if s.deductFailureHandler != nil {
+				s.deductFailureHandler.HandleDeductFailure(ctx, roomID, meta,
+					message.ReasonSubstituteFeeDeductFailed, err)
+			}
+			return nil
+		}
+		logger.Info("auto substitute: substitute fee deducted",
+			"room_id", roomID,
+			"substitute_user_id", subResult.SubstituteUserID,
+			"amount", substituteFee)
+	}
+
 	if s.publisher != nil && subResult.Player != nil {
 		traceID := trace.FromContext(ctx)
 		if err := s.publisher.PublishRoomEvent(ctx, events.NewSubstituteEvent(
 			roomID, subResult.SubstituteUserID, subResult.SeatNo,
-			subResult.Player.Nickname, subResult.Player.Avatar, traceID)); err != nil {
+			subResult.Player.Nickname, subResult.Player.Avatar, traceID, "queue")); err != nil {
 			logger.Warn("publish substitute event failed",
 				"room_id", roomID,
 				"user_id", subResult.SubstituteUserID,

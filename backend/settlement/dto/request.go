@@ -42,6 +42,18 @@ type PenaltyDeductRequest struct {
 	PenaltyType string
 }
 
+// SubstituteFeeDeductRequest 替补费扣款请求。
+// 每次补位事件独立扣款，RoundNo 标识补位发生时的轮次（区分同一玩家多次补位）。
+// Amount 由 game 层通过 commissionCfg.Calculate(meta.RoomFee) 计算后传入
+// （settlement 层不持有 CommissionConfig）。
+type SubstituteFeeDeductRequest struct {
+	RoomID    int64
+	SessionID int64
+	UserID    int64
+	RoundNo   int // 补位发生时的轮次，用于区分同一玩家多次补位
+	Amount    int64
+}
+
 type PenaltyDistributeRequest struct {
 	RoomID       int64
 	SessionID    int64

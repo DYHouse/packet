@@ -28,6 +28,7 @@ func createKafkaProducer(cfg *gameconfig.Config) (kafka.KafkaProducer, error) {
 
 // createRoomEventConsumer 构造 RoomEventConsumer。
 // GroupID 使用 per-node 策略：`game-room-events-{nodeID}`。
+// 扣款已在 game 层同步完成（tryAutoSubstitute / SetReady），消费者侧不再需要 settleAppService 和 robotChecker。
 func createRoomEventConsumer(
 	cfg *gameconfig.Config,
 	dbRepo repository.DBRepository,

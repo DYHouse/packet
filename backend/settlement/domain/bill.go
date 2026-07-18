@@ -19,6 +19,8 @@ const (
 	BillTypeSystemReward      = 11
 	BillTypeSessionCredit     = 12
 	BillTypeGameSettle        = 13
+	// BillTypeSubstituteFee 替补费：真人替补加入会话时扣款，作为平台佣金收入。
+	BillTypeSubstituteFee = 14
 )
 
 // BillStatus 账单状态枚举值，表示账单的生命周期阶段。

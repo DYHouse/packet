@@ -59,6 +59,14 @@ func (g *TraceIDGenerator) GeneratePenaltyDeductTraceID(roomID, sessionID, userI
 	return fmt.Sprintf("PENALTY_DED_%d_%d_%d_%d", roomID, sessionID, userID, roundNo)
 }
 
+// GenerateSubstituteFeeTraceID 基于会话+用户+轮次确定性生成替补费扣款 traceID。
+// 包含 roundNo 维度以区分同一玩家在同一会话内的多次补位（每次补位独立扣款）。
+// 同一补位事件的重试（roundNo 相同）生成相同 traceID，保障幂等。
+// 重试时可复现，作为 BizOrderNo 的基础。
+func (g *TraceIDGenerator) GenerateSubstituteFeeTraceID(sessionID int64, userID int64, roundNo int) string {
+	return fmt.Sprintf("SUBSTITUTE_FEE_%d_%d_%d", sessionID, userID, roundNo)
+}
+
 // GeneratePenaltyDistTraceID 基于房间+会话+轮次确定性生成罚款分发 traceID。
 // 包含 roundNo 维度以提升可追溯性，便于按 round 维度定位分发账目。
 // 重试时可复现，作为 BizOrderNo 的基础。

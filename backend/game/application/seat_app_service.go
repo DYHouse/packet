@@ -25,22 +25,36 @@ import (
 )
 
 type SeatAppService struct {
-	repo             repository.RoomRepository
-	dbRepo           repository.DBRepository
-	broadcaster      events.Broadcaster
-	publisher        events.RoomEventPublisher
-	scheduler        *scheduler.TimeoutScheduler
-	settleAppService *settlementApplication.SettleAppService
-	gameService      *GameAppService
-	roomAppService   *RoomAppService
-	redis            cRedis.RedisClient
-	readyCountdown   time.Duration
-	taskRunner       async.TaskRunner
+	repo                 repository.RoomRepository
+	dbRepo               repository.DBRepository
+	broadcaster          events.Broadcaster
+	publisher            events.RoomEventPublisher
+	scheduler            *scheduler.TimeoutScheduler
+	settleAppService     *settlementApplication.SettleAppService
+	gameService          *GameAppService
+	roomAppService       *RoomAppService
+	redis                cRedis.RedisClient
+	readyCountdown       time.Duration
+	taskRunner           async.TaskRunner
+	deductFailureHandler DeductFailureHandler
+	robotChecker         RobotChecker
 }
 
 // SetRoomAppService 注入 RoomAppService（用于 CancelSeat 后触发自动替补）
 func (s *SeatAppService) SetRoomAppService(svc *RoomAppService) {
 	s.roomAppService = svc
+}
+
+// SetDeductFailureHandler 注入扣款失败处理器（GameLifecycleService），
+// 用于观众补位替补费扣款失败时结束游戏（与 PacketOrchestrator 模式一致）。
+func (s *SeatAppService) SetDeductFailureHandler(h DeductFailureHandler) {
+	s.deductFailureHandler = h
+}
+
+// SetRobotChecker 注入机器人身份识别器（基于 Redis SISMEMBER，O(1) 查询）。
+// 用于观众补位时短路机器人：机器人不扣替补费，无 platform API 调用，无入账资格要求。
+func (s *SeatAppService) SetRobotChecker(rc RobotChecker) {
+	s.robotChecker = rc
 }
 
 func NewSeatAppService(
@@ -269,21 +283,94 @@ func (s *SeatAppService) SetReady(ctx context.Context, req *SetReadyRequest) (*S
 	currentRound := converter.ParseInt(result[5])
 	playerDataStr := converter.ParseString(result[6])
 
-	if s.publisher != nil {
-		var player struct {
-			Nickname string `json:"nickname"`
-			Avatar   string `json:"avatar"`
-			SeatNo   int    `json:"seat_no"`
-		}
-		json.Unmarshal([]byte(playerDataStr), &player)
+	// 解析 player 信息（用于事件发布）
+	var player struct {
+		Nickname string `json:"nickname"`
+		Avatar   string `json:"avatar"`
+		SeatNo   int    `json:"seat_no"`
+	}
+	json.Unmarshal([]byte(playerDataStr), &player)
 
-		if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReadyEvent(
-			req.RoomID, req.UserID, player.SeatNo, player.Nickname, player.Avatar)); err != nil {
-			logger.Warn("publish player_ready event failed",
+	// 游戏进行中（currentRound > 0）：观众补位，扣替补费 + 发 Substitute 事件（消费者创建 snapshot）。
+	// 游戏未开始（currentRound == 0）：正常入座，发 PlayerReady 事件（仅同步计数）。
+	// 扣款失败则结束游戏（与 PacketOrchestrator 扣款失败处理一致）。
+	// 机器人不扣替补费（机器人无 platform API 调用，无入账资格要求），通过 robotChecker 短路。
+	isMidRoundSubstitute := currentRound > 0
+	if isMidRoundSubstitute && s.robotChecker != nil {
+		// fail-closed：robotChecker 查询失败视为无法识别身份，按扣款失败处理结束游戏，
+		// 避免机器人误走真人扣款流程或真人误走机器人虚拟钱包路径。
+		isRobot, robotErr := s.robotChecker.IsRobot(ctx, converter.ParseID(req.UserID))
+		if robotErr != nil {
+			logger.Error("set ready: check robot failed, ending game",
 				"room_id", req.RoomID,
 				"user_id", req.UserID,
-				"trace_id", trace.FromContext(ctx),
-				"error", err)
+				"error", robotErr)
+			if s.deductFailureHandler != nil {
+				s.deductFailureHandler.HandleDeductFailure(ctx, req.RoomID, meta,
+					message.ReasonSubstituteFeeDeductFailed, robotErr)
+			}
+			return nil, message.NewErrorWithMsg(message.CodeSystemError,
+				i18n.GetInterruptMessage(message.ReasonSubstituteFeeDeductFailed))
+		}
+		if isRobot {
+			// 机器人补位：跳过替补费扣款，直接发 Substitute 事件
+			logger.Info("set ready: robot substitute, skip substitute fee",
+				"room_id", req.RoomID,
+				"user_id", req.UserID)
+		} else if s.settleAppService != nil {
+			substituteFee := calculateSubstituteFee(meta.RoomFee)
+			if substituteFee > 0 {
+				deductReq := &dto.SubstituteFeeDeductRequest{
+					RoomID:    converter.ParseID(req.RoomID),
+					SessionID: converter.ParseID(meta.CurrentSessionID),
+					UserID:    converter.ParseID(req.UserID),
+					RoundNo:   currentRound,
+					Amount:    substituteFee,
+				}
+				if err := s.settleAppService.DeductSubstituteFee(ctx, deductReq); err != nil {
+					logger.Error("set ready: deduct substitute fee failed, ending game",
+						"room_id", req.RoomID,
+						"user_id", req.UserID,
+						"amount", substituteFee,
+						"error", err)
+					if s.deductFailureHandler != nil {
+						s.deductFailureHandler.HandleDeductFailure(ctx, req.RoomID, meta,
+							message.ReasonSubstituteFeeDeductFailed, err)
+					}
+					return nil, message.NewErrorWithMsg(message.CodeSystemError,
+						i18n.GetInterruptMessage(message.ReasonSubstituteFeeDeductFailed))
+				}
+				logger.Info("set ready: substitute fee deducted",
+					"room_id", req.RoomID,
+					"user_id", req.UserID,
+					"amount", substituteFee)
+			}
+		}
+	}
+
+	if s.publisher != nil {
+		traceID := trace.FromContext(ctx)
+		if isMidRoundSubstitute {
+			// 游戏进行中：发 Substitute 事件（消费者创建 snapshot + session_players）
+			if err := s.publisher.PublishRoomEvent(ctx, events.NewSubstituteEvent(
+				req.RoomID, req.UserID, player.SeatNo,
+				player.Nickname, player.Avatar, traceID, "spectator")); err != nil {
+				logger.Warn("publish substitute event failed",
+					"room_id", req.RoomID,
+					"user_id", req.UserID,
+					"trace_id", traceID,
+					"error", err)
+			}
+		} else {
+			// 游戏未开始：发 PlayerReady 事件（仅同步计数）
+			if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReadyEvent(
+				req.RoomID, req.UserID, player.SeatNo, player.Nickname, player.Avatar)); err != nil {
+				logger.Warn("publish player_ready event failed",
+					"room_id", req.RoomID,
+					"user_id", req.UserID,
+					"trace_id", traceID,
+					"error", err)
+			}
 		}
 	}
 

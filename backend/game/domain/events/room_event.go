@@ -87,6 +87,9 @@ type SubstitutePayload struct {
 	SeatNo   int    `json:"seat_no"`
 	Nickname string `json:"nickname,omitempty"`
 	Avatar   string `json:"avatar,omitempty"`
+	// Source 标识替补来源："queue"=排队队列自动替补，"spectator"=观众手动选座补位。
+	// 空值向前兼容旧消息（视为 "substitute"）。
+	Source string `json:"source,omitempty"`
 }
 
 func (e *RoomEvent) ToJSON() ([]byte, error) {
@@ -215,7 +218,9 @@ func NewQueueLeaveEvent(roomID, userID string, reason string) *RoomEvent {
 	return event
 }
 
-func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar, traceID string) *RoomEvent {
+// NewSubstituteEvent 构造替补事件。
+// source 标识替补来源："queue"=排队队列自动替补，"spectator"=观众手动选座补位。
+func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar, traceID, source string) *RoomEvent {
 	event := &RoomEvent{
 		EventHeader: message.NewEventHeader(traceID),
 		EventType:   RoomEventSubstitute,
@@ -226,6 +231,7 @@ func NewSubstituteEvent(roomID, userID string, seatNo int, nickname, avatar, tra
 		SeatNo:   seatNo,
 		Nickname: nickname,
 		Avatar:   avatar,
+		Source:   source,
 	})
 	return event
 }

@@ -11,6 +11,13 @@ type DeductFailureHandler interface {
 	HandleDeductFailure(ctx context.Context, roomID string, meta *room.RoomMeta, reason string, err error)
 }
 
+// RobotChecker 抽象机器人身份识别（与 settlement/service.RobotChecker 方法签名一致）。
+// 由 settlement/service.redisRobotChecker 实现，通过 container 注入。
+// fail-closed：Redis 不可用时返回 error，调用方必须中止资金操作。
+type RobotChecker interface {
+	IsRobot(ctx context.Context, userID int64) (bool, error)
+}
+
 // GameEnder 抽象游戏结束逻辑，供 RoundSettlementService 通过异步任务回调 GameLifecycleService。
 type GameEnder interface {
 	EndGameWithOptions(ctx context.Context, roomID string, opts *EndGameOptions) error

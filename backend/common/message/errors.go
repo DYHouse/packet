@@ -139,13 +139,14 @@ const (
 
 // ==================== 游戏中断原因 ====================
 const (
-	ReasonNormalEnd              = "normal"
-	ReasonFirstRoundDeductFailed = "first_round_deduct_failed"
-	ReasonLaterRoundDeductFailed = "later_round_deduct_failed"
-	ReasonPartialDeductFailed    = "partial_deduct_failed"
-	ReasonReplacementTimeout     = "replacement_timeout"
-	ReasonSystemError            = "system_error"
-	ReasonPenaltyDeductFailed    = "penalty_deduct_failed"
+	ReasonNormalEnd                 = "normal"
+	ReasonFirstRoundDeductFailed    = "first_round_deduct_failed"
+	ReasonLaterRoundDeductFailed    = "later_round_deduct_failed"
+	ReasonPartialDeductFailed       = "partial_deduct_failed"
+	ReasonReplacementTimeout        = "replacement_timeout"
+	ReasonSystemError               = "system_error"
+	ReasonPenaltyDeductFailed       = "penalty_deduct_failed"
+	ReasonSubstituteFeeDeductFailed = "substitute_fee_deduct_failed"
 )
 
 // ==================== Error 类型 ====================

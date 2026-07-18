@@ -36,6 +36,8 @@ type LockConfig struct {
 	GameAppSettleLockTTL time.Duration `mapstructure:"game_app_settle_lock_ttl" yaml:"game_app_settle_lock_ttl"`
 	// PenaltyDeductLockTTL guards PenaltySettlementService.DeductPenaltyToPlatform per-user deduction.
 	PenaltyDeductLockTTL time.Duration `mapstructure:"penalty_deduct_lock_ttl" yaml:"penalty_deduct_lock_ttl"`
+	// SubstituteFeeDeductLockTTL guards PenaltySettlementService.DeductSubstituteFee per-user deduction.
+	SubstituteFeeDeductLockTTL time.Duration `mapstructure:"substitute_fee_deduct_lock_ttl" yaml:"substitute_fee_deduct_lock_ttl"`
 }
 
 // SetLockDefaults populates zero-valued LockConfig fields with the
@@ -88,5 +90,8 @@ func SetLockDefaults(cfg *LockConfig) {
 	}
 	if cfg.PenaltyDeductLockTTL == 0 {
 		cfg.PenaltyDeductLockTTL = 30 * time.Second
+	}
+	if cfg.SubstituteFeeDeductLockTTL == 0 {
+		cfg.SubstituteFeeDeductLockTTL = 30 * time.Second
 	}
 }

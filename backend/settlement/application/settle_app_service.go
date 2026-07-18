@@ -68,6 +68,13 @@ func (s *SettleAppService) DeductPenaltyToPlatform(ctx context.Context, req *dto
 	return s.penaltySettlementService.DeductPenaltyToPlatform(ctx, req)
 }
 
+// DeductSubstituteFee 编排替补费扣款用例：真人替补加入会话时扣款，作为平台佣金收入。
+// 纯转发到 penaltySettlementService.DeductSubstituteFee，含 platform.Debit RPC，
+// 事务由 Service 内部对 CreateBillsPair 片段编排（§5.4 短事务原则）。
+func (s *SettleAppService) DeductSubstituteFee(ctx context.Context, req *dto.SubstituteFeeDeductRequest) error {
+	return s.penaltySettlementService.DeductSubstituteFee(ctx, req)
+}
+
 // DistributePenaltyFromPlatform 编排罚款分配用例：将平台罚款分配给指定接收方。
 // 纯 DB 写入（批量 CreateBills），在 AppService 层开启事务。
 func (s *SettleAppService) DistributePenaltyFromPlatform(ctx context.Context, req *dto.PenaltyDistributeRequest) error {

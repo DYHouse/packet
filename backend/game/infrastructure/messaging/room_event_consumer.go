@@ -196,9 +196,10 @@ func (c *RoomEventConsumer) Close() error {
 }
 
 // handleSubstitute 处理替补事件：
-// 1. 插入替补者 snapshot（source='substitute'）
+// 1. 插入替补者 snapshot（source 来自 payload.Source：queue/spectator，向前兼容 "substitute"）
 // 2. 替补者首次入会话则插入 session_player（聚合表一人一行）
 // 3. 同步 rooms 表计数
+// 扣款已在 game 层同步完成（tryAutoSubstitute / SetReady），消费者侧不再扣款。
 func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.RoomEvent) error {
 	var payload events.SubstitutePayload
 	if err := event.GetPayload(&payload); err != nil {
@@ -224,6 +225,13 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 	substituteUserIDInt := converter.ParseID(event.UserID)
 	now := time.Now()
 
+	// snapshot 来源：优先使用 payload.Source（区分排队替补/观众补位），
+	// 空值向前兼容旧消息（视为 "substitute"）。
+	source := payload.Source
+	if source == "" {
+		source = "substitute"
+	}
+
 	// 事务内更新 snapshot + session_players（多表一致性）
 	if err := c.dbRepo.WithTransaction(ctx, func(tx repository.Transaction) error {
 		// 1. 插入替补者 snapshot
@@ -238,7 +246,7 @@ func (c *RoomEventConsumer) handleSubstitute(ctx context.Context, event *events.
 				SeatNo:      &seatNo,
 				JoinedAt:    now,
 				ActiveStart: now,
-				Source:      "substitute",
+				Source:      source,
 			}); err != nil {
 				return fmt.Errorf("add substitute snapshot failed: %w", err)
 			}
