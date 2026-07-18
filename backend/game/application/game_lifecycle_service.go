@@ -288,12 +288,13 @@ func (s *GameLifecycleService) ResumeGame(ctx context.Context, req *ResumeGameRe
 	return nil
 }
 
-// ensureNextRound 确保下一轮 round 存在，用于 inter-round 罚款场景。
-// 罚款根因是下一轮未发包，故应关联到下一轮 roundID。
+// EnsureNextRound 确保下一轮 round 存在，用于 inter-round 罚款场景及补位扣款场景。
+// 罚款/替补费根因是下一轮未发包，故应关联到下一轮 roundID。
 // 如果下一轮 round 已存在（SendPacket 已创建），则复用；
 // 如果不存在，则预创建 Pending round，后续 SendPacket 时复用。
-// 查询/创建失败时返回 error，调用方降级为 roundID=0，不阻塞罚款流程。
-func (s *GameLifecycleService) ensureNextRound(ctx context.Context, roomID, sessionID int64, roundNo int) (int64, error) {
+// 查询/创建失败时返回 error，调用方降级为 roundID=0，不阻塞主流程。
+// 实现 RoundEnsurer 接口，供 SeatAppService 和 RoomAppService 跨 Service 调用。
+func (s *GameLifecycleService) EnsureNextRound(ctx context.Context, roomID, sessionID int64, roundNo int) (int64, error) {
 	// 先查询是否已有 round（快路径）
 	existing, err := s.dbRepo.RoundDBRepo().GetRoundBySessionAndRoundNo(ctx, sessionID, roundNo)
 	if err == nil && existing != nil {

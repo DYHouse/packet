@@ -36,6 +36,14 @@ type RoundSettler interface {
 	SettleRound(ctx context.Context, roomID, roundID string)
 }
 
+// RoundEnsurer 抽象"确保下一轮 round 存在"逻辑，供 SeatAppService 和 RoomAppService
+// 跨 Service 调用 GameLifecycleService.EnsureNextRound（与 PacketInitiator 模式一致）。
+// 用于补位扣款场景：替补费本质为"下一局准备玩家"，应关联到下一轮 roundID，
+// 与 OnSendTimeout/OnReplaceTimeout 罚款场景语义一致。
+type RoundEnsurer interface {
+	EnsureNextRound(ctx context.Context, roomID, sessionID int64, roundNo int) (int64, error)
+}
+
 // RobotBehaviorNotifier 抽象机器人行为通知，供 GameEventHandler 调用 robot 子包的行为引擎，
 // 避免 application → robot 的循环依赖。
 type RobotBehaviorNotifier interface {

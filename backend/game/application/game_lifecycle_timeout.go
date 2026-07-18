@@ -95,7 +95,7 @@ func (s *GameLifecycleService) OnSendTimeout(ctx context.Context, roomID string,
 
 		// 预创建下一轮 Pending round（罚款根因 = 下一轮未发包）
 		nextRoundNo := int(meta.CurrentRound) + 1
-		roundID, err := s.ensureNextRound(ctx, roomIDInt, sessionID, nextRoundNo)
+		roundID, err := s.EnsureNextRound(ctx, roomIDInt, sessionID, nextRoundNo)
 		if err != nil {
 			logger.Error("ensure next round failed", "room_id", roomID, "session_id", meta.CurrentSessionID, "round_no", nextRoundNo, "error", err)
 			roundID = 0
@@ -181,7 +181,7 @@ func (s *GameLifecycleService) OnReplaceTimeout(ctx context.Context, roomID stri
 
 		// 预创建下一轮 Pending round（罚款根因 = 下一轮未发包）
 		nextRoundNo := int(meta.CurrentRound) + 1
-		roundID, err := s.ensureNextRound(ctx, roomIDInt, sessionID, nextRoundNo)
+		roundID, err := s.EnsureNextRound(ctx, roomIDInt, sessionID, nextRoundNo)
 		if err != nil {
 			logger.Error("ensure next round failed", "room_id", roomID, "session_id", meta.CurrentSessionID, "round_no", nextRoundNo, "error", err)
 			roundID = 0

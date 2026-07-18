@@ -31,6 +31,7 @@ type RoomAppService struct {
 	resumeGameCallback   ResumeGameCallback
 	taskRunner           async.TaskRunner
 	deductFailureHandler DeductFailureHandler
+	roundEnsurer         RoundEnsurer
 }
 
 // ResumeGameCallback 由 GameAppService 注入，用于自动上座补满后恢复中断游戏
@@ -45,6 +46,13 @@ func (s *RoomAppService) SetResumeGameCallback(cb ResumeGameCallback) {
 // 用于替补费扣款失败时结束游戏（与 PacketOrchestrator 模式一致）。
 func (s *RoomAppService) SetDeductFailureHandler(h DeductFailureHandler) {
 	s.deductFailureHandler = h
+}
+
+// SetRoundEnsurer 注入下一轮 round 确保器（GameLifecycleService）。
+// 用于自动替补扣款时获取下一轮 roundID：替补费本质为"为下一局准备玩家"，
+// 应关联到下一轮 roundID/roundNo，与 OnSendTimeout/OnReplaceTimeout 罚款场景语义一致。
+func (s *RoomAppService) SetRoundEnsurer(re RoundEnsurer) {
+	s.roundEnsurer = re
 }
 
 func NewRoomAppService(
@@ -374,12 +382,32 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 	if !isWaitingSubstitute {
 		substituteFee := calculateSubstituteFee(meta.RoomFee)
 		if substituteFee > 0 && s.settleAppService != nil {
+			// 替补费本质为"为下一局准备玩家"，应关联到下一轮 roundID/roundNo，
+			// 与 OnSendTimeout/OnReplaceTimeout 罚款场景语义一致。
+			// meta.CurrentRound 为中断时的当前局编号，下一轮 = CurrentRound + 1。
+			nextRoundNo := meta.CurrentRound + 1
+			roomIDInt := converter.ParseID(roomID)
+			sessionID := converter.ParseID(meta.CurrentSessionID)
+			// 预创建或复用下一轮 Pending round，获取 roundID。
+			// EnsureNextRound 失败时降级为 roundID=0，不阻塞扣款主流程（与罚款场景一致）。
+			var nextRoundID int64 = 0
+			if s.roundEnsurer != nil {
+				if rid, err := s.roundEnsurer.EnsureNextRound(ctx, roomIDInt, sessionID, nextRoundNo); err != nil {
+					logger.Error("auto substitute: ensure next round failed for substitute fee",
+						"room_id", roomID,
+						"session_id", meta.CurrentSessionID,
+						"round_no", nextRoundNo,
+						"error", err)
+				} else {
+					nextRoundID = rid
+				}
+			}
 			deductReq := &dto.SubstituteFeeDeductRequest{
 				RoomID:    converter.ParseID(roomID),
 				SessionID: converter.ParseID(meta.CurrentSessionID),
 				UserID:    converter.ParseID(subResult.SubstituteUserID),
-				RoundID:   converter.ParseID(meta.CurrentRoundID),
-				RoundNo:   meta.CurrentRound,
+				RoundID:   nextRoundID,
+				RoundNo:   nextRoundNo,
 				Amount:    substituteFee,
 			}
 			if err := s.settleAppService.DeductSubstituteFee(ctx, deductReq); err != nil {
@@ -398,7 +426,9 @@ func (s *RoomAppService) tryAutoSubstitute(ctx context.Context, roomID string, s
 			logger.Info("auto substitute: substitute fee deducted",
 				"room_id", roomID,
 				"substitute_user_id", subResult.SubstituteUserID,
-				"amount", substituteFee)
+				"amount", substituteFee,
+				"round_id", nextRoundID,
+				"round_no", nextRoundNo)
 		}
 	}
 

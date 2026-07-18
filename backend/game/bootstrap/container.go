@@ -355,6 +355,10 @@ func (c *Container) InitAppServices() {
 	// 注入机器人身份识别器（观众补位时短路机器人，机器人不扣替补费）
 	c.SeatAppService.SetRobotChecker(c.robotChecker)
 
+	// 注入下一轮 round 确保器（补位扣款关联到下一轮 roundID/roundNo，与罚款场景语义一致）
+	c.RoomAppService.SetRoundEnsurer(c.GameLifecycleSvc)
+	c.SeatAppService.SetRoundEnsurer(c.GameLifecycleSvc)
+
 	if c.TimeoutScheduler != nil {
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeSeat, c.SeatAppService.HandleSeatTimeout)
 		c.TimeoutScheduler.RegisterHandler(scheduler.TimeoutTypeReady, c.SeatAppService.HandleReadyTimeout)
