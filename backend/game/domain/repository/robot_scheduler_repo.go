@@ -29,9 +29,13 @@ type RobotSchedulerRepository interface {
 	ReleaseRoomAssignLock(ctx context.Context, roomID string, token string) error
 	// AddToActiveSet 添加到活跃机器人集合。
 	AddToActiveSet(ctx context.Context, userID int64) error
-	// RemoveFromActiveSet 从活跃机器人集合移除。
+	// RemoveFromActiveSet 从活跃集合移除。
 	RemoveFromActiveSet(ctx context.Context, userID int64) error
 	// ScanRoomIDs 扫描匹配指定前缀的房间 key，返回房间 ID 列表。
 	// prefix 应为带尾随冒号的 key 前缀拼接 "*"（如 "cashparty:room:hash:*"）。
 	ScanRoomIDs(ctx context.Context, prefix string, count int64) ([]string, error)
+	// GetUserRoom 返回 userRoomKey 指向的 roomID。
+	// 返回空串表示 userRoomKey 不存在或值为 "0"；err 仅在 Redis 调用失败时非 nil。
+	// 用于幂等检查与跨房间残留清理。
+	GetUserRoom(ctx context.Context, userID int64) (string, error)
 }

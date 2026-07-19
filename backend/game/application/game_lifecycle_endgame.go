@@ -151,13 +151,22 @@ func (s *GameLifecycleService) EndGameWithOptions(ctx context.Context, roomID st
 	logger.Info("game ended", "room_id", roomID, "player_count", len(results), "reason", opts.EndReason)
 
 	// Notify the robot scheduler so it can schedule delayed robot leaves.
-	// The callback runs in a goroutine to avoid blocking game end processing.
+	// 本函数的所有调用方（HandleDeductFailure / RoundSettlementService / OnReplaceTimeout）
+	// 均已在 taskRunner 异步任务或调度器回调中执行，无需再嵌套 Submit，
+	// 否则 Submit 失败会导致 callback 永远不执行，产生僵尸机器人。
+	// 同步调用附带 panic recovery，防止 callback 异常影响 EndGame 主流程。
 	if s.gameEndCallback != nil {
-		if err := s.taskRunner.Submit("game_end_callback", 10*time.Second, func(ctx context.Context) {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("game_end_callback panic",
+						"room_id", roomID,
+						"panic", r,
+					)
+				}
+			}()
 			s.gameEndCallback(ctx, roomID)
-		}); err != nil {
-			logger.Warn("submit game_end_callback task failed", "error", err)
-		}
+		}()
 	}
 
 	return nil

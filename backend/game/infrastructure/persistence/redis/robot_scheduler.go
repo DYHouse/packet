@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // RobotSchedulerRedis 机器人调度器状态 Redis 服务
@@ -186,4 +188,21 @@ func (s *RobotSchedulerRedis) ScanRoomIDs(ctx context.Context, prefix string, co
 		cursor = nextCursor
 	}
 	return roomIDs, nil
+}
+
+// GetUserRoom 返回 userRoomKey 指向的 roomID。
+// 返回空串表示 userRoomKey 不存在或值为 "0"；err 仅在 Redis 调用失败时非 nil。
+func (s *RobotSchedulerRedis) GetUserRoom(ctx context.Context, userID int64) (string, error) {
+	val, err := s.redis.Get(ctx, rediskeys.PlayerRoomKey(converter.FormatID(userID))).Result()
+	if err != nil {
+		// Redis Nil 表示 key 不存在，返回空串而非 err
+		if errors.Is(err, goredis.Nil) {
+			return "", nil
+		}
+		return "", err
+	}
+	if val == "" || val == "0" {
+		return "", nil
+	}
+	return val, nil
 }

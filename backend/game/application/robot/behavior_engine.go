@@ -251,30 +251,66 @@ func (e *RobotBehaviorEngine) HandleRobotTimeout(ctx context.Context, roomID str
 }
 
 // handleLeaveAction makes the robot leave the room and returns it to the
-// available pool with idle status. It is idempotent: if the robot is no
-// longer in the room robot set, the action is skipped to avoid duplicate
-// leave processing from OnGameEnd.
+// available pool with idle status.
+//
+// 幂等检查基于 userRoomKey（cashparty:player:room:{userID}）：
+//   - 若 userRoomKey 为空：机器人已离开任何房间，跳过 LeaveRoom，仅做调度器侧清理
+//   - 若 userRoomKey 指向当前房间：正常执行 LeaveRoom
+//   - 若 userRoomKey 指向其他房间：跨房间残留，先清理旧房间再清理当前房间
+//
+// 旧逻辑基于 robot:room 集合做幂等检查，但 recycleZombieRobots 会先清 robot:room
+// 集合再调 LeaveRoom，导致本检查误判为"已 leave"而跳过真正的 userRoomKey/spectators
+// 清理，产生跨房间残留僵尸。改为基于 userRoomKey 后，幂等对象即真正的残留信号源。
 func (e *RobotBehaviorEngine) handleLeaveAction(ctx context.Context, roomID string, robotUserID string) error {
 	userID := converter.ParseID(robotUserID)
 
-	// Idempotency check: skip if robot is no longer in the room robot set
+	// 幂等检查：读取 userRoomKey 指向的 roomID
 	if userID != 0 {
-		robotIDs, err := e.robotSchedulerRedis.GetRoomRobots(ctx, roomID)
-		if err == nil {
-			found := false
-			for _, id := range robotIDs {
-				if id == userID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				logger.Debug("robot leave skipped, already removed from room",
+		existingRoomID, err := e.robotSchedulerRedis.GetUserRoom(ctx, userID)
+		if err != nil {
+			// Redis 不可用时不阻塞清理流程，记录 warn 后继续尝试 LeaveRoom
+			logger.Warn("get user room for leave idempotency check failed, proceeding with LeaveRoom",
+				"room_id", roomID,
+				"user_id", userID,
+				"error", err,
+			)
+		} else if existingRoomID == "" {
+			// userRoomKey 已不存在 → 机器人已离开任何房间
+			// 仍清理调度器侧残留的 robot:room/activeSet/Idle，避免半清理状态
+			logger.Debug("robot userRoomKey empty, skip LeaveRoom but cleanup scheduler state",
+				"room_id", roomID,
+				"user_id", userID,
+			)
+			e.robotSchedulerRedis.RemoveRobotFromRoom(ctx, roomID, userID)
+			e.robotSchedulerRedis.RemoveFromActiveSet(ctx, userID)
+			if markErr := e.accountSvc.MarkRobotIdle(ctx, userID); markErr != nil {
+				logger.Error("failed to mark robot idle after leave (userRoomKey empty path)",
 					"room_id", roomID,
 					"user_id", userID,
+					"error", markErr,
 				)
-				return nil
 			}
+			return nil
+		} else if existingRoomID != roomID {
+			// 跨房间残留：userRoomKey 指向别的房间（通常是崩溃/异步漏触发导致）
+			// 先清理旧房间的 spectators/players/userRoomKey
+			logger.Warn("robot userRoomKey points to different room, cleaning stale room first",
+				"current_room_id", roomID,
+				"stale_room_id", existingRoomID,
+				"user_id", userID,
+			)
+			if staleErr := e.robotPlayer.LeaveRoom(ctx, existingRoomID, robotUserID); staleErr != nil {
+				// 旧房间清理失败不阻塞当前房间操作，但需记录（CodeNotInRoom 视为已清）
+				if !message.IsErrorCode(staleErr, message.CodeNotInRoom) {
+					logger.Error("clean stale room failed, continuing with current room leave",
+						"stale_room_id", existingRoomID,
+						"user_id", userID,
+						"error", staleErr,
+					)
+				}
+			}
+			// 旧房间残留也清理调度器侧状态
+			e.robotSchedulerRedis.RemoveRobotFromRoom(ctx, existingRoomID, userID)
 		}
 	}
 

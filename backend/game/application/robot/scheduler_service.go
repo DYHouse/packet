@@ -10,6 +10,7 @@ import (
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/common/rediskeys"
 	repository "github.com/cashparty/backend/game/domain/repository"
 	roomDom "github.com/cashparty/backend/game/domain/room"
@@ -248,6 +249,25 @@ func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roo
 		robotUserID := converter.FormatID(robot.UserID)
 		err = s.robotPlayer.JoinAndReady(ctx, room.RoomID, robotUserID)
 		if err != nil {
+			// 失败分支需区分错误码：
+			// - CodeUserAlreadyInRoom: userRoomKey 残留指向其他房间，需先清旧房间再重试一次，
+			//   避免简单"加回可用池"导致下个 tick 再次被选中、再次失败、死循环。
+			// - 其他错误: 保持原有行为（加回可用池 + 释放锁 + 跳过）
+			if message.IsErrorCode(err, message.CodeUserAlreadyInRoom) {
+				if s.retryJoinAfterCleaningStaleRoom(ctx, room.RoomID, robot.UserID, robotUserID) {
+					logger.Info("robot assigned to room after stale cleanup retry",
+						"room_id", room.RoomID,
+						"user_id", robot.UserID,
+						"room_fee", room.RoomFee,
+					)
+					continue
+				}
+				logger.Warn("robot retry join after stale room cleanup still failed",
+					"room_id", room.RoomID,
+					"user_id", robot.UserID,
+				)
+			}
+
 			// Failed to join, return robot to pool
 			s.accountSvc.MarkRobotIdle(ctx, robot.UserID)
 			s.robotSchedulerRedis.RemoveRobotFromRoom(ctx, room.RoomID, robot.UserID)
@@ -268,6 +288,60 @@ func (s *RobotSchedulerService) assignRobotsToRoom(ctx context.Context, room roo
 		)
 	}
 	return nil
+}
+
+// retryJoinAfterCleaningStaleRoom 处理 CodeUserAlreadyInRoom 错误：
+// 读取 userRoomKey 找到旧房间，调用 LeaveRoom 清理后重试 JoinAndReady。
+// 返回 true 表示重试成功，false 表示重试失败或无法清理。
+func (s *RobotSchedulerService) retryJoinAfterCleaningStaleRoom(ctx context.Context, roomID string, robotUserID int64, robotUserIDStr string) bool {
+	staleRoomID, err := s.robotSchedulerRedis.GetUserRoom(ctx, robotUserID)
+	if err != nil {
+		logger.Warn("get stale user room failed during retry",
+			"room_id", roomID,
+			"user_id", robotUserID,
+			"error", err,
+		)
+		return false
+	}
+	if staleRoomID == "" || staleRoomID == roomID {
+		// userRoomKey 已不存在或指向当前房间：并非跨房间残留，重试无意义
+		return false
+	}
+
+	logger.Warn("robot has stale userRoomKey, cleaning stale room before retry",
+		"room_id", roomID,
+		"user_id", robotUserID,
+		"stale_room_id", staleRoomID,
+	)
+
+	// 清理旧房间（LeaveRoom 内部会调 CancelSeat + luaLeaveRoom，DEL userRoomKey + HDEL spectators）
+	if leaveErr := s.robotPlayer.LeaveRoom(ctx, staleRoomID, robotUserIDStr); leaveErr != nil {
+		if !message.IsErrorCode(leaveErr, message.CodeNotInRoom) {
+			logger.Error("clean stale room leave failed",
+				"room_id", roomID,
+				"stale_room_id", staleRoomID,
+				"user_id", robotUserID,
+				"error", leaveErr,
+			)
+			return false
+		}
+		// CodeNotInRoom 视为已离开，继续重试
+	}
+	// 旧房间的调度器侧状态也清理
+	s.robotSchedulerRedis.RemoveRobotFromRoom(ctx, staleRoomID, robotUserID)
+	s.robotSchedulerRedis.RemoveFromActiveSet(ctx, robotUserID)
+
+	// 重试 JoinAndReady
+	if retryErr := s.robotPlayer.JoinAndReady(ctx, roomID, robotUserIDStr); retryErr != nil {
+		logger.Warn("robot join retry failed after stale cleanup",
+			"room_id", roomID,
+			"user_id", robotUserID,
+			"stale_room_id", staleRoomID,
+			"error", retryErr,
+		)
+		return false
+	}
+	return true
 }
 
 // recycleZombieRobots detects robots that are in the room robot set but not
@@ -298,11 +372,31 @@ func (s *RobotSchedulerService) recycleZombieRobots(ctx context.Context, roomID 
 			"user_id", robotID,
 		)
 
-		// Remove from room robot set and active set
+		// 注意清理顺序：必须先 LeaveRoom（luaLeaveRoom 会 DEL userRoomKey + HDEL spectators），
+		// 成功后再清 robot:room 集合与 MySQL Idle。
+		// 反序会导致 handleLeaveAction 的幂等检查（基于 robot:room 集合）误判为"已 leave"，
+		// 从而跳过真正的 userRoomKey/spectators 清理，产生跨房间残留僵尸。
+		// LeaveRoom 内部会先调 CancelSeat，对未选座的观众是 no-op，安全。
+		if err := s.robotPlayer.LeaveRoom(ctx, roomID, robotUserID); err != nil {
+			// CodeNotInRoom 视为已离开（如 LuaEndGame 已将玩家转 spectator 后又被清掉），
+			// 可继续清理调度器侧状态。
+			if !message.IsErrorCode(err, message.CodeNotInRoom) {
+				logger.Error("zombie robot leave room failed, skip cleanup to allow next scan retry",
+					"room_id", roomID,
+					"user_id", robotID,
+					"error", err,
+				)
+				continue
+			}
+			logger.Debug("zombie robot already not in room, proceeding with scheduler cleanup",
+				"room_id", roomID,
+				"user_id", robotID,
+			)
+		}
+
+		// LeaveRoom 成功后再清理调度器侧状态
 		s.robotSchedulerRedis.RemoveRobotFromRoom(ctx, roomID, robotID)
 		s.robotSchedulerRedis.RemoveFromActiveSet(ctx, robotID)
-
-		// Mark robot idle so it returns to the available pool
 		if err := s.accountSvc.MarkRobotIdle(ctx, robotID); err != nil {
 			logger.Error("failed to mark zombie robot idle",
 				"room_id", roomID,
@@ -310,9 +404,6 @@ func (s *RobotSchedulerService) recycleZombieRobots(ctx context.Context, roomID 
 				"error", err,
 			)
 		}
-
-		// Try to leave the room (cancel seat if any, leave room)
-		s.robotPlayer.LeaveRoom(ctx, roomID, robotUserID)
 	}
 }
 

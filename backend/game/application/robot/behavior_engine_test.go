@@ -61,6 +61,9 @@ func (m *mockIdleMarker) MarkRobotIdle(_ context.Context, _ int64) error {
 // 仅提供 handleLeaveAction 路径所需的方法行为。
 type mockRobotSchedulerRepo struct {
 	roomRobots []int64
+	// userRoom 模拟 userRoomKey 指向的 roomID；空串表示 userRoomKey 不存在。
+	// 默认值通过 newBehaviorEngineForTest 设置为传入的 roomID（"room123"）。
+	userRoom string
 }
 
 func (m *mockRobotSchedulerRepo) AddRobotToRoom(_ context.Context, _ string, _ int64) error {
@@ -96,6 +99,9 @@ func (m *mockRobotSchedulerRepo) RemoveFromActiveSet(_ context.Context, _ int64)
 func (m *mockRobotSchedulerRepo) ScanRoomIDs(_ context.Context, _ string, _ int64) ([]string, error) {
 	return nil, nil
 }
+func (m *mockRobotSchedulerRepo) GetUserRoom(_ context.Context, _ int64) (string, error) {
+	return m.userRoom, nil
+}
 
 // newBehaviorEngineForTest 构造测试用 RobotBehaviorEngine，使用 mock 依赖。
 // robotUserID 必须为纯数字字符串（converter.ParseID 解析）。
@@ -107,7 +113,10 @@ func newBehaviorEngineForTest(t *testing.T, selectSeatErr error, leaveRoomErr er
 		leaveRoomErr:  leaveRoomErr,
 	}
 	mockAccount := &mockIdleMarker{}
-	mockRepo := &mockRobotSchedulerRepo{roomRobots: roomRobots}
+	mockRepo := &mockRobotSchedulerRepo{
+		roomRobots: roomRobots,
+		userRoom:   "room123", // 模拟 userRoomKey 指向当前测试房间，handleLeaveAction 应正常执行 LeaveRoom
+	}
 
 	// 使用 miniredis 构造真实的 TimeoutScheduler（需验证 retry 没有被调度）
 	mr, err := miniredis.Run()
