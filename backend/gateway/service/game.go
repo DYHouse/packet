@@ -95,7 +95,7 @@ func (s *GameService) StartGame(ctx context.Context, req *GameStartRequest, game
 	params.Set("version", req.Version)
 	params.Set("wsUrl", s.cfg.Merchant.WsURL)
 
-	gameURL, err := strutil.BuildURLWithQuery(s.cfg.Merchant.GameEntryURL, game.GameCode, params)
+	gameURL, err := strutil.BuildURLWithQuery(s.cfg.Merchant.GameEntryURL, "", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build game url: %w", err)
 	}
