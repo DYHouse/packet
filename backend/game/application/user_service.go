@@ -2,29 +2,41 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
+	"github.com/cashparty/backend/common/message"
+	"github.com/cashparty/backend/game/domain/events"
+	"github.com/cashparty/backend/game/domain/push"
 	repository "github.com/cashparty/backend/game/domain/repository"
 	"github.com/cashparty/backend/game/model"
 )
 
 type UserService struct {
-	dbRepo    repository.DBRepository
-	cacheRepo repository.UserCacheRepository
-	avatarCfg *config.AvatarConfig
-	idGen     idgen.IDGenerator
+	dbRepo      repository.DBRepository
+	cacheRepo   repository.UserCacheRepository
+	avatarCfg   *config.AvatarConfig
+	idGen       idgen.IDGenerator
+	broadcaster events.Broadcaster
 }
 
-func NewUserService(dbRepo repository.DBRepository, cacheRepo repository.UserCacheRepository, avatarCfg *config.AvatarConfig, idGen idgen.IDGenerator) *UserService {
+func NewUserService(
+	dbRepo repository.DBRepository,
+	cacheRepo repository.UserCacheRepository,
+	avatarCfg *config.AvatarConfig,
+	idGen idgen.IDGenerator,
+	broadcaster events.Broadcaster,
+) *UserService {
 	return &UserService{
-		dbRepo:    dbRepo,
-		cacheRepo: cacheRepo,
-		avatarCfg: avatarCfg,
-		idGen:     idGen,
+		dbRepo:      dbRepo,
+		cacheRepo:   cacheRepo,
+		avatarCfg:   avatarCfg,
+		idGen:       idGen,
+		broadcaster: broadcaster,
 	}
 }
 
@@ -108,4 +120,43 @@ func (s *UserService) SetUserIsRobot(ctx context.Context, id int64) error {
 // GetPendingCredit 获取玩家当前游戏的待入账金额（累计抢红包+奖励）
 func (s *UserService) GetPendingCredit(ctx context.Context, userID string) int64 {
 	return s.cacheRepo.GetPendingCredit(ctx, userID)
+}
+
+// UpdateAvatar 更新玩家当前头像 URL，同步失效 Redis 缓存，并推送 user_profile_updated。
+// avatarURL 由调用方（HTTP 上传端点）传入最终 URL。
+// 失败时返回 error，调用方 MUST 记录日志（规约 SID-3）。
+// 推送失败不影响主流程：客户端下次 auth_ok 仍会拿到最新 avatar。
+func (s *UserService) UpdateAvatar(ctx context.Context, userID string, avatarURL string) error {
+	// 1. 查现有 user 拿到主键 id（userID 字符串 → id int64）
+	user, err := s.dbRepo.UserDBRepo().GetUserById(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("UserService.UpdateAvatar: get user failed: %w", err)
+	}
+	// 2. 校验 avatarURL 长度 ≤ 512（与 User.Avatar gorm tag 一致）
+	if len(avatarURL) > 5120 {
+		return fmt.Errorf("UserService.UpdateAvatar: avatar url too long: %d", len(avatarURL))
+	}
+	// 3. 写 DB
+	if err := s.dbRepo.UserDBRepo().UpdateAvatar(ctx, user.ID, avatarURL); err != nil {
+		return fmt.Errorf("UserService.UpdateAvatar: update db failed: %w", err)
+	}
+	// 4. 失效缓存（两个 key 都删，确保下次读走 DB）
+	_ = s.cacheRepo.DeleteUser(ctx, userID)
+	_ = s.cacheRepo.DeleteUserById(ctx, strconv.FormatInt(user.ID, 10))
+
+	// 5. 推送 user_profile_updated 给该用户所有在线连接（跨节点 via Kafka）
+	if s.broadcaster != nil {
+		pushData := &push.UserProfileUpdatedPush{
+			Avatar:   avatarURL,
+			Nickname: user.Nickname,
+		}
+		if err := s.broadcaster.BroadcastToUser(ctx, userID, message.PushUserProfileUpdated, pushData); err != nil {
+			logger.Warn("push user_profile_updated failed",
+				"user_id", userID, "error", err)
+			// 推送失败不影响主流程：客户端下次 auth_ok 仍会拿到最新 avatar
+		}
+	}
+
+	logger.Info("user avatar updated", "user_id", userID, "id", user.ID, "avatar", avatarURL)
+	return nil
 }

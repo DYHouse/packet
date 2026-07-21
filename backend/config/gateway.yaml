@@ -86,3 +86,12 @@ auth_lock:
   max_attempts: 5          # 最大失败尝试次数
   lock_duration: "15m"      # 锁定时长
   counter_window: "15m"    # 失败计数窗口
+
+# 头像上传配置（仅 gateway 服务使用）
+# 默认头像配置（base_url / default_count）仍归 game 服务管理，见 config/game.yaml
+avatar:
+  upload:
+    upload_dir: "/var/lib/cashparty/avatars/uploads"
+    public_base_url: "https://opc.narrytech.cn/avatars/uploads"
+    max_size_bytes: 2097152  # 2MB
+    allowed_types: ["image/png", "image/jpeg", "image/webp"]

@@ -52,3 +52,11 @@ func (r *gormUserRepository) SetUserIsRobot(ctx context.Context, id int64) error
 		Where("id = ?", id).
 		Update("is_robot", true).Error
 }
+
+// UpdateAvatar 按主键 id 更新用户头像 URL。
+// 仅更新 avatar 列，避免覆盖其他字段。
+func (r *gormUserRepository) UpdateAvatar(ctx context.Context, id int64, avatarURL string) error {
+	return r.db.WithContext(ctx).Model(&model.User{}).
+		Where("id = ?", id).
+		Update("avatar", avatarURL).Error
+}

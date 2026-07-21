@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	neturl "net/url"
+
 	"github.com/cashparty/backend/api/platform"
 	"github.com/cashparty/backend/common/async"
 	"github.com/cashparty/backend/common/idgen"
@@ -159,7 +161,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	userCacheRepo := redisRepo.NewUserCacheRepository(redisClient)
-	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen)
+	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen, nil)
 	// 通过 UserSaverAdapter 将 game 层 *application.UserService 适配为 settlement/domain.UserService，
 	// 解除 settlement 对 game/model 的反向依赖（Phase 1.1）。
 	userSaverAdapter := adapter.NewUserSaverAdapter(userSvc)
@@ -297,6 +299,12 @@ func (a *Application) Start(ctx context.Context) error {
 	if sendCfg, ok := a.config.RateLimiter.Commands["send_packet"]; ok && sendCfg.FailOpen != nil {
 		financialFailOpen = *sendCfg.FailOpen
 	}
+	// allowedAvatarHosts 从 AvatarCfg.BaseURL 解析 host，用于 update_avatar 命令 URL 白名单校验。
+	// 默认头像与上传头像共享同一域名（如 opc.narrytech.cn），故从 base_url 推导即可。
+	var allowedAvatarHosts []string
+	if u, err := neturl.Parse(a.config.Avatar.BaseURL); err == nil && u.Host != "" {
+		allowedAvatarHosts = []string{u.Host}
+	}
 
 	a.grpcServer = server.NewGRPCServer(
 		a.grpcPort,
@@ -310,6 +318,7 @@ func (a *Application) Start(ctx context.Context) error {
 		a.Container.Redis,
 		a.Container.UserLimiter,
 		a.Container.Broadcaster.Broadcast,
+		allowedAvatarHosts,
 		grabFailOpen,
 		financialFailOpen,
 	)

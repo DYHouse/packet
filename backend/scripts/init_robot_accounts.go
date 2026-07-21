@@ -101,7 +101,7 @@ func main() {
 	// 6. Create UserService (use DBRepository so SaveUser works end-to-end)
 	dbRepo := mysqlRepo.NewDBRepository(db)
 	userCacheRepo := redis.NewUserCacheRepository(redisClient)
-	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen)
+	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen, nil)
 
 	// 7. Create RobotAccountService
 	robotAccountSvc := robot.NewRobotAccountService(

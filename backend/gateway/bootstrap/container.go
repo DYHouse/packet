@@ -36,9 +36,11 @@ type Container struct {
 	AuthMiddleware      *middleware.AuthMiddleware
 	HealthChecker       *health.HealthChecker
 	SignatureMiddleware *middleware.SignatureMiddleware
+	JWTAuthMiddleware   *middleware.JWTAuthMiddleware
 	GameService         *service.GameService
 	GameStore           *store.MemoryGameStore
 	GameHandler         *handler.GameHandler
+	AvatarHandler       *handler.AvatarHandler
 	Server              *server.Server
 	TaskRunner          async.TaskRunner
 	nodeID              string
@@ -87,6 +89,8 @@ func (c *Container) InitServices(serviceDiscovery *discovery.ServiceDiscovery, r
 		c.Redis,
 	)
 
+	c.JWTAuthMiddleware = middleware.NewJWTAuthMiddleware(c.TokenService)
+
 	c.GameStore = store.NewMemoryGameStore()
 
 	var userSaver service.UserSaver
@@ -96,6 +100,7 @@ func (c *Container) InitServices(serviceDiscovery *discovery.ServiceDiscovery, r
 	c.GameService = service.NewGameService(c.Config, c.TokenService, userSaver)
 	c.TestService = service.NewTestService(c.TokenService, userSaver)
 	c.GameHandler = handler.NewGameHandler(c.GameService, c.GameStore)
+	c.AvatarHandler = handler.NewAvatarHandler(&c.Config.Avatar.Upload)
 
 	c.ConnMgr.SetEventCallback(func(conn *connection.Connection, event string, roomID string) {
 		switch event {
@@ -125,7 +130,9 @@ func (c *Container) InitServer() {
 		c.BroadcastSvc,
 		c.HealthChecker,
 		c.SignatureMiddleware,
+		c.JWTAuthMiddleware,
 		c.GameHandler,
+		c.AvatarHandler,
 		c.TestService,
 	)
 }

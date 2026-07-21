@@ -22,6 +22,7 @@ const (
 	CmdGetPlayerHistory       = "get_player_history"
 	CmdGetPlayerSessionDetail = "get_player_session_detail"
 	CmdGetPlayerStats         = "get_player_stats"
+	CmdUpdateAvatar           = "update_avatar"
 )
 
 // ==================== 推送类型 ====================
@@ -54,6 +55,7 @@ const (
 	PushReconnectSuccess = "reconnect_success"
 	PushError            = "error"
 	PushDequeued         = "dequeued"
+	PushUserProfileUpdated = "user_profile_updated"
 )
 
 // ==================== 房间状态常量 ====================

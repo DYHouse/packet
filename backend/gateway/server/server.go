@@ -67,7 +67,9 @@ type Server struct {
 	broadcast           *broadcast.BroadcastService
 	healthChecker       *health.HealthChecker
 	signatureMiddleware *middleware.SignatureMiddleware
+	jwtAuthMiddleware   *middleware.JWTAuthMiddleware
 	gameHandler         *handler.GameHandler
+	avatarHandler       *handler.AvatarHandler
 	testService         *service.TestService
 	upgrader            websocket.Upgrader
 	engine              *gin.Engine
@@ -83,7 +85,9 @@ func NewServer(
 	broadcast *broadcast.BroadcastService,
 	healthChecker *health.HealthChecker,
 	signatureMiddleware *middleware.SignatureMiddleware,
+	jwtAuthMiddleware *middleware.JWTAuthMiddleware,
 	gameHandler *handler.GameHandler,
+	avatarHandler *handler.AvatarHandler,
 	testService *service.TestService,
 ) *Server {
 	gin.SetMode(gin.ReleaseMode)
@@ -96,7 +100,9 @@ func NewServer(
 		broadcast:           broadcast,
 		healthChecker:       healthChecker,
 		signatureMiddleware: signatureMiddleware,
+		jwtAuthMiddleware:   jwtAuthMiddleware,
 		gameHandler:         gameHandler,
+		avatarHandler:       avatarHandler,
 		testService:         testService,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:   config.ReadBufferSize,
@@ -142,6 +148,13 @@ func (s *Server) setupRoutes() {
 	game.Use(s.signatureMiddleware.VerifySignature())
 	game.GET("/list", s.gameHandler.GetGameList)
 	game.POST("/start", s.gameHandler.StartGame)
+
+	// 头像上传路由（JWT Bearer 鉴权，不走 merchant 签名）
+	avatar := s.engine.Group("/avatar")
+	if s.jwtAuthMiddleware != nil {
+		avatar.Use(s.jwtAuthMiddleware.VerifyJWT())
+	}
+	avatar.POST("/upload", s.avatarHandler.UploadAvatar)
 }
 
 func (s *Server) Start() error {

@@ -55,3 +55,6 @@ routes:
 
   - cmd_prefix: "get_player_stats"
     service: "game-service"
+
+  - cmd_prefix: "update_avatar"
+    service: "game-service"

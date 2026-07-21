@@ -19,6 +19,21 @@ type Config struct {
 	Log         LogConfig                      `mapstructure:"log" yaml:"log"`
 	IDGenerator commonconfig.IDGeneratorConfig `mapstructure:"id_generator" yaml:"id_generator"`
 	AuthLock    AuthLockConfig                 `mapstructure:"auth_lock" yaml:"auth_lock"`
+	Avatar      AvatarConfig                   `mapstructure:"avatar" yaml:"avatar"`
+}
+
+// AvatarConfig 头像上传配置（仅 gateway 服务使用）。
+// 默认头像配置（base_url / default_count）仍归 game 服务管理，见 config/game.yaml。
+type AvatarConfig struct {
+	Upload AvatarUploadConfig `mapstructure:"upload" yaml:"upload"`
+}
+
+// AvatarUploadConfig 头像上传子配置。
+type AvatarUploadConfig struct {
+	UploadDir     string   `mapstructure:"upload_dir" yaml:"upload_dir"`         // 落盘根目录
+	PublicBaseURL string   `mapstructure:"public_base_url" yaml:"public_base_url"` // 对外访问基 URL
+	MaxSizeBytes  int64    `mapstructure:"max_size_bytes" yaml:"max_size_bytes"` // 默认 2MB
+	AllowedTypes  []string `mapstructure:"allowed_types" yaml:"allowed_types"`   // 默认 ["image/png","image/jpeg","image/webp"]
 }
 
 // AuthLockConfig Auth 锁定配置（config 层 DTO，与 middleware.AuthLockConfig 字段一致）

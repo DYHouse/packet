@@ -79,4 +79,12 @@ func setDefaults(cfg *Config) {
 	if cfg.AuthLock.CounterWindow == 0 {
 		cfg.AuthLock.CounterWindow = 15 * time.Minute
 	}
+
+	// 头像上传默认值
+	if cfg.Avatar.Upload.MaxSizeBytes == 0 {
+		cfg.Avatar.Upload.MaxSizeBytes = 2 * 1024 * 1024 // 2MB
+	}
+	if len(cfg.Avatar.Upload.AllowedTypes) == 0 {
+		cfg.Avatar.Upload.AllowedTypes = []string{"image/png", "image/jpeg", "image/webp"}
+	}
 }

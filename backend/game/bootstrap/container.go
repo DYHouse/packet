@@ -225,7 +225,7 @@ func NewContainer(
 
 func (c *Container) InitAppServices() {
 	userCacheRepo := redisRepo.NewUserCacheRepository(c.Redis)
-	c.UserService = application.NewUserService(c.DBRepo, userCacheRepo, c.AvatarCfg, c.idGen)
+	c.UserService = application.NewUserService(c.DBRepo, userCacheRepo, c.AvatarCfg, c.idGen, c.Broadcaster)
 
 	// 通过 FeeCalculatorAdapter 将 game 层 room.CalculateRequiredFee 适配为
 	// settlement/domain.FeeCalculator 接口，解除 settlement 对 game/domain/room 的直接依赖（Phase 4）。

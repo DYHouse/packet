@@ -171,3 +171,12 @@ type DequeuedPush struct {
 	Reason  string `json:"reason"`
 	Message string `json:"message"`
 }
+
+// UserProfileUpdatedPush 用户资料更新推送 payload。
+// 推送时机：玩家通过 update_avatar 命令成功更新头像后。
+// 推送目标：该用户的所有在线连接（跨节点 via Kafka）。
+// 推送失败不影响主流程：客户端下次 auth_ok 仍会拿到最新 avatar。
+type UserProfileUpdatedPush struct {
+	Avatar   string `json:"avatar,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+}

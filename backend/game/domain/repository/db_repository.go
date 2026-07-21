@@ -35,6 +35,8 @@ type UserDBRepository interface {
 	GetUser(ctx context.Context, userID string) (*model.User, error)
 	GetUserById(ctx context.Context, id string) (*model.User, error)
 	SetUserIsRobot(ctx context.Context, id int64) error
+	// UpdateAvatar 按主键 id 更新用户头像 URL（仅更新 avatar 单字段，避免覆盖其他列）。
+	UpdateAvatar(ctx context.Context, id int64, avatarURL string) error
 }
 
 type RoundDBRepository interface {

@@ -31,16 +31,17 @@ type BroadcastFunc func(ctx context.Context, roomID string, cmd string, payload 
 
 type GenericServiceServer struct {
 	commonPb.UnimplementedGenericServiceServer
-	roomAppSvc  *application.RoomAppService
-	seatAppSvc  *application.SeatAppService
-	gameAppSvc  *application.GameAppService
-	grabSvc     *application.GrabService
-	userSvc     *application.UserService
-	balanceSvc  *settlementService.BalanceService
-	historySvc  *application.HistoryService
-	redis       cRedis.RedisClient
-	userLimiter *limiter.UserLimiter
-	broadcastFn BroadcastFunc
+	roomAppSvc         *application.RoomAppService
+	seatAppSvc         *application.SeatAppService
+	gameAppSvc         *application.GameAppService
+	grabSvc            *application.GrabService
+	userSvc            *application.UserService
+	balanceSvc         *settlementService.BalanceService
+	historySvc         *application.HistoryService
+	redis              cRedis.RedisClient
+	userLimiter        *limiter.UserLimiter
+	broadcastFn        BroadcastFunc
+	allowedAvatarHosts []string
 	// grab 命令 fail-open 策略(资金操作)
 	grabFailOpen bool
 	// 资金命令(send_packet 等)fail-open 策略
@@ -58,22 +59,24 @@ func NewGenericServiceServer(
 	redis cRedis.RedisClient,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
+	allowedAvatarHosts []string,
 	grabFailOpen bool,
 	financialFailOpen bool,
 ) *GenericServiceServer {
 	return &GenericServiceServer{
-		roomAppSvc:        roomAppSvc,
-		seatAppSvc:        seatAppSvc,
-		gameAppSvc:        gameAppSvc,
-		grabSvc:           grabSvc,
-		userSvc:           userSvc,
-		balanceSvc:        balanceSvc,
-		historySvc:        historySvc,
-		redis:             redis,
-		userLimiter:       userLimiter,
-		broadcastFn:       broadcastFn,
-		grabFailOpen:      grabFailOpen,
-		financialFailOpen: financialFailOpen,
+		roomAppSvc:         roomAppSvc,
+		seatAppSvc:         seatAppSvc,
+		gameAppSvc:         gameAppSvc,
+		grabSvc:            grabSvc,
+		userSvc:            userSvc,
+		balanceSvc:         balanceSvc,
+		historySvc:         historySvc,
+		redis:              redis,
+		userLimiter:        userLimiter,
+		broadcastFn:        broadcastFn,
+		allowedAvatarHosts: allowedAvatarHosts,
+		grabFailOpen:       grabFailOpen,
+		financialFailOpen:  financialFailOpen,
 	}
 }
 
@@ -128,6 +131,8 @@ func (s *GenericServiceServer) Forward(ctx context.Context, req *commonPb.Forwar
 		resp, err = s.handleGetPlayerSessionDetail(ctx, req)
 	case message.CmdGetPlayerStats:
 		resp, err = s.handleGetPlayerStats(ctx, req)
+	case message.CmdUpdateAvatar:
+		resp, err = s.handleUpdateAvatar(ctx, req)
 	default:
 		resp = &commonPb.ForwardResponse{
 			Cmd:       req.Cmd,
@@ -638,6 +643,32 @@ func (s *GenericServiceServer) handleGetPlayerStats(ctx context.Context, req *co
 	return s.successResponse(req, resp), nil
 }
 
+// handleUpdateAvatar 处理 update_avatar 命令。
+// 请求 data: { "avatar_url": "https://..." }
+// 推送由 UserService.UpdateAvatar 内部通过 broadcaster.BroadcastToUser 完成，
+// generic_service 层只负责解析 + 校验 + 调 service + 返回响应。
+func (s *GenericServiceServer) handleUpdateAvatar(ctx context.Context, req *commonPb.ForwardRequest) (*commonPb.ForwardResponse, error) {
+	var data struct {
+		AvatarURL string `json:"avatar_url"`
+	}
+	if resp, failed := s.parseRequestData(req, &data); failed {
+		return resp, nil
+	}
+	if err := application.ValidateAvatarURL(data.AvatarURL, s.allowedAvatarHosts, 5120); err != nil {
+		logger.Warn("update_avatar: invalid avatar url",
+			"user_id", req.UserId, "request_id", req.RequestId, "error", err)
+		return s.errorResponse(req, message.CodeInvalidParams, i18n.GetErrorMsg(message.CodeInvalidParams)), nil
+	}
+	if err := s.userSvc.UpdateAvatar(ctx, req.UserId, data.AvatarURL); err != nil {
+		logger.Warn("update_avatar failed",
+			"user_id", req.UserId, "request_id", req.RequestId, "error", err)
+		return s.errorResponse(req, message.CodeSystemError, i18n.GetErrorMsg(message.CodeSystemError)), nil
+	}
+	return s.successResponse(req, map[string]interface{}{
+		"avatar": data.AvatarURL,
+	}), nil
+}
+
 func (s *GenericServiceServer) parseUserID(userIDStr string) (int64, error) {
 	var userID int64
 	_, err := fmt.Sscanf(userIDStr, "%d", &userID)
@@ -763,6 +794,7 @@ func NewGRPCServer(
 	redis cRedis.RedisClient,
 	userLimiter *limiter.UserLimiter,
 	broadcastFn BroadcastFunc,
+	allowedAvatarHosts []string,
 	grabFailOpen bool,
 	financialFailOpen bool,
 ) *GRPCServer {
@@ -793,6 +825,7 @@ func NewGRPCServer(
 		redis,
 		userLimiter,
 		broadcastFn,
+		allowedAvatarHosts,
 		grabFailOpen,
 		financialFailOpen,
 	)
