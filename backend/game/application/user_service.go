@@ -140,9 +140,13 @@ func (s *UserService) UpdateAvatar(ctx context.Context, userID string, avatarURL
 	if err := s.dbRepo.UserDBRepo().UpdateAvatar(ctx, user.ID, avatarURL); err != nil {
 		return fmt.Errorf("UserService.UpdateAvatar: update db failed: %w", err)
 	}
-	// 4. 失效缓存（两个 key 都删，确保下次读走 DB）
+	// 4. 失效旧缓存并回填新值，确保 gateway auth 中间件能立即读到最新 avatar。
+	// 先删再写：避免并发场景下旧值覆盖新值（cache-aside 标准做法）。
+	user.Avatar = avatarURL
 	_ = s.cacheRepo.DeleteUser(ctx, userID)
 	_ = s.cacheRepo.DeleteUserById(ctx, strconv.FormatInt(user.ID, 10))
+	_ = s.cacheRepo.SetUser(ctx, userID, user)
+	_ = s.cacheRepo.SetUserById(ctx, strconv.FormatInt(user.ID, 10), user)
 
 	// 5. 推送 user_profile_updated 给该用户所有在线连接（跨节点 via Kafka）
 	if s.broadcaster != nil {

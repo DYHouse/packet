@@ -99,22 +99,59 @@ func (m *AuthMiddleware) OnConnect(ctx context.Context, conn *connection.Connect
 
 	m.clearFailedAttempts(ctx, conn.IP)
 
-	conn.SetUserInfo(claims.InternalUserID, claims.Nickname, claims.Avatar)
+	// 从 Redis 缓存读取最新用户资料（由 game service 写入），避免 JWT 中的 avatar 过时。
+	// 缓存未命中时降级为 JWT claims 中的值，不影响 auth 主流程。
+	nickname := claims.Nickname
+	avatar := claims.Avatar
+	if cached, err := m.fetchCachedUser(ctx, claims.InternalUserID); err == nil && cached != nil {
+		if cached.Nickname != "" {
+			nickname = cached.Nickname
+		}
+		if cached.Avatar != "" {
+			avatar = cached.Avatar
+		}
+	}
+
+	conn.SetUserInfo(claims.InternalUserID, nickname, avatar)
 	conn.SetStatus(connection.StatusAuthed)
 
 	logger.Info("user authenticated successfully",
 		"conn_id", conn.ConnID,
 		"platform_user_id", claims.PlatformUserID,
 		"internal_user_id", claims.InternalUserID,
-		"nickname", claims.Nickname)
+		"nickname", nickname)
 
 	m.sendSuccess(conn, req.Cmd, req.RequestID, map[string]interface{}{
 		"user_id":  claims.InternalUserID,
-		"nickname": claims.Nickname,
-		"avatar":   claims.Avatar,
+		"nickname": nickname,
+		"avatar":   avatar,
 	})
 
 	return nil
+}
+
+// cachedUser 仅反序列化所需字段，避免耦合 game/model 完整定义。
+type cachedUser struct {
+	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar"`
+}
+
+// fetchCachedUser 从 Redis 读取 game service 写入的用户缓存（key: cashparty:user:id:{id}）。
+// 未命中返回 (nil, nil)；Redis 故障返回 (nil, error)，调用方降级为 JWT claims。
+func (m *AuthMiddleware) fetchCachedUser(ctx context.Context, internalUserID string) (*cachedUser, error) {
+	key := rediskeys.UserByIdKey(internalUserID)
+	data, err := m.redis.Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if data == "" {
+		return nil, nil
+	}
+	var u cachedUser
+	if err := json.Unmarshal([]byte(data), &u); err != nil {
+		return nil, err
+	}
+	return &u, nil
 }
 
 func (m *AuthMiddleware) sendError(conn *connection.Connection, cmd, requestID string, code int) {
