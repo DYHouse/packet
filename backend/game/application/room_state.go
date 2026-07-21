@@ -8,6 +8,7 @@ import (
 
 type RoomState struct {
 	RoomID         string           `json:"room_id"`
+	SessionID      string           `json:"session_id"`
 	RoomNo         string           `json:"room_no"`
 	RoomFee        currency.Money   `json:"room_fee"`
 	Status         int              `json:"status"`
@@ -65,6 +66,7 @@ func BuildRoomState(meta *room.RoomMeta) *RoomState {
 	}
 	return &RoomState{
 		RoomID:         meta.RoomID,
+		SessionID:      meta.CurrentSessionID,
 		RoomNo:         meta.RoomNo,
 		RoomFee:        currency.NewMoneyFromFen(meta.RoomFee),
 		Status:         int(meta.Status),
@@ -182,6 +184,7 @@ func BuildFullRoomState(stateData *repository.RoomStateData) *RoomState {
 
 	return &RoomState{
 		RoomID:         stateData.RoomID,
+		SessionID:      currentSessionIDFromMeta(stateData.Meta),
 		RoomNo:         stateData.RoomNo,
 		RoomFee:        currency.NewMoneyFromFen(stateData.RoomFee),
 		Status:         int(stateData.Status),
@@ -196,4 +199,12 @@ func BuildFullRoomState(stateData *repository.RoomStateData) *RoomState {
 		Seats:          seats,
 		QueueList:      queueList,
 	}
+}
+
+// currentSessionIDFromMeta 安全读取 meta.CurrentSessionID，避免 nil 指针。
+func currentSessionIDFromMeta(meta *room.RoomMeta) string {
+	if meta == nil {
+		return ""
+	}
+	return meta.CurrentSessionID
 }
