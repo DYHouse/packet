@@ -15,7 +15,6 @@ const (
 	RoomEventSeatCancel      RoomEventType = "seat_cancel"
 	RoomEventPlayerReady     RoomEventType = "player_ready"
 	RoomEventSpectatorKick   RoomEventType = "spectator_kick"
-	RoomEventPlayerReconnect RoomEventType = "player_reconnect"
 	RoomEventQueueJoin       RoomEventType = "queue_join"
 	RoomEventQueueLeave      RoomEventType = "queue_leave"
 	RoomEventSubstitute      RoomEventType = "substitute"
@@ -67,10 +66,6 @@ type PlayerReadyPayload struct {
 type SpectatorKickPayload struct {
 	SeatNo int    `json:"seat_no"`
 	Reason string `json:"reason"`
-}
-
-type PlayerReconnectPayload struct {
-	SeatNo int `json:"seat_no"`
 }
 
 type QueueJoinPayload struct {
@@ -173,19 +168,6 @@ func NewSpectatorKickEvent(roomID, userID string, seatNo int, reason string) *Ro
 	_ = event.SetPayload(SpectatorKickPayload{
 		SeatNo: seatNo,
 		Reason: reason,
-	})
-	return event
-}
-
-func NewPlayerReconnectEvent(roomID, userID string, seatNo int) *RoomEvent {
-	event := &RoomEvent{
-		EventHeader: message.NewEventHeader(""),
-		EventType:   RoomEventPlayerReconnect,
-		RoomID:      roomID,
-		UserID:      userID,
-	}
-	_ = event.SetPayload(PlayerReconnectPayload{
-		SeatNo: seatNo,
 	})
 	return event
 }

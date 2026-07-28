@@ -1366,7 +1366,6 @@ erDiagram
 | `seat_cancel` | 玩家取消座位 |
 | `player_ready` | 玩家准备 |
 | `spectator_kick` | 观众被踢 |
-| `player_reconnect` | 玩家重连 |
 | `queue_join` | 加入等待队列 |
 | `queue_leave` | 离开等待队列 |
 | `substitute` | 玩家替换（掉线替补） |

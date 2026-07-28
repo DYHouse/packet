@@ -729,15 +729,6 @@ func (s *RoomAppService) HandleReconnect(ctx context.Context, req *ReconnectRequ
 	if player != nil {
 		nickname = player.Nickname
 		seatNo = player.SeatNo
-		if s.publisher != nil {
-			if err := s.publisher.PublishRoomEvent(ctx, events.NewPlayerReconnectEvent(req.RoomID, req.UserID, player.SeatNo)); err != nil {
-				logger.Warn("publish player_reconnect event failed",
-					"room_id", req.RoomID,
-					"user_id", req.UserID,
-					"trace_id", trace.FromContext(ctx),
-					"error", err)
-			}
-		}
 	} else if spectator != nil {
 		nickname = spectator.Nickname
 		seatNo = 0
