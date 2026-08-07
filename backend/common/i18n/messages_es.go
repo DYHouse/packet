@@ -101,7 +101,7 @@ var kickMessages = map[string]string{
 	"user_request":       "Salió de la sala voluntariamente",                             // ReasonUserRequest
 	"player_leave":       "El jugador salió de la sala",                                  // ReasonPlayerLeave
 	"login_elsewhere":    "Su cuenta ha iniciado sesión en otro dispositivo",             // ReasonLoginElsewhere
-	"penalty_kick":       "Expulsado por penalización, eliminado de la sala",             // ReasonPenaltyKick
+	"penalty_kick":       "No realizaste el envío manual durante dos rondas consecutivas. Has sido expulsado de la sala", // ReasonPenaltyKick
 }
 
 // ==================== 游戏中断原因消息映射 ====================
@@ -117,9 +117,9 @@ var interruptMessages = map[string]string{
 
 // ==================== 惩罚原因消息映射 ====================
 var penaltyMessages = map[string]string{
-	"send_timeout":       "Tiempo para enviar sobre rojo agotado, tarifa de sala deducida", // ReasonPenaltySendTimeout
-	"leave_during_game":  "Salió durante el juego, tarifa de sala deducida",                // ReasonPenaltyLeaveDuringGame
-	"disconnect_timeout": "Tiempo de desconexión agotado, tarifa de sala deducida",         // ReasonPenaltyDisconnectTimeout
+	"send_timeout":       "No enviaste las Cashbox a tiempo. El sistema ha descontado el monto correspondiente de tu saldo y realizó el envío en tu nombre", // ReasonPenaltySendTimeout
+	"leave_during_game":  "Saliste durante la partida. Se ha descontado el monto correspondiente de tu saldo",                                            // ReasonPenaltyLeaveDuringGame
+	"disconnect_timeout": "Tiempo de desconexión agotado. Se ha descontado el monto correspondiente de tu saldo",                                        // ReasonPenaltyDisconnectTimeout
 }
 
 // GetErrorMsg 根据错误码返回西班牙语消息，未知码返回默认消息。
