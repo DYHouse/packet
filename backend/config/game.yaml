@@ -99,7 +99,17 @@ mysql:
 
 kafka:
   brokers:
-    - "127.0.0.1:9092"
+    - "b-1.cashpartymsk.ed6k6p.c2.kafka.cn-northwest-1.amazonaws.com.cn:9098"
+    - "b-2.cashpartymsk.ed6k6p.c2.kafka.cn-northwest-1.amazonaws.com.cn:9098"
+  sasl:
+    mechanism: "OAUTHBEARER"
+    region: "cn-northwest-1"
+    username: ""
+    password: ""
+  tls:
+    enabled: true
+    ca_cert_path: ""
+    insecure_skip_verify: true
 
 broadcast:
   mode: "redis_pubsub"

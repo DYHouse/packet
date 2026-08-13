@@ -17,7 +17,11 @@ func createKafkaProducer(cfg *gameconfig.Config) (kafka.KafkaProducer, error) {
 	if len(cfg.Kafka.Brokers) == 0 {
 		return nil, fmt.Errorf("kafka producer config: brokers must not be empty")
 	}
-	return kafka.NewProducer(kafka.ProducerConfig{Brokers: cfg.Kafka.Brokers})
+	return kafka.NewProducer(kafka.ProducerConfig{
+		Brokers: cfg.Kafka.Brokers,
+		SASL:    cfg.Kafka.SASL,
+		TLS:     cfg.Kafka.TLS,
+	})
 }
 
 // GroupID 策略（PLAN §5 Phase 7 任务 5 / §6 规约 CR-12）：
@@ -41,6 +45,8 @@ func createRoomEventConsumer(
 		kafka.TopicRoomEvents,
 		fmt.Sprintf("game-room-events-%s", nodeID),
 	)
+	consumerCfg.SASL = cfg.Kafka.SASL
+	consumerCfg.TLS = cfg.Kafka.TLS
 	return messaging.NewRoomEventConsumer(dbRepo, roomRepo, redis, consumerCfg)
 }
 
@@ -58,6 +64,8 @@ func createGameEventConsumer(
 		kafka.TopicGameEvents,
 		fmt.Sprintf("game-events-%s", nodeID),
 	)
+	consumerCfg.SASL = cfg.Kafka.SASL
+	consumerCfg.TLS = cfg.Kafka.TLS
 	return messaging.NewGameEventConsumer(redis, handler, consumerCfg)
 }
 

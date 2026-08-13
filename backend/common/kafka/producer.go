@@ -83,6 +83,7 @@ func (p *producer) GetWriter(topic string) *kafka.Writer {
 		WriteTimeout: p.cfg.WriteTimeout,
 		RequiredAcks: p.cfg.RequiredAcks,
 		Async:        p.cfg.Async,
+		Transport:    buildTransport(p.cfg.SASL, p.cfg.TLS),
 	}
 	p.writers[topic] = w
 	return w

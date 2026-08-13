@@ -27,5 +27,5 @@ func createBroadcastService(
 	nodeID string,
 ) (*broadcast.BroadcastService, error) {
 	kafkaGroupID := fmt.Sprintf("gateway-broadcast-%s", nodeID)
-	return broadcast.NewBroadcastService(manager, redis, &cfg.Broadcast, cfg.Kafka.Brokers, kafkaGroupID), nil
+	return broadcast.NewBroadcastService(manager, redis, &cfg.Broadcast, cfg.Kafka.Brokers, kafkaGroupID, cfg.Kafka.SASL, cfg.Kafka.TLS), nil
 }

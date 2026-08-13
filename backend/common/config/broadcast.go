@@ -1,9 +1,13 @@
 package config
 
+import "github.com/cashparty/backend/common/kafka"
+
 // KafkaConfig Kafka 基础配置
 type KafkaConfig struct {
-	Enabled bool     `mapstructure:"enabled" yaml:"enabled"`
-	Brokers []string `mapstructure:"brokers" yaml:"brokers"`
+	Enabled bool             `mapstructure:"enabled" yaml:"enabled"`
+	Brokers []string         `mapstructure:"brokers" yaml:"brokers"`
+	SASL    kafka.SASLConfig `mapstructure:"sasl" yaml:"sasl"`
+	TLS     kafka.TLSConfig  `mapstructure:"tls" yaml:"tls"`
 }
 
 // BroadcastConfig 广播配置（支持 Kafka 和 Redis Pub/Sub 两种模式）

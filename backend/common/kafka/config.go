@@ -6,6 +6,21 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// SASLConfig 定义 Kafka SASL 认证配置。
+type SASLConfig struct {
+	Mechanism string `mapstructure:"mechanism" yaml:"mechanism"` // "" | "OAUTHBEARER" | "SCRAM-SHA-512" | "SCRAM-SHA-256"
+	Region    string `mapstructure:"region" yaml:"region"`       // AWS Region，仅 OAUTHBEARER 用
+	Username  string `mapstructure:"username" yaml:"username"`   // SCRAM 用户名
+	Password  string `mapstructure:"password" yaml:"password"`   // SCRAM 密码
+}
+
+// TLSConfig 定义 Kafka TLS 加密配置。
+type TLSConfig struct {
+	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
+	CAPath             string `mapstructure:"ca_cert_path" yaml:"ca_cert_path"`
+	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify" yaml:"insecure_skip_verify"`
+}
+
 // ProducerConfig 定义 Kafka 生产者的配置。
 type ProducerConfig struct {
 	Brokers      []string
@@ -15,6 +30,8 @@ type ProducerConfig struct {
 	WriteTimeout time.Duration      // 默认 10s
 	RequiredAcks kafka.RequiredAcks // 默认 RequireOne
 	Async        bool               // 默认 false（同步）
+	SASL         SASLConfig
+	TLS          TLSConfig
 }
 
 // defaultProducerConfig 返回填充了默认值的 ProducerConfig。
@@ -42,6 +59,8 @@ type ConsumerConfig struct {
 	MaxRetries     int           // 默认 3
 	RetryBackoff   time.Duration // 默认 1s
 	DLQTopic       string        // 默认 ""（不投 DLQ）
+	SASL           SASLConfig
+	TLS            TLSConfig
 }
 
 // defaultConsumerConfig 返回填充了默认值的 ConsumerConfig。

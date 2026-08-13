@@ -69,6 +69,7 @@ func NewConsumer(cfg ConsumerConfig, handler MessageHandler, dlq KafkaProducer) 
 		MaxWait:        cfg.MaxWait,
 		CommitInterval: cfg.CommitInterval,
 		StartOffset:    cfg.StartOffset,
+		Dialer:         buildDialer(cfg.SASL, cfg.TLS),
 	})
 
 	return &Consumer{

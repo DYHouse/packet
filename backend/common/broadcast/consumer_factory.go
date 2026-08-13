@@ -14,14 +14,18 @@ type ConsumerFactory struct {
 	config       *config.BroadcastConfig
 	kafkaBrokers []string
 	kafkaGroupID string
+	kafkaSASL    kafka.SASLConfig
+	kafkaTLS     kafka.TLSConfig
 	redis        cRedis.RedisClient
 }
 
-func NewConsumerFactory(cfg *config.BroadcastConfig, kafkaBrokers []string, kafkaGroupID string, redis cRedis.RedisClient) *ConsumerFactory {
+func NewConsumerFactory(cfg *config.BroadcastConfig, kafkaBrokers []string, kafkaGroupID string, kafkaSASL kafka.SASLConfig, kafkaTLS kafka.TLSConfig, redis cRedis.RedisClient) *ConsumerFactory {
 	return &ConsumerFactory{
 		config:       cfg,
 		kafkaBrokers: kafkaBrokers,
 		kafkaGroupID: kafkaGroupID,
+		kafkaSASL:    kafkaSASL,
+		kafkaTLS:     kafkaTLS,
 		redis:        redis,
 	}
 }
@@ -63,6 +67,8 @@ func (f *ConsumerFactory) createKafkaConsumer(handler MessageHandler) Consumer {
 	}
 
 	cfg := kafka.NewConsumerConfig(f.kafkaBrokers, topic, f.kafkaGroupID)
+	cfg.SASL = f.kafkaSASL
+	cfg.TLS = f.kafkaTLS
 	consumer, err := kafka.NewConsumer(cfg, wrapper, nil)
 	if err != nil {
 		logger.Error("failed to create kafka consumer", "topic", topic, "error", err)

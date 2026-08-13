@@ -9,6 +9,7 @@ import (
 
 	"github.com/cashparty/backend/common/broadcast"
 	"github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/kafka"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
@@ -44,6 +45,8 @@ func NewBroadcastService(
 	cfg *config.BroadcastConfig,
 	kafkaBrokers []string,
 	kafkaGroupID string,
+	kafkaSASL kafka.SASLConfig,
+	kafkaTLS kafka.TLSConfig,
 ) *BroadcastService {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -55,7 +58,7 @@ func NewBroadcastService(
 		cacheTTL: 5 * time.Second,
 	}
 
-	factory := broadcast.NewConsumerFactory(cfg, kafkaBrokers, kafkaGroupID, redis)
+	factory := broadcast.NewConsumerFactory(cfg, kafkaBrokers, kafkaGroupID, kafkaSASL, kafkaTLS, redis)
 
 	consumer := factory.CreateConsumer(service.handleBroadcastMessage)
 
