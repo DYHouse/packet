@@ -15,6 +15,14 @@ redis:
   write_timeout: 3s
   master_name: ""        # 单机模式不需要
   sentinel_addrs: []     # 单机模式不需要
+  cluster_addrs: []               # Cluster 模式（预留，本次不实现）
+  tls:
+    enable: false                 # 本地开发不开 TLS
+    insecure_skip_verify: false
+    ca_cert_path: ""
+    cert_path: ""
+    key_path: ""
+    server_name: ""
 ```
 
 ## 生产环境（Sentinel模式）
@@ -35,6 +43,14 @@ redis:
   read_timeout: 3s
   write_timeout: 3s
   addr: ""              # Sentinel模式不需要
+  cluster_addrs: []               # Cluster 模式（预留，本次不实现）
+  tls:                            # 对接 AWS ElastiCache Valkey TLS 时启用
+    enable: true
+    insecure_skip_verify: true    # ElastiCache 自签名证书，跳过校验
+    ca_cert_path: ""              # 如导入 AWS CA 证书则填写路径
+    cert_path: ""
+    key_path: ""
+    server_name: ""               # 可填 ElastiCache 端点域名
 ```
 
 ## 配置说明
@@ -64,6 +80,14 @@ redis:
 - `dial_timeout`: 连接超时时间
 - `read_timeout`: 读超时时间
 - `write_timeout`: 写超时时间
+- `tls`: TLS 传输加密配置（子结构）
+  - `enable`: 是否启用 TLS（默认 false）
+  - `insecure_skip_verify`: 跳过证书验证（ElastiCache 自签名证书设为 true）
+  - `ca_cert_path`: CA 证书文件路径
+  - `cert_path`: mTLS 客户端证书路径（可选）
+  - `key_path`: mTLS 客户端私钥路径（可选）
+  - `server_name`: SNI / 证书校验域名
+- `cluster_addrs`: Cluster 模式节点地址列表（预留字段，当前版本不实现集群模式）
 
 ## 部署架构
 
@@ -106,3 +130,4 @@ Sentinel模式支持自动故障转移：
 2. **Sentinel节点数量**：建议至少3个，确保高可用
 3. **连接池大小**：根据业务并发量调整，建议CPU核心数*10
 4. **超时时间**：根据网络环境调整，建议3-5秒
+5. **AWS ElastiCache 迁移**：启用 TLS（`tls.enable: true`）并设置 `insecure_skip_verify: true` 以适配 ElastiCache 自签名证书；同时设置 `password` 为 ElastiCache AUTH Token

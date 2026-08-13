@@ -10,7 +10,7 @@ import (
 type Config struct {
 	Server      ServerConfig                   `mapstructure:"server" yaml:"server"`
 	Gateway     GatewayConfig                  `mapstructure:"gateway" yaml:"gateway"`
-	Redis       RedisConfig                    `mapstructure:"redis" yaml:"redis"`
+	Redis       commonconfig.RedisConfig       `mapstructure:"redis" yaml:"redis"`
 	Nacos       GatewayNacosConfig             `mapstructure:"nacos" yaml:"nacos"`
 	Kafka       commonconfig.KafkaConfig       `mapstructure:"kafka" yaml:"kafka"`
 	Broadcast   commonconfig.BroadcastConfig   `mapstructure:"broadcast" yaml:"broadcast"`
@@ -58,13 +58,6 @@ type GatewayConfig struct {
 	SendQueueSize   int      `mapstructure:"send_queue_size" yaml:"send_queue_size"`
 	MaxConnections  int      `mapstructure:"max_connections" yaml:"max_connections"`
 	AllowedOrigins  []string `mapstructure:"allowed_origins" yaml:"allowed_origins"`
-}
-
-type RedisConfig struct {
-	Addr     string `mapstructure:"addr" yaml:"addr"`
-	Password string `mapstructure:"password" yaml:"password"`
-	DB       int    `mapstructure:"db" yaml:"db"`
-	PoolSize int    `mapstructure:"pool_size" yaml:"pool_size"`
 }
 
 type MerchantConfig struct {

@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/cashparty/backend/common/config"
+	cRedis "github.com/cashparty/backend/common/redis"
 	"github.com/cashparty/backend/common/rediskeys"
 	gameconfig "github.com/cashparty/backend/game/config"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -59,11 +59,15 @@ func clearDatabase(cfg config.MySQLConfig) error {
 }
 
 func clearRedis(cfg config.RedisConfig) error {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password,
-		DB:       cfg.DB,
-	})
+	// 通过封装层创建客户端，复用 TLS 能力
+	client, err := cRedis.NewClient(&cfg)
+	if err != nil {
+		return fmt.Errorf("连接 Redis 失败: %w", err)
+	}
+	defer client.Close()
+
+	// 脚本场景使用 Raw() 获取原生客户端执行 Keys / Del
+	rdb := client.Raw()
 
 	ctx := context.Background()
 

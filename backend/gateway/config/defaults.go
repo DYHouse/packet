@@ -37,9 +37,7 @@ func setDefaults(cfg *Config) {
 		cfg.Gateway.MaxConnections = 10000
 	}
 
-	if cfg.Redis.PoolSize == 0 {
-		cfg.Redis.PoolSize = 100
-	}
+	commonconfig.SetRedisDefaults(&cfg.Redis)
 
 	commonconfig.SetNacosDefaults(&cfg.Nacos.NacosConfig)
 

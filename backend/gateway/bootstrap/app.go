@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cashparty/backend/common/async"
-	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/discovery"
 	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
@@ -312,24 +311,7 @@ func initLogger(cfg *gatewayConfig.Config) {
 }
 
 func initRedis(cfg *gatewayConfig.Config) (cRedis.RedisClient, error) {
-	redisClient, err := cRedis.NewClient(&config.RedisConfig{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-		PoolSize: cfg.Redis.PoolSize,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to init redis: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	if err := redisClient.Raw().Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to ping redis: %w", err)
-	}
-
-	return redisClient, nil
+	return cRedis.NewClient(&cfg.Redis)
 }
 
 func loadRouterConfig(nacosClient nacos.NacosClient, cfg *gatewayConfig.Config, routerPath string) (*router.RouterConfig, error) {

@@ -2,7 +2,10 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/cashparty/backend/common/config"
@@ -66,6 +69,44 @@ type client struct {
 	rdb *redis.Client
 }
 
+// buildTLSConfig 根据配置构建 *tls.Config。
+// 返回 nil 表示不启用 TLS（本地开发 / miniredis 测试场景）。
+func buildTLSConfig(cfg *config.TLSConfig) (*tls.Config, error) {
+	if !cfg.Enable {
+		return nil, nil
+	}
+
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		ServerName:         cfg.ServerName,
+		MinVersion:         tls.VersionTLS12,
+	}
+
+	// 加载 CA 证书（若指定）
+	if cfg.CACertPath != "" {
+		caCert, err := os.ReadFile(cfg.CACertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read ca cert: %w", err)
+		}
+		caPool := x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse ca cert")
+		}
+		tlsCfg.RootCAs = caPool
+	}
+
+	// 加载 mTLS 客户端证书（若 cert_path 与 key_path 同时指定）
+	if cfg.CertPath != "" && cfg.KeyPath != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client cert: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsCfg, nil
+}
+
 // NewClient 创建Redis客户端
 func NewClient(cfg *config.RedisConfig) (RedisClient, error) {
 	var rdb *redis.Client
@@ -101,6 +142,11 @@ func NewClient(cfg *config.RedisConfig) (RedisClient, error) {
 
 // newStandaloneClient 创建单机模式客户端
 func newStandaloneClient(cfg *config.RedisConfig) (*redis.Client, error) {
+	tlsCfg, err := buildTLSConfig(&cfg.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build tls config: %w", err)
+	}
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         cfg.Addr,
 		Password:     cfg.Password,
@@ -110,9 +156,10 @@ func newStandaloneClient(cfg *config.RedisConfig) (*redis.Client, error) {
 		DialTimeout:  cfg.DialTimeout,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
+		TLSConfig:    tlsCfg,
 	})
 
-	logger.Info("redis standalone mode", "addr", cfg.Addr)
+	logger.Info("redis standalone mode", "addr", cfg.Addr, "tls", cfg.TLS.Enable)
 	return rdb, nil
 }
 
@@ -125,6 +172,11 @@ func newSentinelClient(cfg *config.RedisConfig) (*redis.Client, error) {
 		return nil, fmt.Errorf("master_name is required for sentinel mode")
 	}
 
+	tlsCfg, err := buildTLSConfig(&cfg.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build tls config: %w", err)
+	}
+
 	rdb := redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:    cfg.MasterName,
 		SentinelAddrs: cfg.SentinelAddrs,
@@ -135,6 +187,7 @@ func newSentinelClient(cfg *config.RedisConfig) (*redis.Client, error) {
 		DialTimeout:   cfg.DialTimeout,
 		ReadTimeout:   cfg.ReadTimeout,
 		WriteTimeout:  cfg.WriteTimeout,
+		TLSConfig:     tlsCfg,
 	})
 
 	logger.Info("redis sentinel mode",

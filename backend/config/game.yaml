@@ -69,8 +69,11 @@ redis_ttl:
 
 redis:
   mode: "standalone"
+  # 本地开发：通过 SSH 隧道转发到 AWS ElastiCache (Valkey TLS)
+  #   ssh -i cashparty.pem -N -L 6379:master.cashparty.q7vjko.cnw1.cache.amazonaws.com.cn:6379 ec2-user@<ec2公网IP>
+  # 生产部署：addr 改为 ElastiCache 真实端点（同 VPC 可直连）
   addr: "127.0.0.1:6379"
-  password: ""
+  password: "Cashparty20262026"    # ElastiCache AUTH Token
   db: 0
   pool_size: 100
   min_idle_conns: 10
@@ -79,6 +82,14 @@ redis:
   write_timeout: 3s
   master_name: ""
   sentinel_addrs: []
+  cluster_addrs: []               # Cluster 模式节点地址列表（预留，本次不实现）
+  tls:                            # TLS 传输加密配置（对接 AWS ElastiCache Valkey TLS 时启用）
+    enable: true
+    insecure_skip_verify: true    # ElastiCache 自签名证书，必须设为 true
+    ca_cert_path: ""
+    cert_path: ""
+    key_path: ""
+    server_name: ""
 
 mysql:
   dsn: "root:123456@tcp(127.0.0.1:3306)/cashparty?charset=utf8mb4&parseTime=True&loc=Local"
