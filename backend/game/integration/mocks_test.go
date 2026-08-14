@@ -79,7 +79,7 @@ type packetCacheStub struct {
 	setNXErr error
 }
 
-func (s *packetCacheStub) Get(_ context.Context, roundID string) (string, error) {
+func (s *packetCacheStub) Get(_ context.Context, _ string, roundID string) (string, error) {
 	if s.getErr != nil {
 		return "", s.getErr
 	}
@@ -89,7 +89,7 @@ func (s *packetCacheStub) Get(_ context.Context, roundID string) (string, error)
 	return "", s.getErr
 }
 
-func (s *packetCacheStub) SetNX(_ context.Context, _, _ string, _ time.Duration) (bool, error) {
+func (s *packetCacheStub) SetNX(_ context.Context, _, _, _ string, _ time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.setNXErr != nil {
@@ -98,11 +98,11 @@ func (s *packetCacheStub) SetNX(_ context.Context, _, _ string, _ time.Duration)
 	return s.setNXOk, nil
 }
 
-func (s *packetCacheStub) GetPacketInfo(_ context.Context, _ string) (string, error) {
+func (s *packetCacheStub) GetPacketInfo(_ context.Context, _ string, _ string) (string, error) {
 	return "", errors.New("not implemented")
 }
 
-func (s *packetCacheStub) GetAvailablePacketIDs(_ context.Context, _ string) ([]string, error) {
+func (s *packetCacheStub) GetAvailablePacketIDs(_ context.Context, _ string, _ string) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 

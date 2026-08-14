@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	testBalanceKey = "cashparty:robot:virtual_balance:user1"
-	testDirtyKey   = "cashparty:robot:virtual_balance:dirty"
+	testBalanceKey = "cashparty:{user1}:robot:virtual_balance"
+	testDirtyKey   = "cashparty:{user1}:robot:dirty"
 	testUserID     = "user1"
 )
 
@@ -33,7 +33,7 @@ func newTestClient(t *testing.T) (cRedis.RedisClient, *miniredis.Miniredis) {
 }
 
 // TestLuaDeductBalance_Sufficient 余额充足：1000 扣减 100，返回 1，余额变为 900，
-// 并将 userID 加入 dirty 集合。
+// 并设置 per-user dirty 标记为 '1'。
 func TestLuaDeductBalance_Sufficient(t *testing.T) {
 	cRedis.SetUseEvalSHA(false)
 	ctx := context.Background()
@@ -54,8 +54,8 @@ func TestLuaDeductBalance_Sufficient(t *testing.T) {
 		t.Fatalf("expect balance 900, got %s", balance)
 	}
 
-	if ok, _ := mr.IsMember(testDirtyKey, testUserID); !ok {
-		t.Fatalf("expect dirty set contains %s", testUserID)
+	if dirty, _ := mr.Get(testDirtyKey); dirty != "1" {
+		t.Fatalf("expect dirty flag set to 1, got %s", dirty)
 	}
 }
 
@@ -128,7 +128,7 @@ func TestLuaDeductBalance_Concurrent(t *testing.T) {
 }
 
 // TestLuaCreditBalance_Basic 基本入账：余额 100 入账 50，返回 1，余额变为 150，
-// 并将 userID 加入 dirty 集合。
+// 并设置 per-user dirty 标记为 '1'。
 func TestLuaCreditBalance_Basic(t *testing.T) {
 	cRedis.SetUseEvalSHA(false)
 	ctx := context.Background()
@@ -149,8 +149,8 @@ func TestLuaCreditBalance_Basic(t *testing.T) {
 		t.Fatalf("expect balance 150, got %s", balance)
 	}
 
-	if ok, _ := mr.IsMember(testDirtyKey, testUserID); !ok {
-		t.Fatalf("expect dirty set contains %s", testUserID)
+	if dirty, _ := mr.Get(testDirtyKey); dirty != "1" {
+		t.Fatalf("expect dirty flag set to 1, got %s", dirty)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestLuaCreditBalance_NoExistingKey(t *testing.T) {
 }
 
 // TestLuaCreditBalance_Concurrent 并发安全：10 个 goroutine 各入账 100，
-// 验证最终余额为 1000 且 dirty 集合包含 userID（只入一次，集合幂等）。
+// 验证最终余额为 1000 且 per-user dirty 标记为 '1'（SET 幂等）。
 func TestLuaCreditBalance_Concurrent(t *testing.T) {
 	cRedis.SetUseEvalSHA(false)
 	ctx := context.Background()
@@ -197,7 +197,7 @@ func TestLuaCreditBalance_Concurrent(t *testing.T) {
 		t.Fatalf("expect balance 1000, got %s", balance)
 	}
 
-	if ok, _ := mr.IsMember(testDirtyKey, testUserID); !ok {
-		t.Fatalf("expect dirty set contains %s", testUserID)
+	if dirty, _ := mr.Get(testDirtyKey); dirty != "1" {
+		t.Fatalf("expect dirty flag set to 1, got %s", dirty)
 	}
 }

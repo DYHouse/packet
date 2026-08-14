@@ -5,6 +5,8 @@ package scripts
 // ARGV: [userID, spectatorData, now, roomIDStr, roomDataTTL, userRoomTTL]
 // 返回: {code, roomID, roomNo, configID}
 // 错误码: LuaErrRoomNotFound(1), LuaErrAlreadyInRoom(4), LuaErrRoomFull(15), LuaErrRoomFullTotal(3)
+// 注: 跨房间防重入检查(用户是否已在其他房间)已移至 Go 侧用 SETNX current_room 实现,
+// 避免在 Lua 内同时操作 roomID 维度 key 与 userID 维度 key 导致 Cluster 跨 slot。
 const luaJoinAsSpectator = `
 local roomHashKey = KEYS[1]
 local spectatorsKey = KEYS[2]
@@ -21,11 +23,6 @@ local userRoomTTL = tonumber(ARGV[6])
 local roomExists = redis.call('EXISTS', roomHashKey)
 if roomExists == 0 then
 	return {1, '', '', 0}  -- LuaErrRoomNotFound
-end
-
-local existingRoom = redis.call('GET', userRoomKey)
-if existingRoom and existingRoom ~= '' and existingRoom ~= '0' then
-	return {4, '', '', 0}  -- LuaErrAlreadyInRoom
 end
 
 local alreadySpectator = redis.call('HEXISTS', spectatorsKey, userID)

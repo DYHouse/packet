@@ -730,6 +730,11 @@ if result.RowsAffected == 0 {
 - 所有 `*Prefix` 常量 MUST 带尾随冒号（如 `KeyRoomHashPrefix = "cashparty:room:hash:"`），调用方一律 `+ "*"` 或 `+ specificKey`。
 - 多参数 key 的分隔符 MUST 统一为 `:`，禁止下划线 `_`。
 - Lua 脚本中使用的 key 前缀 MUST 在 `common/rediskeys` 有对应常量，禁止出现 Lua 孤儿 key。
+- **Hash Tag 规约（Cluster 兼容）MUST**：含变量 ID 的 key MUST 在 `cashparty:` 前缀后以 `{ID}` 形式嵌入 hash tag，使 Redis Cluster 的 CRC16 仅计算 tag 内内容。
+  - 房间级数据（在房间内 Lua 脚本中被多 key 访问）MUST 使用 `{roomID}` tag，格式：`cashparty:{roomID}:category:sub`
+  - 用户级数据（在用户级 Lua 脚本中被多 key 访问）MUST 使用 `{userID}` tag，格式：`cashparty:{userID}:category:sub`
+  - 全局 key（无变量 ID）不需 hash tag，格式：`cashparty:category:sub`
+  - 示例：`RoomHashKey(roomID)` 返回 `cashparty:{room123}:room:hash`，`CurrentRoomKey(userID)` 返回 `cashparty:{user456}:current_room`
 
 参考：[common/rediskeys/keys.go](file:///Users/aaron.pan/Desktop/party/RedPacket-master/backend/common/rediskeys/keys.go)。
 
@@ -2058,3 +2063,4 @@ import (
 | 2026-07-05 | 新增 §21 TraceID 传播规约（TP-1~TP-12） |
 | 2026-07-05 | 调整 §17.1/§17.2/§19.9 注释语言规约：注释统一用**中文**（原为英文），godoc 示例同步更新为中文；附录 C TD-23/TD-24/TD-25 收敛目标更新为中文 |
 | 2026-07-05 | **重大重构**：基于业界最佳实践全面重组文档结构，提升至高级开发工程师水准。主要变更：<br>1. 新增 §0 前言、§1 总则与核心原则，明确设计目标与质量红线<br>2. 新增 §13 测试规范（表驱动、Mock、覆盖率、并发测试、基准测试）<br>3. 新增 §14 安全规范（输入验证、SQL 注入、敏感数据、加密随机数、凭证管理、CORS、签名校验）<br>4. 新增 §15 性能与资源管理（内存、连接池、超时、缓存、N+1、异步化）<br>5. 新增 §18 格式化与工具链（golangci-lint、pre-commit、依赖管理、死代码）<br>6. 合并原 §17/§18/§19/§20/§21 到 §10 分布式系统统一编排<br>7. 附录 B 新增业界规范参考（Google Go Style Guide、Effective Go、Clean Architecture、Twelve-Factor App 等）<br>8. 附录 C 将原散落各处的"必须收敛"项集中为项目技术债务清单，按优先级分级<br>9. 反模式章节扩充（命名、错误处理、并发、数据库、Redis、HTTP、配置、重复、注释、序列化、测试、安全）<br>10. 引用业界权威规范作为兜底（Google Go Style Guide、Go Code Review Comments、OWASP 等） |
+| 2026-08-14 | §8.8 新增 Hash Tag 规约（Cluster 兼容）：含变量 ID 的 key MUST 嵌入 {ID} hash tag，房间级用 {roomID}，用户级用 {userID} |

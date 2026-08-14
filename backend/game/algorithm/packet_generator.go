@@ -52,7 +52,7 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 		return nil, err
 	}
 
-	cached, err := g.packetCache.Get(ctx, req.RoundID)
+	cached, err := g.packetCache.Get(ctx, req.RoomID, req.RoundID)
 	if err == nil {
 		var result GenerateResult
 		if err := json.Unmarshal([]byte(cached), &result); err == nil {
@@ -98,9 +98,9 @@ func (g *PacketGenerator) Generate(ctx context.Context, req *GenerateRequest) (*
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	success, err := g.packetCache.SetNX(ctx, req.RoundID, string(resultJSON), config.PacketCacheTTL)
+	success, err := g.packetCache.SetNX(ctx, req.RoomID, req.RoundID, string(resultJSON), config.PacketCacheTTL)
 	if err == nil && !success {
-		if cached, err = g.packetCache.Get(ctx, req.RoundID); err == nil {
+		if cached, err = g.packetCache.Get(ctx, req.RoomID, req.RoundID); err == nil {
 			json.Unmarshal([]byte(cached), &result)
 		}
 	}

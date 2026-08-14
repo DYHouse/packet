@@ -75,10 +75,11 @@ func (r *userCacheRepository) DeleteUserById(ctx context.Context, id string) err
 }
 
 // GetPendingCredit 获取玩家当前游戏的待入账金额（累计抢红包+奖励）。
-// 读取流程：PlayerRoomKey → RoomHashKey(HGetAll) → SessionPlayerTotalsKey(HGet)。
+// 读取流程：CurrentRoomKey → RoomHashKey(HGetAll) → SessionPlayerTotalsKey(HGet)。
 // 任何 Redis 错误或数据缺失时返回 0，与原 user_service.go 行为一致。
 func (r *userCacheRepository) GetPendingCredit(ctx context.Context, userID string) int64 {
-	roomID := r.redis.Get(ctx, rediskeys.PlayerRoomKey(userID)).Val()
+	// 跨房间反查用户当前所在房间，使用 CurrentRoomKey（{userID} hash tag）
+	roomID := r.redis.Get(ctx, rediskeys.CurrentRoomKey(userID)).Val()
 	if roomID == "" || roomID == "0" {
 		return 0
 	}
@@ -98,7 +99,8 @@ func (r *userCacheRepository) GetPendingCredit(ctx context.Context, userID strin
 		return 0
 	}
 
-	val := r.redis.HGet(ctx, rediskeys.SessionPlayerTotalsKey(sessionID), userID).Val()
+	// 会话玩家总额 key 含 {roomID} hash tag，需传入 roomID 保证 Cluster 同 slot
+	val := r.redis.HGet(ctx, rediskeys.SessionPlayerTotalsKey(roomID, sessionID), userID).Val()
 	if val == "" {
 		return 0
 	}

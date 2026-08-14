@@ -28,7 +28,7 @@ type RedisConfig struct {
 	SentinelAddrs []string `mapstructure:"sentinel_addrs" yaml:"sentinel_addrs"`
 
 	TLS          TLSConfig `mapstructure:"tls" yaml:"tls"`           // TLS 传输加密配置
-	ClusterAddrs []string  `mapstructure:"cluster_addrs" yaml:"cluster_addrs"` // Cluster 模式节点地址列表（mode=cluster 时使用，本次预留不实现）
+	ClusterAddrs []string  `mapstructure:"cluster_addrs" yaml:"cluster_addrs"` // Cluster 模式节点地址列表（mode=cluster 时使用）
 }
 
 func SetRedisDefaults(cfg *RedisConfig) {

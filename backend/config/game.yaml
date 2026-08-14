@@ -82,7 +82,7 @@ redis:
   write_timeout: 3s
   master_name: ""
   sentinel_addrs: []
-  cluster_addrs: []               # Cluster 模式节点地址列表（预留，本次不实现）
+  cluster_addrs: []               # Cluster 模式节点地址列表（mode=cluster 时填写）
   tls:                            # TLS 传输加密配置（对接 AWS ElastiCache Valkey TLS 时启用）
     enable: true
     insecure_skip_verify: true    # ElastiCache 自签名证书，必须设为 true

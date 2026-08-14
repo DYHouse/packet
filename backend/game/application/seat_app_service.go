@@ -466,7 +466,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	spectatorsKey := rediskeys.RoomSpectatorsKey(roomID)
 	seatsKey := rediskeys.RoomSeatsKey(roomID)
 	seatOwnerKey := rediskeys.RoomSeatOwnerKey(roomID)
-	userRoomKey := rediskeys.PlayerRoomKey(userID)
+	userRoomKey := rediskeys.PlayerRoomInRoomKey(roomID, userID)
 
 	result, err := scripts.HandleSeatTimeout.Run(ctx, s.redis,
 		[]string{roomHashKey, playersKey, spectatorsKey, seatsKey, seatOwnerKey, userRoomKey},
@@ -506,6 +506,10 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 			"message", resultMsg)
 		return
 	}
+
+	// 用户已被成功踢出房间 → 删除 userID 维度 current_room
+	// （带 TTL 兜底，DEL 失败也会在 30 分钟后过期）
+	s.redis.Del(ctx, rediskeys.CurrentRoomKey(userID))
 
 	if s.publisher != nil {
 		if err := s.publisher.PublishRoomEvent(ctx, events.NewSpectatorKickEvent(roomID, userID, seatNo, message.ReasonSeatTimeout)); err != nil {

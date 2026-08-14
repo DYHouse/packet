@@ -97,22 +97,22 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 
 		var sessionPlayerTotalsKey string
 		if meta != nil && meta.CurrentSessionID != "" {
-			sessionPlayerTotalsKey = rediskeys.SessionPlayerTotalsKey(meta.CurrentSessionID)
+			sessionPlayerTotalsKey = rediskeys.SessionPlayerTotalsKey(roomID, meta.CurrentSessionID)
 		}
 
 		keys := []string{
-			rediskeys.RoundStateKey(roundID),
-			rediskeys.RoundGrabbersKey(roundID),
+			rediskeys.RoundStateKey(roomID, roundID),
+			rediskeys.RoundGrabbersKey(roomID, roundID),
 			rediskeys.RoomPlayersKey(roomID),
 			rediskeys.RoomHashKey(roomID),
-			rediskeys.RoundAvailablePacketsKey(roundID),
+			rediskeys.RoundAvailablePacketsKey(roomID, roundID),
 			sessionPlayerTotalsKey,
 		}
 
 		args := []interface{}{
 			roundID,
 			time.Now().Unix(),
-			rediskeys.KeyPacketInfoPrefix,
+			rediskeys.PacketInfoPrefix(roomID),
 		}
 
 		res, err := scripts.SettleRound.Run(ctx, s.redis, keys, args...).Slice()
@@ -188,7 +188,7 @@ func (s *RoundSettlementService) SettleRound(ctx context.Context, roomID, roundI
 					"error", err)
 			} else {
 				finalResults = fr
-				s.leaderboardSvc.CleanupRedisTotals(ctx, meta.CurrentSessionID)
+				s.leaderboardSvc.CleanupRedisTotals(ctx, roomID, meta.CurrentSessionID)
 			}
 		}
 

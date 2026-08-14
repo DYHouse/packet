@@ -304,7 +304,8 @@ func (m *Manager) GetPlayerRoom(userID string) string {
 	if m.redis == nil {
 		return ""
 	}
-	key := rediskeys.PlayerRoomKey(userID)
+	// 跨房间反查用户当前所在房间，使用 CurrentRoomKey（{userID} hash tag，Cluster 兼容）
+	key := rediskeys.CurrentRoomKey(userID)
 	roomID, _ := m.redis.Get(m.ctx, key).Result()
 	return roomID
 }

@@ -229,7 +229,7 @@ func (p *PacketOrchestrator) publishPacketCreatedEvent(ctx context.Context, room
 
 	packets := make([]*events.PacketData, 0, len(packetIDs))
 	for _, packetIDStr := range packetIDs {
-		packetData, err := p.packetCache.GetPacketInfo(ctx, packetIDStr)
+		packetData, err := p.packetCache.GetPacketInfo(ctx, roomID, packetIDStr)
 		if err != nil {
 			logger.Error("failed to get packet info", "packet_id", packetIDStr, "error", err)
 			continue

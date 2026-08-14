@@ -66,7 +66,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		ctx = trace.WithTraceID(ctx, event.TraceID)
 	}
 
-	acquired, token, acquireErr := c.tryAcquire(ctx, event.EventID)
+	acquired, token, acquireErr := c.tryAcquire(ctx, event.RoomID, event.EventID)
 	if acquireErr != nil {
 		// Redis 不可用（fail-closed），返回 error 让 Kafka 重试
 		return acquireErr
@@ -87,7 +87,7 @@ func (c *RoomEventConsumer) handleMessage(ctx context.Context, msg kafka.Message
 		if !shouldRelease {
 			return
 		}
-		if releaseErr := c.releaseAcquire(ctx, event.EventID, token); releaseErr != nil {
+		if releaseErr := c.releaseAcquire(ctx, event.RoomID, event.EventID, token); releaseErr != nil {
 			logger.Warn("failed to release acquire lock",
 				"event_id", event.EventID,
 				"error", releaseErr)
@@ -159,12 +159,12 @@ func (c *RoomEventConsumer) syncRoomCounts(ctx context.Context, event *events.Ro
 // 返回 (false, "", err) 表示 Redis 不可用（fail-closed），调用方应返回 error 让 Kafka 重试。
 // token 用于 releaseAcquire 校验持有者，防止 TTL 过期后误删其他实例的锁（§7.4/§15.5）。
 // 业务侧幂等（DB 唯一索引/FirstOrCreate/状态机）仍作为兜底防线。
-func (c *RoomEventConsumer) tryAcquire(ctx context.Context, eventID string) (bool, string, error) {
+func (c *RoomEventConsumer) tryAcquire(ctx context.Context, roomID, eventID string) (bool, string, error) {
 	if c.redis == nil {
 		return true, "", nil
 	}
 	token := uuid.New().String()
-	key := rediskeys.RoomEventProcessedKey(eventID)
+	key := rediskeys.RoomEventProcessedKey(roomID, eventID)
 	ok, err := c.redis.SetNX(ctx, key, token, 7*24*time.Hour).Result()
 	if err != nil {
 		logger.Error("tryAcquire SetNX failed, fail-closed to prevent duplicate processing",
@@ -177,11 +177,11 @@ func (c *RoomEventConsumer) tryAcquire(ctx context.Context, eventID string) (boo
 
 // releaseAcquire 处理失败时释放抢占，让 Kafka 重试能重新进入。
 // 通过 Lua 脚本原子校验 token 后才 DEL，防止 TTL 过期后被其他实例抢占，原持有者误删新持有者的锁（§7.4/§15.5）。
-func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, eventID string, token string) error {
+func (c *RoomEventConsumer) releaseAcquire(ctx context.Context, roomID, eventID string, token string) error {
 	if c.redis == nil {
 		return nil
 	}
-	key := rediskeys.RoomEventProcessedKey(eventID)
+	key := rediskeys.RoomEventProcessedKey(roomID, eventID)
 	return lockScripts.ReleaseLockScript.Run(ctx, c.redis, []string{key}, token).Err()
 }
 

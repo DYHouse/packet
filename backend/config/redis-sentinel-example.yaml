@@ -15,7 +15,7 @@ redis:
   write_timeout: 3s
   master_name: ""        # 单机模式不需要
   sentinel_addrs: []     # 单机模式不需要
-  cluster_addrs: []               # Cluster 模式（预留，本次不实现）
+  cluster_addrs: []               # Cluster 模式（mode=cluster 时填写）
   tls:
     enable: false                 # 本地开发不开 TLS
     insecure_skip_verify: false
@@ -43,7 +43,7 @@ redis:
   read_timeout: 3s
   write_timeout: 3s
   addr: ""              # Sentinel模式不需要
-  cluster_addrs: []               # Cluster 模式（预留，本次不实现）
+  cluster_addrs: []               # Cluster 模式（mode=cluster 时填写）
   tls:                            # 对接 AWS ElastiCache Valkey TLS 时启用
     enable: true
     insecure_skip_verify: true    # ElastiCache 自签名证书，跳过校验
@@ -53,6 +53,32 @@ redis:
     server_name: ""               # 可填 ElastiCache 端点域名
 ```
 
+## 生产环境（Cluster模式 — AWS ElastiCache 集群）
+
+```yaml
+redis:
+  mode: "cluster"
+  cluster_addrs:                  # Cluster 节点端点列表（填写配置端点即可，客户端自动发现全部分片）
+    - "clustercfg.cashparty.q7vjko.cnw1.cache.amazonaws.com.cn:6379"
+  password: "Cashparty20262026"    # ElastiCache AUTH Token
+  db: 0                            # Cluster 模式忽略 db，始终为 0
+  pool_size: 200
+  min_idle_conns: 50
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  addr: ""                         # Cluster 模式不需要
+  master_name: ""                  # Cluster 模式不需要
+  sentinel_addrs: []               # Cluster 模式不需要
+  tls:                             # ElastiCache TLS 必须启用
+    enable: true
+    insecure_skip_verify: true     # ElastiCache 自签名证书，跳过校验
+    ca_cert_path: ""
+    cert_path: ""
+    key_path: ""
+    server_name: ""                # 可填 ElastiCache 端点域名
+```
+
 ## 配置说明
 
 ### 必需参数
@@ -60,6 +86,7 @@ redis:
 - `mode`: Redis模式，可选值：
   - `standalone`: 单机模式（默认）
   - `sentinel`: Sentinel模式
+  - `cluster`: Cluster模式（Redis Cluster / AWS ElastiCache 集群）
 
 - `password`: Redis密码（如果有）
 - `db`: Redis数据库编号
@@ -75,6 +102,10 @@ redis:
 - `master_name`: Sentinel监控的Master名称
 - `sentinel_addrs`: Sentinel节点地址列表
 
+### Cluster模式参数
+
+- `cluster_addrs`: Cluster节点地址列表（至少填写一个配置端点，客户端自动发现全部分片节点）
+
 ### 可选参数
 
 - `dial_timeout`: 连接超时时间
@@ -87,7 +118,6 @@ redis:
   - `cert_path`: mTLS 客户端证书路径（可选）
   - `key_path`: mTLS 客户端私钥路径（可选）
   - `server_name`: SNI / 证书校验域名
-- `cluster_addrs`: Cluster 模式节点地址列表（预留字段，当前版本不实现集群模式）
 
 ## 部署架构
 
@@ -114,7 +144,22 @@ Redis Master:6379 (读写操作)
 Redis Slave:6379 (数据备份)
 ```
 
+### Cluster模式
+
+```
+Application
+    ↓
+Cluster Client (自动路由至对应分片，CRC16 hash slot)
+    ↓
+Redis Cluster (3主3从，数据按 hash slot 分片)
+    - Shard 1: Master:6379 / Replica:6379  (slot 0-5460)
+    - Shard 2: Master:6379 / Replica:6379  (slot 5461-10922)
+    - Shard 3: Master:6379 / Replica:6379  (slot 10923-16383)
+```
+
 ## 故障转移
+
+### Sentinel模式
 
 Sentinel模式支持自动故障转移：
 
@@ -124,6 +169,15 @@ Sentinel模式支持自动故障转移：
 4. 客户端自动连接到新Master
 5. 业务继续运行（通常10-30秒内完成）
 
+### Cluster模式
+
+Cluster模式支持分片级自动故障转移：
+
+1. 某分片Master宕机
+2. 该分片的Replica被提升为Master（Gossip协议检测，通常15-30秒）
+3. 客户端通过MOVED/ASK重定向自动连接新Master
+4. 其他分片不受影响
+
 ## 注意事项
 
 1. **游戏业务推荐配置**：所有操作都走Master，避免主从延迟问题
@@ -131,3 +185,6 @@ Sentinel模式支持自动故障转移：
 3. **连接池大小**：根据业务并发量调整，建议CPU核心数*10
 4. **超时时间**：根据网络环境调整，建议3-5秒
 5. **AWS ElastiCache 迁移**：启用 TLS（`tls.enable: true`）并设置 `insecure_skip_verify: true` 以适配 ElastiCache 自签名证书；同时设置 `password` 为 ElastiCache AUTH Token
+6. **Cluster 模式 hash tag**：所有 Redis key 必须使用 `{roomID}` 或 `{userID}` hash tag 确保同维度数据落在同一 slot，Lua 脚本中的所有 KEYS 必须同 slot（详见 CODING_STANDARD.md §8.8）
+7. **Cluster 模式 db**：Redis Cluster 仅支持 db 0，配置中的 `db` 字段会被忽略
+8. **Cluster 模式 SCAN**：`ScanAll` 方法通过 `ForEachMaster` 跨所有分片并行扫描，单次 `Scan` 仅扫单节点

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/cashparty/backend/common/config"
@@ -20,7 +21,10 @@ type ZRangeBy = redis.ZRangeBy
 // RedisClient Redis 客户端接口，支持 mock 测试。
 // 封装 go-redis 操作，统一 Redis 访问入口。
 type RedisClient interface {
-	Raw() *redis.Client
+	// Raw 返回原生客户端，支持单机/哨兵/集群三种模式。
+	// 返回 redis.UniversalClient 接口（*redis.Client / *redis.ClusterClient 均实现），
+	// 调用方通过 Cmdable 接口操作，无需感知底层客户端类型。
+	Raw() redis.UniversalClient
 	Close() error
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
@@ -40,6 +44,9 @@ type RedisClient interface {
 	Pipeline() redis.Pipeliner
 	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
 	Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
+	// ScanAll 扫描匹配指定模式的所有 key，返回完整 key 列表。
+	// Cluster 模式下自动跨所有 master 节点扫描；单机/哨兵模式退化为单节点 SCAN。
+	ScanAll(ctx context.Context, match string, count int64) ([]string, error)
 	HGet(ctx context.Context, key, field string) *redis.StringCmd
 	HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd
 	HKeys(ctx context.Context, key string) *redis.StringSliceCmd
@@ -66,7 +73,7 @@ type RedisClient interface {
 
 // client Redis 客户端实现
 type client struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
 // buildTLSConfig 根据配置构建 *tls.Config。
@@ -109,7 +116,7 @@ func buildTLSConfig(cfg *config.TLSConfig) (*tls.Config, error) {
 
 // NewClient 创建Redis客户端
 func NewClient(cfg *config.RedisConfig) (RedisClient, error) {
-	var rdb *redis.Client
+	var rdb redis.UniversalClient
 	var err error
 
 	if cfg.UseEvalSHA != nil {
@@ -117,6 +124,8 @@ func NewClient(cfg *config.RedisConfig) (RedisClient, error) {
 	}
 
 	switch cfg.Mode {
+	case "cluster":
+		rdb, err = newClusterClient(cfg)
 	case "sentinel":
 		rdb, err = newSentinelClient(cfg)
 	case "standalone", "":
@@ -138,6 +147,34 @@ func NewClient(cfg *config.RedisConfig) (RedisClient, error) {
 
 	logger.Info("redis connected", "mode", cfg.Mode, "db", cfg.DB)
 	return &client{rdb: rdb}, nil
+}
+
+// newClusterClient 创建集群模式客户端
+func newClusterClient(cfg *config.RedisConfig) (*redis.ClusterClient, error) {
+	if len(cfg.ClusterAddrs) == 0 {
+		return nil, fmt.Errorf("cluster_addrs is required for cluster mode")
+	}
+
+	tlsCfg, err := buildTLSConfig(&cfg.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build tls config: %w", err)
+	}
+
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:         cfg.ClusterAddrs,
+		Password:      cfg.Password,
+		PoolSize:      cfg.PoolSize,
+		MinIdleConns:  cfg.MinIdleConns,
+		DialTimeout:   cfg.DialTimeout,
+		ReadTimeout:   cfg.ReadTimeout,
+		WriteTimeout:  cfg.WriteTimeout,
+		TLSConfig:     tlsCfg,
+		RouteRandomly: true, // 读请求随机路由到主/从，降低主节点压力
+	})
+
+	logger.Info("redis cluster mode",
+		"addrs", cfg.ClusterAddrs, "tls", cfg.TLS.Enable)
+	return rdb, nil
 }
 
 // newStandaloneClient 创建单机模式客户端
@@ -197,13 +234,13 @@ func newSentinelClient(cfg *config.RedisConfig) (*redis.Client, error) {
 }
 
 // Raw 获取原生redis客户端
-func (c *client) Raw() *redis.Client {
+func (c *client) Raw() redis.UniversalClient {
 	return c.rdb
 }
 
-// NewClientFromRaw 包装原生 redis.Client 为 RedisClient。
+// NewClientFromRaw 包装原生 redis.UniversalClient 为 RedisClient。
 // 用于脚本/工具场景复用既有连接，不触发 Ping 校验。
-func NewClientFromRaw(rdb *redis.Client) RedisClient {
+func NewClientFromRaw(rdb redis.UniversalClient) RedisClient {
 	return &client{rdb: rdb}
 }
 
@@ -300,6 +337,46 @@ func (c *client) Eval(ctx context.Context, script string, keys []string, args ..
 // Scan 扫描key
 func (c *client) Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd {
 	return c.rdb.Scan(ctx, cursor, match, count)
+}
+
+// ScanAll 扫描匹配指定模式的所有 key。
+// Cluster 模式下通过 ForEachMaster 跨所有 master 节点并行扫描；
+// 单机/哨兵模式退化为单节点 cursor SCAN。
+func (c *client) ScanAll(ctx context.Context, match string, count int64) ([]string, error) {
+	if cluster, ok := c.rdb.(*redis.ClusterClient); ok {
+		var allKeys []string
+		var mu sync.Mutex
+		err := cluster.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+			keys, err := scanNode(ctx, node, match, count)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allKeys = append(allKeys, keys...)
+			mu.Unlock()
+			return nil
+		})
+		return allKeys, err
+	}
+	return scanNode(ctx, c.rdb, match, count)
+}
+
+// scanNode 在单个节点上执行 cursor-based SCAN，返回所有匹配 key。
+func scanNode(ctx context.Context, cmdable redis.Cmdable, match string, count int64) ([]string, error) {
+	var keys []string
+	var cursor uint64
+	for {
+		batch, nextCursor, err := cmdable.Scan(ctx, cursor, match, count).Result()
+		if err != nil {
+			return keys, err
+		}
+		keys = append(keys, batch...)
+		if nextCursor == 0 {
+			break
+		}
+		cursor = nextCursor
+	}
+	return keys, nil
 }
 
 // HGet 获取hash字段

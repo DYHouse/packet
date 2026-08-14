@@ -161,31 +161,25 @@ func (s *RobotSchedulerRedis) GetActiveCount(ctx context.Context) (int64, error)
 }
 
 // ScanRoomIDs 扫描匹配指定前缀的房间 key，返回房间 ID 列表。
-// prefix 应为带尾随冒号的 key 前缀拼接 "*"（如 "cashparty:room:hash:*"）。
+// prefix 应为完整 SCAN 匹配模式（如 "cashparty:*:room:hash"）。
 // 房间 ID 取 key 中最后一个冒号后的段。
+// Cluster 模式下通过 ScanAll 自动跨所有 master 节点扫描。
 func (s *RobotSchedulerRedis) ScanRoomIDs(ctx context.Context, prefix string, count int64) ([]string, error) {
-	var cursor uint64
-	roomIDs := make([]string, 0)
-	for {
-		keys, nextCursor, err := s.redis.Scan(ctx, cursor, prefix, count).Result()
-		if err != nil {
-			return roomIDs, err
+	keys, err := s.redis.ScanAll(ctx, prefix, count)
+	if err != nil {
+		return nil, err
+	}
+	roomIDs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		idx := strings.LastIndex(key, ":")
+		if idx < 0 || idx == len(key)-1 {
+			continue
 		}
-		for _, key := range keys {
-			idx := strings.LastIndex(key, ":")
-			if idx < 0 || idx == len(key)-1 {
-				continue
-			}
-			roomID := key[idx+1:]
-			if roomID == "" {
-				continue
-			}
-			roomIDs = append(roomIDs, roomID)
+		roomID := key[idx+1:]
+		if roomID == "" {
+			continue
 		}
-		if nextCursor == 0 {
-			break
-		}
-		cursor = nextCursor
+		roomIDs = append(roomIDs, roomID)
 	}
 	return roomIDs, nil
 }
@@ -193,7 +187,8 @@ func (s *RobotSchedulerRedis) ScanRoomIDs(ctx context.Context, prefix string, co
 // GetUserRoom 返回 userRoomKey 指向的 roomID。
 // 返回空串表示 userRoomKey 不存在或值为 "0"；err 仅在 Redis 调用失败时非 nil。
 func (s *RobotSchedulerRedis) GetUserRoom(ctx context.Context, userID int64) (string, error) {
-	val, err := s.redis.Get(ctx, rediskeys.PlayerRoomKey(converter.FormatID(userID))).Result()
+	// 跨房间反查用户当前所在房间，使用 CurrentRoomKey（{userID} hash tag）
+	val, err := s.redis.Get(ctx, rediskeys.CurrentRoomKey(converter.FormatID(userID))).Result()
 	if err != nil {
 		// Redis Nil 表示 key 不存在，返回空串而非 err
 		if errors.Is(err, goredis.Nil) {

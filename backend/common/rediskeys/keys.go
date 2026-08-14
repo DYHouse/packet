@@ -7,6 +7,12 @@
 //   - 多参数 key 的分隔符 MUST 统一为 ":"，禁止下划线 "_"
 //   - Prefix 常量 MUST 带尾随冒号（如 "cashparty:room:hash:"），调用方一律 + "*"
 //   - 工厂函数命名规范：XxxKey(args...) string
+//
+// Hash Tag 规约（Cluster 兼容）：
+//   - 含变量 ID 的 key MUST 在 cashparty: 前缀后以 {ID} 形式嵌入 hash tag
+//   - 房间级数据用 {roomID} tag，格式：cashparty:{roomID}:category:sub
+//   - 用户级数据用 {userID} tag，格式：cashparty:{userID}:category:sub
+//   - 全局 key（无变量 ID）不需 hash tag，格式：cashparty:category:sub
 package rediskeys
 
 import "fmt"
@@ -16,163 +22,162 @@ import "fmt"
 const KeyPrefix = "cashparty"
 
 // ============================================================================
-// 房间相关 key
+// 房间相关 key（{roomID} hash tag，Cluster 兼容）
 // ============================================================================
 
 const (
-	// KeyRoomHashPrefix 房间哈希表前缀（带尾随冒号，用于 SCAN/Keys 匹配）。
-	KeyRoomHashPrefix = KeyPrefix + ":room:hash:"
-	// KeyRoomHash 房间哈希表 key 模板。
-	KeyRoomHash = KeyRoomHashPrefix + "%s"
+	// KeyRoomHash 房间哈希表 key 模板（{roomID} hash tag）。
+	KeyRoomHash = KeyPrefix + ":{%s}:room:hash"
+	// KeyRoomHashPrefix 房间哈希表 SCAN 匹配模式（通配符匹配所有 roomID）。
+	KeyRoomHashPrefix = KeyPrefix + ":*:room:hash"
 
-	// KeyRoomSpectatorsPrefix 房间观众集合前缀。
-	KeyRoomSpectatorsPrefix = KeyPrefix + ":room:spectators:"
-	// KeyRoomSpectators 房间观众集合 key 模板。
-	KeyRoomSpectators = KeyRoomSpectatorsPrefix + "%s"
+	// KeyRoomSpectators 房间观众集合 key 模板（{roomID} hash tag）。
+	KeyRoomSpectators = KeyPrefix + ":{%s}:room:spectators"
 
-	// KeyRoomPlayersPrefix 房间玩家集合前缀。
-	KeyRoomPlayersPrefix = KeyPrefix + ":room:players:"
-	// KeyRoomPlayers 房间玩家集合 key 模板。
-	KeyRoomPlayers = KeyRoomPlayersPrefix + "%s"
+	// KeyRoomPlayers 房间玩家集合 key 模板（{roomID} hash tag）。
+	KeyRoomPlayers = KeyPrefix + ":{%s}:room:players"
 
-	// KeyPlayerRoom 玩家当前所在房间映射。
-	KeyPlayerRoom = KeyPrefix + ":player:room:%s"
-	// KeyRoomNode 房间所属节点。
-	KeyRoomNode = KeyPrefix + ":room:node:%s"
+	// KeyPlayerRoomInRoom 房间内玩家映射（Lua 内部房间级清理用，{roomID} hash tag）。
+	// 替代旧的全局 KeyPlayerRoom，用于 Lua 脚本中房间级原子清理。
+	KeyPlayerRoomInRoom = KeyPrefix + ":{%s}:player:room:%s"
+
+	// KeyRoomNode 房间所属节点（{roomID} hash tag）。
+	KeyRoomNode = KeyPrefix + ":{%s}:room:node"
 	// KeyRoomSeq 房间序号（按日期）。
 	KeyRoomSeq = KeyPrefix + ":room:seq:%s"
 	// KeyDeadLetterQueue DB 死信队列。
 	KeyDeadLetterQueue = KeyPrefix + ":db:dead_letter"
-	// KeyRoomSeats 房间座位集合。
-	KeyRoomSeats = KeyPrefix + ":room:seats:%s"
-	// KeyRoomSeatOwner 房间座位归属（注意：使用 ":" 分隔，禁止下划线 "_owner"）。
-	KeyRoomSeatOwner = KeyPrefix + ":room:seat:owner:%s"
-	// KeyRoomQueue 房间排队队列。
-	KeyRoomQueue = KeyPrefix + ":room:queue:%s"
+	// KeyRoomSeats 房间座位集合（{roomID} hash tag）。
+	KeyRoomSeats = KeyPrefix + ":{%s}:room:seats"
+	// KeyRoomSeatOwner 房间座位归属（{roomID} hash tag，注意：使用 ":" 分隔，禁止下划线 "_owner"）。
+	KeyRoomSeatOwner = KeyPrefix + ":{%s}:room:seat:owner"
+	// KeyRoomQueue 房间排队队列（{roomID} hash tag）。
+	KeyRoomQueue = KeyPrefix + ":{%s}:room:queue"
 	// KeySeatTimeout 座位超时集合。
 	KeySeatTimeout = KeyPrefix + ":room:seat:timeout"
 	// KeyReadyTimeout 准备超时集合。
 	KeyReadyTimeout = KeyPrefix + ":room:ready:timeout"
 	// KeyDisconnectTimeout 断线超时集合。
 	KeyDisconnectTimeout = KeyPrefix + ":room:disconnect:timeout"
-	// KeyRoomPlayer 房间内玩家信息。
-	KeyRoomPlayer = KeyPrefix + ":room:player:%s:%s"
-	// KeyRoomNoToID 房间号到房间ID的映射。
-	KeyRoomNoToID = KeyPrefix + ":room:no_to_id:%s"
+	// KeyRoomPlayer 房间内玩家信息（{roomID} hash tag）。
+	KeyRoomPlayer = KeyPrefix + ":{%s}:room:player:%s"
+	// KeyRoomNoToID 房间号到房间ID的映射（{roomNo} hash tag）。
+	KeyRoomNoToID = KeyPrefix + ":{%s}:room:no_to_id"
+	// KeyRoomEventProcessed 房间事件已处理标记（{roomID} hash tag）。
+	KeyRoomEventProcessed = KeyPrefix + ":{%s}:room:event:processed:%s"
 )
 
 // ============================================================================
-// 用户相关 key
+// 用户相关 key（{userID} hash tag，Cluster 兼容）
 // ============================================================================
 
 const (
-	// KeyUserByUserID 按 user_id 查询用户。
-	KeyUserByUserID = KeyPrefix + ":user:user_id:%s"
-	// KeyUserById 按 id 查询用户。
-	KeyUserById = KeyPrefix + ":user:id:%s"
+	// KeyCurrentRoom 用户当前所在房间映射（跨房间反查，{userID} hash tag）。
+	// 替代旧的全局 KeyPlayerRoom，用于网关反查与跨房间防重入检查。
+	KeyCurrentRoom = KeyPrefix + ":{%s}:current_room"
+
+	// KeyUserByUserID 按 user_id 查询用户（{userID} hash tag）。
+	KeyUserByUserID = KeyPrefix + ":{%s}:user:user_id"
+	// KeyUserById 按 id 查询用户（{userID} hash tag）。
+	KeyUserById = KeyPrefix + ":{%s}:user:id"
 )
 
 // ============================================================================
-// 轮次/红包相关 key
+// 轮次/红包相关 key（{roomID} hash tag，Cluster 兼容）
 // ============================================================================
 
 const (
-	// KeyRoundPackets 轮次红包列表。
-	KeyRoundPackets = KeyPrefix + ":round:packets:%s"
-	// KeyRoundAvailablePackets 轮次可用红包列表。
-	KeyRoundAvailablePackets = KeyPrefix + ":round:available_packets:%s"
-	// KeyRoundGrabbers 轮次抢红包者集合。
-	KeyRoundGrabbers = KeyPrefix + ":round:grabbers:%s"
-	// KeyRoundReward 轮次奖励信息。
-	KeyRoundReward = KeyPrefix + ":round:reward:%s"
-	// KeyUserGrabbed 用户抢过红包标记。
-	KeyUserGrabbed = KeyPrefix + ":round:grabbed:%s:%s"
-	// KeyRoundGrabbed 玩家本轮已抢标记(Lua 脚本使用)
+	// KeyRoundPackets 轮次红包列表（{roomID} hash tag）。
+	KeyRoundPackets = KeyPrefix + ":{%s}:round:packets:%s"
+	// KeyRoundAvailablePackets 轮次可用红包列表（{roomID} hash tag）。
+	KeyRoundAvailablePackets = KeyPrefix + ":{%s}:round:available_packets:%s"
+	// KeyRoundGrabbers 轮次抢红包者集合（{roomID} hash tag）。
+	KeyRoundGrabbers = KeyPrefix + ":{%s}:round:grabbers:%s"
+	// KeyRoundReward 轮次奖励信息（{roomID} hash tag）。
+	KeyRoundReward = KeyPrefix + ":{%s}:round:reward:%s"
+	// KeyUserGrabbed 用户抢过红包标记（{roomID} hash tag）。
+	KeyUserGrabbed = KeyPrefix + ":{%s}:round:grabbed:%s:%s"
+	// KeyRoundGrabbed 玩家本轮已抢标记(Lua 脚本使用，{roomID} hash tag)。
 	// 对应 Lua 中的 roundGrabbedPrefix .. roundID .. ':' .. userID
-	KeyRoundGrabbed = KeyPrefix + ":round:grabbed:%s:%s"
-	// KeyRoundGrabbedPrefix 玩家本轮已抢标记 key 前缀(Lua 脚本循环内动态拼接使用)
-	// 对应 Lua 中的 roundGrabbedPrefix .. roundID .. ':' .. userID
-	KeyRoundGrabbedPrefix = KeyPrefix + ":round:grabbed:"
-	// KeyPacketInfo 红包详情。
-	KeyPacketInfo = KeyPrefix + ":packet:info:%s"
-	// KeyPacketInfoPrefix 红包信息 key 前缀(Lua 脚本循环内动态拼接使用)
-	KeyPacketInfoPrefix = KeyPrefix + ":packet:info:"
-	// KeyGrabRecord 抢红包记录。
-	KeyGrabRecord = KeyPrefix + ":grab:record:%s"
-	// KeyRoundGrabRecord 轮次抢红包记录。
-	KeyRoundGrabRecord = KeyPrefix + ":round:grab_record:%s:%s"
+	KeyRoundGrabbed = KeyPrefix + ":{%s}:round:grabbed:%s:%s"
+	// KeyPacketInfo 红包详情（{roomID} hash tag）。
+	KeyPacketInfo = KeyPrefix + ":{%s}:packet:info:%s"
+	// KeyGrabRecord 抢红包记录（{roomID} hash tag）。
+	KeyGrabRecord = KeyPrefix + ":{%s}:grab:record:%s"
+	// KeyRoundGrabRecord 轮次抢红包记录（{roomID} hash tag）。
+	KeyRoundGrabRecord = KeyPrefix + ":{%s}:round:grab_record:%s:%s"
 
-	// KeyRoundState 轮次状态。
-	KeyRoundState = KeyPrefix + ":round:state:%s"
-	// KeyRoundStatePrefix 轮次状态前缀（带尾随冒号）。
-	KeyRoundStatePrefix = KeyPrefix + ":round:state:"
+	// KeyRoundState 轮次状态（{roomID} hash tag）。
+	KeyRoundState = KeyPrefix + ":{%s}:round:state:%s"
 
-	// KeyPacketAvailablePrefix 红包可用标记前缀（Lua 脚本使用）。
-	// 对应 Lua 中的 keyPrefix .. ':packet:available:' .. packetID
-	KeyPacketAvailablePrefix = KeyPrefix + ":packet:available:"
-	// KeyPacketAvailable 红包可用标记 key 模板。
-	KeyPacketAvailable = KeyPacketAvailablePrefix + "%s"
-	// KeyGlobalPacketID 全局红包ID自增计数器（Lua 脚本使用）。
-	// 对应 Lua 中的 keyPrefix .. ':global:packet_id'
+	// KeyPacketAvailable 红包可用标记 key 模板（{roomID} hash tag）。
+	KeyPacketAvailable = KeyPrefix + ":{%s}:packet:available:%s"
+
+	// KeyRoomPacketIDSeq 房间内红包ID自增序列（{roomID} hash tag，替代全局计数器）。
+	// 替代旧的全局 KeyGlobalPacketID，红包 ID 仅在房间内引用，无需全局唯一。
+	KeyRoomPacketIDSeq = KeyPrefix + ":{%s}:packet_id_seq"
+
+	// KeyGlobalPacketID 全局红包ID自增计数器（已废弃）。
+	// Deprecated: 使用 KeyRoomPacketIDSeq 替代，按房间分片避免 Cluster 跨 slot。
 	KeyGlobalPacketID = KeyPrefix + ":global:packet_id"
+
+	// KeyPlayerRoom 玩家当前所在房间映射（已废弃）。
+	// Deprecated: 使用 KeyCurrentRoom（跨房间反查）或 KeyPlayerRoomInRoom（房间内清理）替代。
+	KeyPlayerRoom = KeyPrefix + ":player:room:%s"
 )
 
 // ============================================================================
-// 锁相关 key
+// 锁相关 key（{roomID} hash tag，Cluster 兼容）
 // ============================================================================
 
 const (
-	// KeyGameStartLock 游戏开始锁。
-	KeyGameStartLock = KeyPrefix + ":lock:game_start:%s"
-	// KeySettleLock 结算锁。
-	KeySettleLock = KeyPrefix + ":lock:settle:%s:%s"
-	// KeyGameEndLock 游戏结束锁。
-	KeyGameEndLock = KeyPrefix + ":lock:game_end:%s"
-	// KeySendPacketLock 发红包锁。
-	KeySendPacketLock = KeyPrefix + ":lock:send_packet:%s:%s"
-	// KeyReplaceTimeoutLock 替补超时锁。
-	KeyReplaceTimeoutLock = KeyPrefix + ":lock:replace_timeout:%s:%s"
+	// KeyGameStartLock 游戏开始锁（{roomID} hash tag）。
+	KeyGameStartLock = KeyPrefix + ":{%s}:lock:game_start"
+	// KeySettleLock 结算锁（{roomID} hash tag）。
+	KeySettleLock = KeyPrefix + ":{%s}:lock:settle:%s"
+	// KeyGameEndLock 游戏结束锁（{roomID} hash tag）。
+	KeyGameEndLock = KeyPrefix + ":{%s}:lock:game_end"
+	// KeySendPacketLock 发红包锁（{roomID} hash tag）。
+	KeySendPacketLock = KeyPrefix + ":{%s}:lock:send_packet:%s"
+	// KeyReplaceTimeoutLock 替补超时锁（{roomID} hash tag）。
+	KeyReplaceTimeoutLock = KeyPrefix + ":{%s}:lock:replace_timeout:%s"
 )
 
 // ============================================================================
-// 惩罚 / 超时 / 结算完成状态
+// 惩罚 / 超时 / 结算完成状态（{roomID} hash tag，Cluster 兼容）
 // ============================================================================
 
 const (
-	// KeyPenaltyCount 惩罚计数。
-	KeyPenaltyCount = KeyPrefix + ":penalty:count:%s:%s"
-	// KeyPenaltyRecord 惩罚记录。
-	KeyPenaltyRecord = KeyPrefix + ":penalty:record:%s:%s"
+	// KeyPenaltyCount 惩罚计数（{roomID} hash tag）。
+	KeyPenaltyCount = KeyPrefix + ":{%s}:penalty:count:%s"
+	// KeyPenaltyRecord 惩罚记录（{roomID} hash tag）。
+	KeyPenaltyRecord = KeyPrefix + ":{%s}:penalty:record:%s"
 	// KeyTimeout 超时类型 key。
 	KeyTimeout = KeyPrefix + ":timeout:%s"
-	// KeySettlementDone 结算完成标记。
-	KeySettlementDone = KeyPrefix + ":settle:done:%d"
+	// KeySettlementDone 结算完成标记（{roomID} hash tag）。
+	KeySettlementDone = KeyPrefix + ":{%s}:settle:done:%d"
 )
 
 // ============================================================================
-// 事件幂等 key
+// 事件幂等 key（{roomID} hash tag，Cluster 兼容）
+// ============================================================================
+
+// KeyGameEventProcessed 游戏事件已处理标记。
+const KeyGameEventProcessed = KeyPrefix + ":game:event:processed:%s"
+
+// ============================================================================
+// 奖励 / 利润 / 会话统计（{roomID} hash tag，Cluster 兼容）
 // ============================================================================
 
 const (
-	// KeyRoomEventProcessed 房间事件已处理标记。
-	KeyRoomEventProcessed = KeyPrefix + ":room:event:processed:%s"
-	// KeyGameEventProcessed 游戏事件已处理标记。
-	KeyGameEventProcessed = KeyPrefix + ":game:event:processed:%s"
-)
-
-// ============================================================================
-// 奖励 / 利润 / 会话统计
-// ============================================================================
-
-const (
-	// KeyRewardCycleStraight 连续豹子奖励周期。
-	KeyRewardCycleStraight = KeyPrefix + ":reward:cycle:%s:%s:straight"
-	// KeyRewardCycleLeopard 豹子奖励周期。
-	KeyRewardCycleLeopard = KeyPrefix + ":reward:cycle:%s:%s:leopard"
+	// KeyRewardCycleStraight 连续豹子奖励周期（{roomID} hash tag）。
+	KeyRewardCycleStraight = KeyPrefix + ":{%s}:reward:cycle:%s:straight"
+	// KeyRewardCycleLeopard 豹子奖励周期（{roomID} hash tag）。
+	KeyRewardCycleLeopard = KeyPrefix + ":{%s}:reward:cycle:%s:leopard"
 	// KeyProfitDaily 每日利润统计。
 	KeyProfitDaily = KeyPrefix + ":profit:daily:%s"
-	// KeySessionPlayerTotals 会话玩家总额。
-	KeySessionPlayerTotals = KeyPrefix + ":session:%s:player:totals"
+	// KeySessionPlayerTotals 会话玩家总额（{roomID} hash tag）。
+	KeySessionPlayerTotals = KeyPrefix + ":{%s}:session:%s:player:totals"
 )
 
 // ============================================================================
@@ -180,30 +185,34 @@ const (
 // ============================================================================
 
 const (
-	// KeyRobotPoolAvailable 可用机器人账号池。
+	// KeyRobotPoolAvailable 可用机器人账号池（全局，单 key 操作）。
 	KeyRobotPoolAvailable = KeyPrefix + ":robot:pool:available"
-	// KeyRobotRoom 房间机器人集合。
-	KeyRobotRoom = KeyPrefix + ":robot:room:%s"
-	// KeyRobotRoomPrefix 房间机器人集合前缀（带尾随冒号）。
-	KeyRobotRoomPrefix = KeyPrefix + ":robot:room:"
+	// KeyRobotRoom 房间机器人集合（{roomID} hash tag）。
+	KeyRobotRoom = KeyPrefix + ":{%s}:robot:room"
+	// KeyRobotRoomPrefix 房间机器人集合 SCAN 匹配模式。
+	KeyRobotRoomPrefix = KeyPrefix + ":*:robot:room"
 	// KeyRobotAssignLock 机器人分配锁。
 	KeyRobotAssignLock = KeyPrefix + ":robot:assign:%d"
-	// KeyRobotRoomAssignLock 房间分配限流锁。
-	KeyRobotRoomAssignLock = KeyPrefix + ":robot:room_assign:%s"
+	// KeyRobotRoomAssignLock 房间分配限流锁（{roomID} hash tag）。
+	KeyRobotRoomAssignLock = KeyPrefix + ":{%s}:robot:room_assign"
 	// KeyRobotRecycleCooldown 机器人回收冷却。
 	KeyRobotRecycleCooldown = KeyPrefix + ":robot:recycle_cooldown:%d"
-	// KeyRobotSchedulerActive 调度器活跃机器人集合。
+	// KeyRobotSchedulerActive 调度器活跃机器人集合（全局）。
 	KeyRobotSchedulerActive = KeyPrefix + ":robot:scheduler:active"
-	// KeyRobotVirtualBalance 机器人虚拟余额。
-	KeyRobotVirtualBalance = KeyPrefix + ":robot:virtual_balance:%d"
-	// KeyRobotVirtualBalanceDirty 虚拟余额脏数据集合。
+	// KeyRobotVirtualBalance 机器人虚拟余额（{userID} hash tag）。
+	KeyRobotVirtualBalance = KeyPrefix + ":{%d}:robot:virtual_balance"
+	// KeyRobotVirtualBalanceDirty 虚拟余额脏数据集合（已废弃，全局 SET）。
+	// Deprecated: 使用 KeyRobotDirty 替代，per-user 标记避免 Cluster 跨 slot。
 	KeyRobotVirtualBalanceDirty = KeyPrefix + ":robot:virtual_balance:dirty"
-	// KeyRobotUserIDs 机器人用户ID集合。
+	// KeyRobotDirty 机器人虚拟余额脏标记（per-user，{userID} hash tag）。
+	// 替代全局 KeyRobotVirtualBalanceDirty SET，与余额 key 同 slot。
+	KeyRobotDirty = KeyPrefix + ":{%d}:robot:dirty"
+	// KeyRobotUserIDs 机器人用户ID集合（全局，单 key 操作）。
 	KeyRobotUserIDs = KeyPrefix + ":robot:user_ids"
 )
 
 // ============================================================================
-// 结算锁相关 key（settlement 层）
+// 结算锁相关 key（settlement 层，全局单 key 操作）
 // ============================================================================
 
 const (
@@ -224,8 +233,6 @@ const (
 	// KeyRefundApplyLock 退款申请锁。
 	KeyRefundApplyLock = KeyPrefix + ":settle:lock:refund_apply:%d"
 	// KeyDeductLock 扣款锁（注意：使用 ":" 分隔，禁止下划线 "_"，P1-8 修复）。
-	// 旧值：cashparty:settle:lock:deduct:%d_%d_%d
-	// 新值：cashparty:settle:lock:deduct:%d:%d:%d
 	KeyDeductLock = KeyPrefix + ":settle:lock:deduct:%d:%d:%d"
 	// KeyBillRetryLock 账单重试锁。
 	KeyBillRetryLock = KeyPrefix + ":settle:lock:bill_retry:%d"
@@ -234,8 +241,6 @@ const (
 	// KeyGameSettleLock 游戏结算锁。
 	KeyGameSettleLock = KeyPrefix + ":settle:lock:game:%d"
 	// KeyGameSettleRetryLock 游戏结算重试锁（注意：使用 ":" 分隔，禁止下划线 "_"，P1-8 修复）。
-	// 旧值：cashparty:settle:lock:game_retry:%d_%d
-	// 新值：cashparty:settle:lock:game_retry:%d:%d
 	KeyGameSettleRetryLock = KeyPrefix + ":settle:lock:game_retry:%d:%d"
 	// KeyPenaltyDeductLock 罚款扣款锁（按 userID + roundTraceID 粒度，防止重复扣款）。
 	KeyPenaltyDeductLock = KeyPrefix + ":settle:lock:penalty_deduct:%d:%s"
@@ -248,8 +253,8 @@ const (
 // ============================================================================
 
 const (
-	// KeyGatewayConn 网关连接映射。
-	KeyGatewayConn = KeyPrefix + ":gateway:conn:%s"
+	// KeyGatewayConn 网关连接映射（{userID} hash tag）。
+	KeyGatewayConn = KeyPrefix + ":{%s}:gateway:conn"
 	// KeyGatewayKick 网关踢人通道。
 	KeyGatewayKick = KeyPrefix + ":gateway:kick:%s"
 	// KeyRateLimitIP IP 维度限流。
@@ -303,7 +308,7 @@ const (
 )
 
 // ============================================================================
-// 房间相关 key 工厂函数
+// 房间相关 key 工厂函数（{roomID} hash tag）
 // ============================================================================
 
 // RoomHashKey 房间哈希表 key
@@ -321,7 +326,22 @@ func RoomPlayersKey(roomID string) string {
 	return fmt.Sprintf(KeyRoomPlayers, roomID)
 }
 
+// CurrentRoomKey 用户当前所在房间映射 key（跨房间反查）。
+// 替代旧的 PlayerRoomKey，用于网关反查与跨房间防重入检查。
+func CurrentRoomKey(userID string) string {
+	return fmt.Sprintf(KeyCurrentRoom, userID)
+}
+
+// PlayerRoomInRoomKey 房间内玩家映射 key（Lua 内部房间级清理用）。
+// 替代旧的 PlayerRoomKey，用于 Lua 脚本中房间级原子清理（{roomID} hash tag）。
+func PlayerRoomInRoomKey(roomID, userID string) string {
+	return fmt.Sprintf(KeyPlayerRoomInRoom, roomID, userID)
+}
+
 // PlayerRoomKey 玩家当前所在房间映射 key
+//
+// Deprecated: 使用 CurrentRoomKey（跨房间反查）或 PlayerRoomInRoomKey（房间内清理）替代。
+// Cluster 模式下原 key 是 userID 维度，与 roomID 维度 Lua key 跨 slot。
 func PlayerRoomKey(userID string) string {
 	return fmt.Sprintf(KeyPlayerRoom, userID)
 }
@@ -383,7 +403,7 @@ func RoomNoToIDKey(roomNo string) string {
 }
 
 // ============================================================================
-// 用户相关 key 工厂函数
+// 用户相关 key 工厂函数（{userID} hash tag）
 // ============================================================================
 
 // UserByUserIDKey 按 user_id 查询用户 key
@@ -397,71 +417,102 @@ func UserByIdKey(id string) string {
 }
 
 // ============================================================================
-// 轮次/红包相关 key 工厂函数
+// 轮次/红包相关 key 工厂函数（{roomID} hash tag）
 // ============================================================================
 
+// RoundStatePrefix 轮次状态 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
+// 返回值形如 cashparty:{room123}:round:state:，调用方拼接 roundID。
+func RoundStatePrefix(roomID string) string {
+	return fmt.Sprintf("cashparty:{%s}:round:state:", roomID)
+}
+
+// PacketInfoPrefix 红包详情 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
+// 返回值形如 cashparty:{room123}:packet:info:，调用方拼接 packetID。
+func PacketInfoPrefix(roomID string) string {
+	return fmt.Sprintf("cashparty:{%s}:packet:info:", roomID)
+}
+
+// PacketAvailablePrefix 红包可用标记 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
+// 返回值形如 cashparty:{room123}:packet:available:，调用方拼接 packetID。
+func PacketAvailablePrefix(roomID string) string {
+	return fmt.Sprintf("cashparty:{%s}:packet:available:", roomID)
+}
+
+// RoundGrabbedPrefix 玩家本轮已抢标记 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
+// 返回值形如 cashparty:{room123}:round:grabbed:，调用方拼接 roundID:userID。
+func RoundGrabbedPrefix(roomID string) string {
+	return fmt.Sprintf("cashparty:{%s}:round:grabbed:", roomID)
+}
+
 // RoundPacketsKey 轮次红包列表 key
-func RoundPacketsKey(roundID string) string {
-	return fmt.Sprintf(KeyRoundPackets, roundID)
+func RoundPacketsKey(roomID, roundID string) string {
+	return fmt.Sprintf(KeyRoundPackets, roomID, roundID)
 }
 
 // RoundAvailablePacketsKey 轮次可用红包列表 key
-func RoundAvailablePacketsKey(roundID string) string {
-	return fmt.Sprintf(KeyRoundAvailablePackets, roundID)
+func RoundAvailablePacketsKey(roomID, roundID string) string {
+	return fmt.Sprintf(KeyRoundAvailablePackets, roomID, roundID)
 }
 
 // RoundGrabbersKey 轮次抢红包者集合 key
-func RoundGrabbersKey(roundID string) string {
-	return fmt.Sprintf(KeyRoundGrabbers, roundID)
+func RoundGrabbersKey(roomID, roundID string) string {
+	return fmt.Sprintf(KeyRoundGrabbers, roomID, roundID)
 }
 
 // RoundRewardKey 轮次奖励信息 key
-func RoundRewardKey(roundID string) string {
-	return fmt.Sprintf(KeyRoundReward, roundID)
+func RoundRewardKey(roomID, roundID string) string {
+	return fmt.Sprintf(KeyRoundReward, roomID, roundID)
 }
 
 // UserGrabbedKey 用户抢过红包标记 key
-func UserGrabbedKey(roundID, userID string) string {
-	return fmt.Sprintf(KeyUserGrabbed, roundID, userID)
+func UserGrabbedKey(roomID, roundID, userID string) string {
+	return fmt.Sprintf(KeyUserGrabbed, roomID, roundID, userID)
 }
 
 // RoundGrabbedKey 生成玩家本轮已抢标记 key
-func RoundGrabbedKey(roundID, userID string) string {
-	return fmt.Sprintf(KeyRoundGrabbed, roundID, userID)
+func RoundGrabbedKey(roomID, roundID, userID string) string {
+	return fmt.Sprintf(KeyRoundGrabbed, roomID, roundID, userID)
 }
 
 // PacketInfoKey 红包详情 key
-func PacketInfoKey(packetID string) string {
-	return fmt.Sprintf(KeyPacketInfo, packetID)
+func PacketInfoKey(roomID, packetID string) string {
+	return fmt.Sprintf(KeyPacketInfo, roomID, packetID)
 }
 
 // GrabRecordKey 抢红包记录 key
-func GrabRecordKey(packetID string) string {
-	return fmt.Sprintf(KeyGrabRecord, packetID)
+func GrabRecordKey(roomID, packetID string) string {
+	return fmt.Sprintf(KeyGrabRecord, roomID, packetID)
 }
 
 // RoundGrabRecordKey 轮次抢红包记录 key
-func RoundGrabRecordKey(roundID, userID string) string {
-	return fmt.Sprintf(KeyRoundGrabRecord, roundID, userID)
+func RoundGrabRecordKey(roomID, roundID, userID string) string {
+	return fmt.Sprintf(KeyRoundGrabRecord, roomID, roundID, userID)
 }
 
 // RoundStateKey 轮次状态 key
-func RoundStateKey(roundID string) string {
-	return fmt.Sprintf(KeyRoundState, roundID)
+func RoundStateKey(roomID, roundID string) string {
+	return fmt.Sprintf(KeyRoundState, roomID, roundID)
 }
 
 // PacketAvailableKey 红包可用标记 key（供 Go 侧与 Lua 脚本共享）
-func PacketAvailableKey(packetID string) string {
-	return fmt.Sprintf(KeyPacketAvailable, packetID)
+func PacketAvailableKey(roomID, packetID string) string {
+	return fmt.Sprintf(KeyPacketAvailable, roomID, packetID)
 }
 
-// GlobalPacketIDKey 全局红包ID计数器 key（供 Go 侧与 Lua 脚本共享）
+// RoomPacketIDSeqKey 房间内红包ID序列 key（替代全局计数器，按房间分片）。
+func RoomPacketIDSeqKey(roomID string) string {
+	return fmt.Sprintf(KeyRoomPacketIDSeq, roomID)
+}
+
+// GlobalPacketIDKey 全局红包ID计数器 key
+//
+// Deprecated: 使用 RoomPacketIDKey 替代，按房间分片避免 Cluster 跨 slot。
 func GlobalPacketIDKey() string {
 	return KeyGlobalPacketID
 }
 
 // ============================================================================
-// 锁相关 key 工厂函数
+// 锁相关 key 工厂函数（{roomID} hash tag）
 // ============================================================================
 
 // GameStartLockKey 游戏开始锁 key
@@ -509,8 +560,8 @@ func TimeoutKey(timeoutType string) string {
 }
 
 // SettlementDoneKey 结算完成标记 key
-func SettlementDoneKey(roundID int64) string {
-	return fmt.Sprintf(KeySettlementDone, roundID)
+func SettlementDoneKey(roomID string, roundID int64) string {
+	return fmt.Sprintf(KeySettlementDone, roomID, roundID)
 }
 
 // ============================================================================
@@ -518,8 +569,8 @@ func SettlementDoneKey(roundID int64) string {
 // ============================================================================
 
 // RoomEventProcessedKey 房间事件已处理标记 key
-func RoomEventProcessedKey(eventID string) string {
-	return fmt.Sprintf(KeyRoomEventProcessed, eventID)
+func RoomEventProcessedKey(roomID, eventID string) string {
+	return fmt.Sprintf(KeyRoomEventProcessed, roomID, eventID)
 }
 
 // GameEventProcessedKey 游戏事件已处理标记 key
@@ -547,8 +598,8 @@ func ProfitDailyKey(date string) string {
 }
 
 // SessionPlayerTotalsKey 会话玩家总额 key
-func SessionPlayerTotalsKey(sessionID string) string {
-	return fmt.Sprintf(KeySessionPlayerTotals, sessionID)
+func SessionPlayerTotalsKey(roomID, sessionID string) string {
+	return fmt.Sprintf(KeySessionPlayerTotals, roomID, sessionID)
 }
 
 // ============================================================================
@@ -585,12 +636,20 @@ func RobotSchedulerActiveKey() string {
 	return KeyRobotSchedulerActive
 }
 
-// RobotVirtualBalanceKey 机器人虚拟余额 key
+// RobotVirtualBalanceKey 机器人虚拟余额 key（{userID} hash tag）
 func RobotVirtualBalanceKey(userID int64) string {
 	return fmt.Sprintf(KeyRobotVirtualBalance, userID)
 }
 
+// RobotDirtyKey 机器人虚拟余额脏标记 key（per-user，{userID} hash tag）。
+// 替代全局 RobotVirtualBalanceDirtyKey，与余额 key 同 slot。
+func RobotDirtyKey(userID int64) string {
+	return fmt.Sprintf(KeyRobotDirty, userID)
+}
+
 // RobotVirtualBalanceDirtyKey 虚拟余额脏数据集合 key
+//
+// Deprecated: 使用 RobotDirtyKey 替代，per-user 标记避免 Cluster 跨 slot。
 func RobotVirtualBalanceDirtyKey() string {
 	return KeyRobotVirtualBalanceDirty
 }
@@ -683,7 +742,7 @@ func SubstituteFeeDeductLockKey(userID int64, traceID string) string {
 // 网关相关 key 工厂函数
 // ============================================================================
 
-// GatewayConnKey 网关连接映射 key
+// GatewayConnKey 网关连接映射 key（{userID} hash tag）
 func GatewayConnKey(userID string) string {
 	return fmt.Sprintf(KeyGatewayConn, userID)
 }

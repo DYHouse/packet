@@ -6,19 +6,19 @@ package scripts
 // Lua 拼接的 key 与 Go 常量映射：
 //   - packetAvailablePrefix .. packetID              → rediskeys.KeyPacketAvailablePrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketAvailableKey(packetID)）
-//   - globalPacketIDKey                              → rediskeys.KeyGlobalPacketID
+//   - roomPacketIDSeqKey                              → rediskeys.KeyRoomPacketIDSeq
 //   - packetInfoPrefix .. packetID                   → rediskeys.KeyPacketInfoPrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketInfoKey(packetID)）
 //   - roundGrabbedPrefix .. roundID .. ':' .. userID → rediskeys.KeyRoundGrabbed
 //                                                  （工厂函数 rediskeys.RoundGrabbedKey(roundID, userID)）
 //
 // 注意：
-//   - 具体 prefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPacketInfoPrefix/KeyPacketAvailablePrefix/KeyGlobalPacketID 等常量。
+//   - 具体 prefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPacketInfoPrefix/KeyPacketAvailablePrefix/KeyRoomPacketIDSeq 等常量。
 //   - luaGrabPacket 为单 packetID 场景，packet info / available key 已改为通过 KEYS[6]/KEYS[7]
 //     由 Go 侧直接传入（rediskeys.PacketInfoKey / PacketAvailableKey），不再在 Lua 内拼接 prefix。
 //   - luaRobotGrabPacket / luaAutoDistributePackets / luaSendPacket 为循环内动态 packetID 场景，
-//     通过 ARGV 接收具体 prefix（packetInfoPrefix / packetAvailablePrefix / globalPacketIDKey / roundGrabbedPrefix），
-//     对应 KeyPacketInfoPrefix / KeyPacketAvailablePrefix / KeyGlobalPacketID。
+//     通过 ARGV 接收具体 prefix（packetInfoPrefix / packetAvailablePrefix / roomPacketIDSeqKey / roundGrabbedPrefix），
+//     对应 KeyPacketInfoPrefix / KeyPacketAvailablePrefix / KeyRoomPacketIDSeq。
 
 // LuaGrabPacket 抢红包脚本
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey, packetInfoKey, packetAvailableKey]
@@ -281,7 +281,7 @@ return {0, #results, results}  -- LuaErrSuccess
 
 // LuaSendPacket 统一发红包脚本
 // KEYS: [roomHashKey, playersKey, roundStateKey, availablePacketsKey, grabbersKey]
-// ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now, grabTimeout, packetInfoPrefix, packetAvailablePrefix, globalPacketIDKey, packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount, packetDataTTL, roundStateTTL]
+// ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now, grabTimeout, packetInfoPrefix, packetAvailablePrefix, roomPacketIDSeqKey, packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount, packetDataTTL, roundStateTTL]
 // scenario: 1=first_round, 2=player_manual, 3=timeout_forced, 4=resume_interrupt
 // 返回: {code, roundID, packetIDs}
 // 错误码: LuaErrGameNotInPlaying(6), LuaErrNotFirstRound(50), LuaErrNoPlayers(52), LuaErrNotYourTurn(51), LuaErrPacketsAlreadyExist(20)
@@ -302,7 +302,7 @@ local now = tonumber(ARGV[7])
 local grabTimeout = tonumber(ARGV[8])
 local packetInfoPrefix = ARGV[9]
 local packetAvailablePrefix = ARGV[10]
-local globalPacketIDKey = ARGV[11]
+local roomPacketIDSeqKey = ARGV[11]
 local packetAmountsJson = ARGV[12]
 local roundID = ARGV[13]
 local roomID = ARGV[14]
@@ -360,7 +360,7 @@ local packetCount = #amounts
 local packetIDs = {}
 
 for i, amount in ipairs(amounts) do
-    local packetID = redis.call('INCR', globalPacketIDKey)
+    local packetID = redis.call('INCR', roomPacketIDSeqKey)
     local packetKey = packetInfoPrefix .. packetID
     local availableKey = packetAvailablePrefix .. packetID
 

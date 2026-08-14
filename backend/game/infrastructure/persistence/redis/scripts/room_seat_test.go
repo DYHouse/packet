@@ -51,7 +51,7 @@ func TestJoinAsSpectator(t *testing.T) {
 			rediskeys.RoomHashKey(roomID),
 			rediskeys.RoomSpectatorsKey(roomID),
 			rediskeys.RoomPlayersKey(roomID),
-			rediskeys.PlayerRoomKey(userID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
 		}
 		spectatorData := `{"user_id":"user1","nickname":"alice","seat_no":0}`
 		args := []interface{}{userID, spectatorData, time.Now().Unix(), roomID, 3600, 3600}
@@ -71,7 +71,7 @@ func TestJoinAsSpectator(t *testing.T) {
 			rediskeys.RoomHashKey(roomID),
 			rediskeys.RoomSpectatorsKey(roomID),
 			rediskeys.RoomPlayersKey(roomID),
-			rediskeys.PlayerRoomKey(userID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
 		}
 		args := []interface{}{userID, "{}", time.Now().Unix(), roomID, 3600, 3600}
 
@@ -95,7 +95,7 @@ func TestJoinAsSpectator(t *testing.T) {
 			rediskeys.RoomHashKey(roomID),
 			rediskeys.RoomSpectatorsKey(roomID),
 			playersKey,
-			rediskeys.PlayerRoomKey(userID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
 		}
 		args := []interface{}{userID, "{}", time.Now().Unix(), roomID, 3600, 3600}
 
@@ -117,7 +117,7 @@ func TestJoinAsSpectator(t *testing.T) {
 			rediskeys.RoomHashKey(roomID),
 			rediskeys.RoomSpectatorsKey(roomID),
 			rediskeys.RoomPlayersKey(roomID),
-			rediskeys.PlayerRoomKey(userID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
 		}
 		args := []interface{}{userID, "{}", time.Now().Unix(), roomID, 3600, 3600}
 
@@ -261,7 +261,7 @@ func TestLeaveRoom(t *testing.T) {
 			rediskeys.RoomSpectatorsKey(roomID),
 			rediskeys.RoomSeatsKey(roomID),
 			rediskeys.RoomSeatOwnerKey(roomID),
-			rediskeys.PlayerRoomKey(userID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
 		}
 	}
 

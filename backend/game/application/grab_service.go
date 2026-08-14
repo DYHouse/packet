@@ -38,13 +38,13 @@ func NewGrabService(redis cRedis.RedisClient, packetCache repository.PacketCache
 
 func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, packetID string) (*round.GrabResult, error) {
 	keys := []string{
-		rediskeys.RoundAvailablePacketsKey(roundID),
-		rediskeys.UserGrabbedKey(roundID, userID),
-		rediskeys.RoundGrabbersKey(roundID),
-		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoundAvailablePacketsKey(roomID, roundID),
+		rediskeys.UserGrabbedKey(roomID, roundID, userID),
+		rediskeys.RoundGrabbersKey(roomID, roundID),
+		rediskeys.RoundStateKey(roomID, roundID),
 		rediskeys.RoomPlayersKey(roomID),
-		rediskeys.PacketInfoKey(packetID),
-		rediskeys.PacketAvailableKey(packetID),
+		rediskeys.PacketInfoKey(roomID, packetID),
+		rediskeys.PacketAvailableKey(roomID, packetID),
 	}
 
 	args := []interface{}{
@@ -90,7 +90,7 @@ func (s *GrabService) GrabPacket(ctx context.Context, roomID, roundID, userID, p
 
 // GetAvailablePacketID 查询可用红包ID供机器人使用
 func (s *GrabService) GetAvailablePacketID(ctx context.Context, roomID, roundID string) (string, error) {
-	packetIDs, err := s.packetCache.GetAvailablePacketIDs(ctx, roundID)
+	packetIDs, err := s.packetCache.GetAvailablePacketIDs(ctx, roomID, roundID)
 	if err != nil {
 		logger.Error("get available packet ids failed", "error", err, "room_id", roomID, "round_id", roundID)
 		return "", err
@@ -106,10 +106,10 @@ func (s *GrabService) GetAvailablePacketID(ctx context.Context, roomID, roundID 
 // GetAvailablePacketID and GrabPacket.
 func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, userID string) (*round.GrabResult, error) {
 	keys := []string{
-		rediskeys.RoundAvailablePacketsKey(roundID),
-		rediskeys.UserGrabbedKey(roundID, userID),
-		rediskeys.RoundGrabbersKey(roundID),
-		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoundAvailablePacketsKey(roomID, roundID),
+		rediskeys.UserGrabbedKey(roomID, roundID, userID),
+		rediskeys.RoundGrabbersKey(roomID, roundID),
+		rediskeys.RoundStateKey(roomID, roundID),
 		rediskeys.RoomPlayersKey(roomID),
 	}
 
@@ -118,8 +118,8 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 		time.Now().Unix(),
 		s.grabTimeout,
 		roomID,
-		rediskeys.KeyPacketInfoPrefix,
-		rediskeys.KeyPacketAvailablePrefix,
+		rediskeys.PacketInfoPrefix(roomID),
+		rediskeys.PacketAvailablePrefix(roomID),
 		// 预生成随机起始偏移，Lua 侧用 % packetCount 取模，避免在 Lua 内调用 math.random
 		// （Redis Lua 禁用 math.random，会导致主从复制不一致）
 		// 1000 取 packetCount 上限 100 的 10 倍冗余，模偏差 < 1% 对机器人选包场景可接受
@@ -161,18 +161,18 @@ func (s *GrabService) RobotGrabPacket(ctx context.Context, roomID, roundID, user
 
 func (s *GrabService) AutoDistribute(ctx context.Context, roomID, roundID string) (int, []round.DistributeResult, error) {
 	keys := []string{
-		rediskeys.RoundAvailablePacketsKey(roundID),
-		rediskeys.RoundGrabbersKey(roundID),
-		rediskeys.RoundStateKey(roundID),
+		rediskeys.RoundAvailablePacketsKey(roomID, roundID),
+		rediskeys.RoundGrabbersKey(roomID, roundID),
+		rediskeys.RoundStateKey(roomID, roundID),
 		rediskeys.RoomPlayersKey(roomID),
 		rediskeys.RoomHashKey(roomID),
 	}
 
 	args := []interface{}{
 		time.Now().Unix(),
-		rediskeys.KeyPacketInfoPrefix,
-		rediskeys.KeyPacketAvailablePrefix,
-		rediskeys.KeyRoundGrabbedPrefix,
+		rediskeys.PacketInfoPrefix(roomID),
+		rediskeys.PacketAvailablePrefix(roomID),
+		rediskeys.RoundGrabbedPrefix(roomID),
 		roundID,
 		int64(s.redisTTL.PacketDataTTL.Seconds()),
 	}
@@ -224,9 +224,9 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 	keys := []string{
 		rediskeys.RoomHashKey(roomID),
 		rediskeys.RoomPlayersKey(roomID),
-		rediskeys.RoundStateKey(roundID),
-		rediskeys.RoundAvailablePacketsKey(roundID),
-		rediskeys.RoundGrabbersKey(roundID),
+		rediskeys.RoundStateKey(roomID, roundID),
+		rediskeys.RoundAvailablePacketsKey(roomID, roundID),
+		rediskeys.RoundGrabbersKey(roomID, roundID),
 	}
 
 	args := []interface{}{
@@ -238,9 +238,9 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 		roundNo,
 		time.Now().Unix(),
 		s.grabTimeout,
-		rediskeys.KeyPacketInfoPrefix,
-		rediskeys.KeyPacketAvailablePrefix,
-		rediskeys.KeyGlobalPacketID,
+		rediskeys.PacketInfoPrefix(roomID),
+		rediskeys.PacketAvailablePrefix(roomID),
+		rediskeys.RoomPacketIDSeqKey(roomID),
 		string(amountsJSON),
 		roundID,
 		roomID,

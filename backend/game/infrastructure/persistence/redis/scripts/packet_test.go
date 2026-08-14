@@ -34,13 +34,13 @@ const (
 func runGrabPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, userID string) []interface{} {
 	t.Helper()
 	keys := []string{
-		rediskeys.RoundAvailablePacketsKey(testRoundID),
-		rediskeys.RoundGrabbedKey(testRoundID, userID),
-		rediskeys.RoundGrabbersKey(testRoundID),
-		rediskeys.RoundStateKey(testRoundID),
+		rediskeys.RoundAvailablePacketsKey(testRoomID, testRoundID),
+		rediskeys.RoundGrabbedKey(testRoomID, testRoundID, userID),
+		rediskeys.RoundGrabbersKey(testRoomID, testRoundID),
+		rediskeys.RoundStateKey(testRoomID, testRoundID),
 		rediskeys.RoomPlayersKey(testRoomID),
-		rediskeys.PacketInfoKey(testPacketID),
-		rediskeys.PacketAvailableKey(testPacketID),
+		rediskeys.PacketInfoKey(testRoomID, testPacketID),
+		rediskeys.PacketAvailableKey(testRoomID, testPacketID),
 	}
 	args := []interface{}{
 		userID,
@@ -57,7 +57,7 @@ func runGrabPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, user
 func setupGrabPacketReady(t *testing.T, ctx context.Context, c cRedis.RedisClient) {
 	t.Helper()
 	must(t, c.HSet(ctx, rediskeys.RoomPlayersKey(testRoomID), testUserID, `{"user_id":"user-1"}`).Err())
-	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoundID),
+	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoomID, testRoundID),
 		"phase", "GRABBING",
 		"grab_end_time", testNow+60000,
 		"packet_count", 5,
@@ -69,8 +69,8 @@ func TestGrabPacketSuccess(t *testing.T) {
 
 	setupGrabPacketReady(t, ctx, c)
 	// 预置红包信息 + 可用标记
-	must(t, c.Set(ctx, rediskeys.PacketInfoKey(testPacketID), `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
-	must(t, c.Set(ctx, rediskeys.PacketAvailableKey(testPacketID), "1", 0).Err())
+	must(t, c.Set(ctx, rediskeys.PacketInfoKey(testRoomID, testPacketID), `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
+	must(t, c.Set(ctx, rediskeys.PacketAvailableKey(testRoomID, testPacketID), "1", 0).Err())
 
 	arr := runGrabPacket(t, ctx, c, testUserID)
 
@@ -88,20 +88,20 @@ func TestGrabPacketSuccess(t *testing.T) {
 	}
 
 	// 副作用校验：availableKey 应被删除
-	if n, _ := c.Exists(ctx, rediskeys.PacketAvailableKey(testPacketID)).Result(); n != 0 {
+	if n, _ := c.Exists(ctx, rediskeys.PacketAvailableKey(testRoomID, testPacketID)).Result(); n != 0 {
 		t.Errorf("expected packetAvailableKey deleted, exists=%d", n)
 	}
 	// userGrabKey 应已设置
-	if n, _ := c.Exists(ctx, rediskeys.RoundGrabbedKey(testRoundID, testUserID)).Result(); n != 1 {
+	if n, _ := c.Exists(ctx, rediskeys.RoundGrabbedKey(testRoomID, testRoundID, testUserID)).Result(); n != 1 {
 		t.Errorf("expected userGrabKey set, exists=%d", n)
 	}
 	// grabbersKey 应包含 userID
-	members, _ := c.SMembers(ctx, rediskeys.RoundGrabbersKey(testRoundID)).Result()
+	members, _ := c.SMembers(ctx, rediskeys.RoundGrabbersKey(testRoomID, testRoundID)).Result()
 	if !sliceContains(members, testUserID) {
 		t.Errorf("expected grabbers to contain %s, got %v", testUserID, members)
 	}
 	// 红包信息应被更新为 is_grabbed=true
-	raw, _ := c.Get(ctx, rediskeys.PacketInfoKey(testPacketID)).Result()
+	raw, _ := c.Get(ctx, rediskeys.PacketInfoKey(testRoomID, testPacketID)).Result()
 	if !strings.Contains(raw, `"is_grabbed":true`) {
 		t.Errorf("expected packet is_grabbed=true, got %s", raw)
 	}
@@ -111,7 +111,7 @@ func TestGrabPacketNonPlayer(t *testing.T) {
 	_, c, ctx := setupMiniRedis(t)
 
 	// 不设置 playersKey 中的 userID（设置 round state 以排除 phase 干扰）
-	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoundID),
+	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoomID, testRoundID),
 		"phase", "GRABBING",
 		"grab_end_time", testNow+60000,
 		"packet_count", 5,
@@ -129,10 +129,10 @@ func TestGrabPacketAlreadyGrabbed(t *testing.T) {
 	_, c, ctx := setupMiniRedis(t)
 
 	setupGrabPacketReady(t, ctx, c)
-	must(t, c.Set(ctx, rediskeys.PacketInfoKey(testPacketID), `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
-	must(t, c.Set(ctx, rediskeys.PacketAvailableKey(testPacketID), "1", 0).Err())
+	must(t, c.Set(ctx, rediskeys.PacketInfoKey(testRoomID, testPacketID), `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
+	must(t, c.Set(ctx, rediskeys.PacketAvailableKey(testRoomID, testPacketID), "1", 0).Err())
 	// 模拟已抢
-	must(t, c.Set(ctx, rediskeys.RoundGrabbedKey(testRoundID, testUserID), "1", 0).Err())
+	must(t, c.Set(ctx, rediskeys.RoundGrabbedKey(testRoomID, testRoundID, testUserID), "1", 0).Err())
 
 	arr := runGrabPacket(t, ctx, c, testUserID)
 
@@ -146,7 +146,7 @@ func TestGrabPacketInfoNotFound(t *testing.T) {
 	_, c, ctx := setupMiniRedis(t)
 
 	setupGrabPacketReady(t, ctx, c)
-	must(t, c.Set(ctx, rediskeys.PacketAvailableKey(testPacketID), "1", 0).Err())
+	must(t, c.Set(ctx, rediskeys.PacketAvailableKey(testRoomID, testPacketID), "1", 0).Err())
 	// 故意不设置 packetInfoKey，触发 code=23
 
 	arr := runGrabPacket(t, ctx, c, testUserID)
@@ -171,9 +171,9 @@ func runSendPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, scen
 	keys := []string{
 		rediskeys.RoomHashKey(testRoomID),
 		rediskeys.RoomPlayersKey(testRoomID),
-		rediskeys.RoundStateKey(testRoundID),
-		rediskeys.RoundAvailablePacketsKey(testRoundID),
-		rediskeys.RoundGrabbersKey(testRoundID),
+		rediskeys.RoundStateKey(testRoomID, testRoundID),
+		rediskeys.RoundAvailablePacketsKey(testRoomID, testRoundID),
+		rediskeys.RoundGrabbersKey(testRoomID, testRoundID),
 	}
 	args := []interface{}{
 		testUserID,                         // senderID
@@ -184,8 +184,8 @@ func runSendPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, scen
 		roundNo,                            // roundNo
 		testNow,                            // now
 		testGrabTimeout,                    // grabTimeout
-		rediskeys.KeyPacketInfoPrefix,      // packetInfoPrefix
-		rediskeys.KeyPacketAvailablePrefix, // packetAvailablePrefix
+		rediskeys.PacketInfoPrefix(testRoomID),      // packetInfoPrefix
+		rediskeys.PacketAvailablePrefix(testRoomID), // packetAvailablePrefix
 		rediskeys.KeyGlobalPacketID,        // globalPacketIDKey
 		`[100,100,100,100,100]`,            // packetAmountsJson
 		testRoundID,                        // roundID
@@ -221,12 +221,12 @@ func TestSendPacketSuccess(t *testing.T) {
 		t.Errorf("expected packetIDs to be JSON array, got %s", packetIDsJSON)
 	}
 	// 验证 5 个红包已写入 availablePacketsKey
-	n, _ := c.Raw().LLen(ctx, rediskeys.RoundAvailablePacketsKey(testRoundID)).Result()
+	n, _ := c.Raw().LLen(ctx, rediskeys.RoundAvailablePacketsKey(testRoomID, testRoundID)).Result()
 	if n != 5 {
 		t.Errorf("expected 5 available packets, got %d", n)
 	}
 	// 验证 round state 已写入 phase=GRABBING
-	phase, _ := c.HGet(ctx, rediskeys.RoundStateKey(testRoundID), "phase").Result()
+	phase, _ := c.HGet(ctx, rediskeys.RoundStateKey(testRoomID, testRoundID), "phase").Result()
 	if phase != "GRABBING" {
 		t.Errorf("expected phase GRABBING, got %s", phase)
 	}
@@ -252,7 +252,7 @@ func TestSendPacketPacketsAlreadyExist(t *testing.T) {
 	must(t, c.HSet(ctx, rediskeys.RoomHashKey(testRoomID), "status", 2, "current_round", 0).Err())
 	must(t, c.HSet(ctx, rediskeys.RoomPlayersKey(testRoomID), testUserID, `{"user_id":"user-1"}`).Err())
 	// 预置可用红包，触发 LLEN > 0
-	must(t, c.RPush(ctx, rediskeys.RoundAvailablePacketsKey(testRoundID), testPacketID).Err())
+	must(t, c.RPush(ctx, rediskeys.RoundAvailablePacketsKey(testRoomID, testRoundID), testPacketID).Err())
 
 	arr := runSendPacket(t, ctx, c, 1, 1)
 
@@ -272,26 +272,26 @@ func TestRobotGrabPacketSuccess(t *testing.T) {
 	_, c, ctx := setupMiniRedis(t)
 
 	must(t, c.HSet(ctx, rediskeys.RoomPlayersKey(testRoomID), testRobotUserID, `{"user_id":"robot-1"}`).Err())
-	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoundID),
+	must(t, c.HSet(ctx, rediskeys.RoundStateKey(testRoomID, testRoundID),
 		"phase", "GRABBING",
 		"grab_end_time", testNow+60000,
 		"packet_count", 5,
 	).Err())
 	// 可用红包列表
-	availablePacketsKey := rediskeys.RoundAvailablePacketsKey(testRoundID)
+	availablePacketsKey := rediskeys.RoundAvailablePacketsKey(testRoomID, testRoundID)
 	must(t, c.RPush(ctx, availablePacketsKey, testPacketID).Err())
 
 	// luaRobotGrabPacket 在 Lua 内拼接 packetAvailablePrefix..<pid> / packetInfoPrefix..<pid>
-	packetInfoKey := rediskeys.PacketInfoKey(testPacketID)
-	packetAvailableKey := rediskeys.PacketAvailableKey(testPacketID)
+	packetInfoKey := rediskeys.PacketInfoKey(testRoomID, testPacketID)
+	packetAvailableKey := rediskeys.PacketAvailableKey(testRoomID, testPacketID)
 	must(t, c.Set(ctx, packetAvailableKey, "1", 0).Err())
 	must(t, c.Set(ctx, packetInfoKey, `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
 
 	keys := []string{
 		availablePacketsKey,
-		rediskeys.RoundGrabbedKey(testRoundID, testRobotUserID),
-		rediskeys.RoundGrabbersKey(testRoundID),
-		rediskeys.RoundStateKey(testRoundID),
+		rediskeys.RoundGrabbedKey(testRoomID, testRoundID, testRobotUserID),
+		rediskeys.RoundGrabbersKey(testRoomID, testRoundID),
+		rediskeys.RoundStateKey(testRoomID, testRoundID),
 		rediskeys.RoomPlayersKey(testRoomID),
 	}
 	args := []interface{}{
@@ -299,8 +299,8 @@ func TestRobotGrabPacketSuccess(t *testing.T) {
 		testNow,
 		testGrabTimeout,
 		testRoomID,
-		rediskeys.KeyPacketInfoPrefix,
-		rediskeys.KeyPacketAvailablePrefix,
+		rediskeys.PacketInfoPrefix(testRoomID),
+		rediskeys.PacketAvailablePrefix(testRoomID),
 		0, // randOffset
 		testPacketDataTTL,
 	}
@@ -329,30 +329,30 @@ func TestAutoDistributePacketsSuccess(t *testing.T) {
 		testUserID, `{"user_id":"user-1"}`,
 		"user-2", `{"user_id":"user-2"}`,
 	).Err())
-	must(t, c.SAdd(ctx, rediskeys.RoundGrabbersKey(testRoundID), "user-2").Err())
+	must(t, c.SAdd(ctx, rediskeys.RoundGrabbersKey(testRoomID, testRoundID), "user-2").Err())
 
 	// 1 个可用红包
-	availablePacketsKey := rediskeys.RoundAvailablePacketsKey(testRoundID)
+	availablePacketsKey := rediskeys.RoundAvailablePacketsKey(testRoomID, testRoundID)
 	must(t, c.RPush(ctx, availablePacketsKey, testPacketID).Err())
 
 	// Lua 内拼接 packetAvailablePrefix..<pid> / packetInfoPrefix..<pid>
-	packetInfoKey := rediskeys.PacketInfoKey(testPacketID)
-	packetAvailableKey := rediskeys.PacketAvailableKey(testPacketID)
+	packetInfoKey := rediskeys.PacketInfoKey(testRoomID, testPacketID)
+	packetAvailableKey := rediskeys.PacketAvailableKey(testRoomID, testPacketID)
 	must(t, c.Set(ctx, packetAvailableKey, "1", 0).Err())
 	must(t, c.Set(ctx, packetInfoKey, `{"packet_id":1001,"amount":100,"position":1,"is_grabbed":false}`, 0).Err())
 
 	keys := []string{
 		availablePacketsKey,
-		rediskeys.RoundGrabbersKey(testRoundID),
-		rediskeys.RoundStateKey(testRoundID),
+		rediskeys.RoundGrabbersKey(testRoomID, testRoundID),
+		rediskeys.RoundStateKey(testRoomID, testRoundID),
 		rediskeys.RoomPlayersKey(testRoomID),
 		rediskeys.RoomHashKey(testRoomID),
 	}
 	args := []interface{}{
 		testNow,
-		rediskeys.KeyPacketInfoPrefix,
-		rediskeys.KeyPacketAvailablePrefix,
-		rediskeys.KeyRoundGrabbedPrefix,
+		rediskeys.PacketInfoPrefix(testRoomID),
+		rediskeys.PacketAvailablePrefix(testRoomID),
+		rediskeys.RoundGrabbedPrefix(testRoomID),
 		testRoundID,
 		testPacketDataTTL,
 	}
@@ -367,12 +367,12 @@ func TestAutoDistributePacketsSuccess(t *testing.T) {
 		t.Errorf("expected distributedCount 1, got %d", got)
 	}
 	// roundState phase 应被置为 SETTLING
-	phase, _ := c.HGet(ctx, rediskeys.RoundStateKey(testRoundID), "phase").Result()
+	phase, _ := c.HGet(ctx, rediskeys.RoundStateKey(testRoomID, testRoundID), "phase").Result()
 	if phase != "SETTLING" {
 		t.Errorf("expected phase SETTLING, got %s", phase)
 	}
 	// user-1 应被加入 grabbersKey
-	members, _ := c.SMembers(ctx, rediskeys.RoundGrabbersKey(testRoundID)).Result()
+	members, _ := c.SMembers(ctx, rediskeys.RoundGrabbersKey(testRoomID, testRoundID)).Result()
 	if !sliceContains(members, testUserID) {
 		t.Errorf("expected grabbers to contain %s, got %v", testUserID, members)
 	}

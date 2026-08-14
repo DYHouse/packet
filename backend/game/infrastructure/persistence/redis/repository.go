@@ -28,6 +28,10 @@ func NewRoomRepository(client redis.RedisClient, redisTTL config.RedisTTLConfig)
 	return &RoomRepository{client: client, redisTTL: redisTTL}
 }
 
+// currentRoomTTL 为 userID 维度 current_room key 的 TTL。
+// 用于跨房间反查（用户当前所在房间），DEL 失败时由 TTL 兜底自动过期。
+const currentRoomTTL = 30 * time.Minute
+
 func parseLuaCode(val interface{}) int {
 	switch v := val.(type) {
 	case int64:
@@ -230,14 +234,19 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 		return nil, err
 	}
 
+	userID := spectator.UserID
+	spectatorsKey := rediskeys.RoomSpectatorsKey(roomID)
+	// 房间内玩家映射 key（{roomID} hash tag），保证与房间级 key 同 slot
+	userRoomInRoomKey := rediskeys.PlayerRoomInRoomKey(roomID, userID)
+
 	keys := []string{
 		rediskeys.RoomHashKey(roomID),
-		rediskeys.RoomSpectatorsKey(roomID),
+		spectatorsKey,
 		rediskeys.RoomPlayersKey(roomID),
-		rediskeys.PlayerRoomKey(spectator.UserID),
+		userRoomInRoomKey,
 	}
 	args := []interface{}{
-		spectator.UserID,
+		userID,
 		string(spectatorData),
 		fmt.Sprintf("%d", time.Now().Unix()),
 		roomID,
@@ -245,6 +254,7 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 		int64(r.redisTTL.UserRoomTTL.Seconds()),
 	}
 
+	// 1. 执行 roomID 维度 Lua（加入 spectators + SET player:room:in_room）
 	result, err := scripts.JoinAsSpectator.Run(ctx, r.client, keys, args...).Slice()
 	if err != nil {
 		return nil, err
@@ -258,6 +268,23 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 	resultRoomID := result[1].(string)
 	roomNo := result[2].(string)
 	configID := result[3].(int64)
+
+	// 2. userID 维度 SETNX 原子抢占 current_room（失败说明已在其他房间）
+	// 跨房间防重入检查从 Lua 内移出，避免 Cluster 跨 slot。
+	currentRoomKey := rediskeys.CurrentRoomKey(userID)
+	ok, err := r.client.SetNX(ctx, currentRoomKey, roomID, currentRoomTTL).Result()
+	if err != nil {
+		// Redis 故障 → 回滚（从 spectators 删除 + 删除房间内 in_room 映射）
+		r.client.HDel(ctx, spectatorsKey, userID)
+		r.client.Del(ctx, userRoomInRoomKey)
+		return nil, fmt.Errorf("set current_room failed: %w", err)
+	}
+	if !ok {
+		// 已在其他房间 → 回滚
+		r.client.HDel(ctx, spectatorsKey, userID)
+		r.client.Del(ctx, userRoomInRoomKey)
+		return nil, domain.MapLuaError(domain.LuaErrAlreadyInRoom)
+	}
 
 	return &repository.JoinResult{
 		RoomID:   resultRoomID,
@@ -273,7 +300,8 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 		rediskeys.RoomSpectatorsKey(roomID),
 		rediskeys.RoomSeatsKey(roomID),
 		rediskeys.RoomSeatOwnerKey(roomID),
-		rediskeys.PlayerRoomKey(userID),
+		// 房间内玩家映射 key（{roomID} hash tag），保证与房间级 key 同 slot
+		rediskeys.PlayerRoomInRoomKey(roomID, userID),
 	}
 	args := []interface{}{
 		userID,
@@ -296,6 +324,9 @@ func (r *RoomRepository) LeaveRoom(ctx context.Context, roomID, userID string) e
 		logger.Info("LeaveRoom success", "room_id", roomID, "user_id", userID, "type", result[1], "seat_no", result[2])
 	}
 
+	// 删除 userID 维度 current_room（带 TTL 兜底，DEL 失败也会在 30 分钟后过期）
+	r.client.Del(ctx, rediskeys.CurrentRoomKey(userID))
+
 	return nil
 }
 
@@ -305,14 +336,16 @@ func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, use
 		rediskeys.RoomPlayersKey(roomID),
 		rediskeys.RoomSeatsKey(roomID),
 		rediskeys.RoomSeatOwnerKey(roomID),
-		rediskeys.PlayerRoomKey(userID),
+		// 房间内玩家映射 key（{roomID} hash tag），保证与房间级 key 同 slot
+		rediskeys.PlayerRoomInRoomKey(roomID, userID),
 	}
 
 	args := []interface{}{
 		userID,
 		reason,
 		time.Now().Unix(),
-		rediskeys.KeyRoundStatePrefix,
+		// 轮次状态 key 前缀（带 {roomID} hash tag），Lua 内拼接 roundID
+		rediskeys.RoundStatePrefix(roomID),
 	}
 
 	result, err := scripts.KickPlayer.Run(ctx, r.client, keys, args...).Slice()
@@ -324,6 +357,9 @@ func (r *RoomRepository) KickPlayerAndInterrupt(ctx context.Context, roomID, use
 	if code != domain.LuaErrSuccess {
 		return nil, domain.MapLuaError(code)
 	}
+
+	// 删除 userID 维度 current_room（带 TTL 兜底，DEL 失败也会在 30 分钟后过期）
+	r.client.Del(ctx, rediskeys.CurrentRoomKey(userID))
 
 	return &repository.KickPlayerResult{
 		SeatNo:     parseInt(result[2]),

@@ -45,7 +45,10 @@ func (s *PenaltyService) ApplyPenalty(ctx context.Context, roomID, userID string
 		rediskeys.PenaltyCountKey(roomID, userID),
 		rediskeys.RoomHashKey(roomID),
 		rediskeys.RoomPlayersKey(roomID),
-		rediskeys.RoundStateKey(roomID),
+		// HandlePenalty Lua 声明 roundStateKey=KEYS[4] 但未实际读取，
+		// 仅用于保证 Cluster 同 slot（{roomID} hash tag）。
+		// 旧实现以 roomID 作为 roundID 传入，此处保持等价行为。
+		rediskeys.RoundStateKey(roomID, roomID),
 		rediskeys.PenaltyRecordKey(roomID, userID),
 	}
 

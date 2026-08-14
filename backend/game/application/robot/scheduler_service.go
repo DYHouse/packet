@@ -411,8 +411,8 @@ func (s *RobotSchedulerService) recycleZombieRobots(ctx context.Context, roomID 
 // status is Waiting. The returned candidates are pre-populated with seated
 // count, ready player count and room fee for downstream filtering.
 func (s *RobotSchedulerService) getWaitingRooms(ctx context.Context) []roomCandidate {
-	// KeyRoomHashPrefix 已带尾随冒号（cashparty:room:hash:），直接 + "*" 即可。
-	const scanPattern = rediskeys.KeyRoomHashPrefix + "*"
+	// KeyRoomHashPrefix 已是完整 SCAN 匹配模式（cashparty:*:room:hash），无需再 + "*"。
+	const scanPattern = rediskeys.KeyRoomHashPrefix
 	const scanCount = 200
 
 	roomIDs, err := s.robotSchedulerRedis.ScanRoomIDs(ctx, scanPattern, scanCount)
@@ -504,8 +504,8 @@ func (s *RobotSchedulerService) checkPoolReserve(ctx context.Context) {
 // associated with rooms that are no longer in Waiting or Playing state. It
 // guards against missed OnGameEnd events.
 func (s *RobotSchedulerService) cleanupEndedRooms(ctx context.Context) {
-	// KeyRobotRoomPrefix 已带尾随冒号（cashparty:robot:room:），直接 + "*" 即可。
-	const scanPattern = rediskeys.KeyRobotRoomPrefix + "*"
+	// KeyRobotRoomPrefix 已是完整 SCAN 匹配模式（cashparty:*:robot:room），无需再 + "*"。
+	const scanPattern = rediskeys.KeyRobotRoomPrefix
 	const scanCount = 200
 
 	roomIDs, err := s.robotSchedulerRedis.ScanRoomIDs(ctx, scanPattern, scanCount)

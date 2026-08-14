@@ -21,8 +21,8 @@ import (
 // 行为约束：
 //   - Redis Key 引用 common/rediskeys 常量
 //   - dirty 标志读写次序与原 game 层实现一致
-//   - Deduct 通过 luaDeductBalance 脚本原子执行 INCRBY + SADD（消除竞态）
-//   - Credit 通过 luaCreditBalance 脚本原子执行 INCRBY + SADD（消除竞态）
+//   - Deduct 通过 luaDeductBalance 脚本原子执行 INCRBY + SET dirty（消除竞态）
+//   - Credit 通过 luaCreditBalance 脚本原子执行 INCRBY + SET dirty（消除竞态）
 type VirtualBalanceRepository struct {
 	redis cRedis.RedisClient
 	repo  domain.RobotAccountStore
@@ -41,7 +41,9 @@ func NewVirtualBalanceRepository(redis cRedis.RedisClient, repo domain.RobotAcco
 // 消除原 Go 代码三步之间的竞态。
 func (s *VirtualBalanceRepository) Deduct(ctx context.Context, userID int64, amount int64) error {
 	key := rediskeys.RobotVirtualBalanceKey(userID)
-	dirtyKey := rediskeys.RobotVirtualBalanceDirtyKey()
+	// per-user 脏标记（{userID} hash tag），与余额 key 同 slot，Cluster 兼容。
+	// Lua 脚本内部用 SET KEYS[2] '1' 写入该 per-user STRING 标记。
+	dirtyKey := rediskeys.RobotDirtyKey(userID)
 	result, err := scripts.DeductBalance.Run(ctx, s.redis, []string{key, dirtyKey}, amount, converter.FormatID(userID)).Int64()
 	if err != nil {
 		return fmt.Errorf("deduct virtual balance failed: %w", err)
@@ -53,11 +55,13 @@ func (s *VirtualBalanceRepository) Deduct(ctx context.Context, userID int64, amo
 }
 
 // Credit 虚拟入账（Lua 原子操作）
-// 通过 luaCreditBalance 脚本原子执行 "INCRBY + SADD"，消除原 Go 代码两步之间的竞态
-// （INCRBY 成功但 SADD 失败时 dirty 标志丢失，导致 SyncToDB 漏同步该用户余额）。
+// 通过 luaCreditBalance 脚本原子执行 "INCRBY + SET dirty"，消除原 Go 代码两步之间的竞态
+// （INCRBY 成功但 dirty 标记丢失会导致 SyncToDB 漏同步该用户余额）。
 func (s *VirtualBalanceRepository) Credit(ctx context.Context, userID int64, amount int64) error {
 	key := rediskeys.RobotVirtualBalanceKey(userID)
-	dirtyKey := rediskeys.RobotVirtualBalanceDirtyKey()
+	// per-user 脏标记（{userID} hash tag），与余额 key 同 slot，Cluster 兼容。
+	// Lua 脚本内部用 SET KEYS[2] '1' 写入该 per-user STRING 标记。
+	dirtyKey := rediskeys.RobotDirtyKey(userID)
 	if _, err := scripts.CreditBalance.Run(ctx, s.redis, []string{key, dirtyKey}, amount, converter.FormatID(userID)).Result(); err != nil {
 		return fmt.Errorf("credit virtual balance failed: %w", err)
 	}
@@ -87,52 +91,55 @@ func (s *VirtualBalanceRepository) GetBalance(ctx context.Context, userID int64)
 
 // SyncToDB 批量同步脏数据到DB（由定时任务调用）
 //
-// 使用 SPOP 逐个原子弹出成员，避免原 SMembers+Del 两步操作的竞态：
-//  1. Del 会误删循环期间其他 goroutine 通过 Credit 新 SAdd 的成员
-//  2. Del 会丢失循环中 DB 更新失败被 continue 跳过的成员
-//
-// SPOP 保证每个成员只被消费一次；处理失败时重新 SAdd 回 dirtyKey 等下次重试。
+// 改造为 per-user dirty 标记（Cluster 兼容）：
+//   - 遍历机器人 userID 集合 RobotUserIDsKey()（全局 SET，单 key 操作）
+//   - 对每个 userID 检查 RobotDirtyKey(userID) 是否为 '1'
+//   - 脏数据同步到 DB 成功后 DEL dirty 标记；处理失败时保留标记等下次重试
 func (s *VirtualBalanceRepository) SyncToDB(ctx context.Context) error {
-	dirtyKey := rediskeys.RobotVirtualBalanceDirtyKey()
+	// 全局机器人 userID 集合（单 key，不随用户分片，无跨 slot 问题）
+	userIDs, err := s.redis.SMembers(ctx, rediskeys.RobotUserIDsKey()).Result()
+	if err != nil {
+		return err
+	}
 
-	for {
-		// SPOP 原子弹出成员：弹出并删除一步完成，无竞态窗口
-		member, err := s.redis.SPop(ctx, dirtyKey).Result()
-		if err != nil {
-			if errors.Is(err, goredis.Nil) {
-				return nil // 集合为空，同步完成
-			}
-			return err
-		}
-
+	for _, member := range userIDs {
 		userID, err := converter.ParseIDStrict(member)
 		if err != nil {
-			// 无效成员（数据格式错误），丢弃不重试
-			logger.Error("parse dirty userID failed, discard", "member", member, "error", err)
+			// 无效成员（数据格式错误），跳过不处理
+			logger.Error("parse robot userID failed, skip", "member", member, "error", err)
+			continue
+		}
+
+		// per-user 脏标记（{userID} hash tag），与余额 key 同 slot
+		dirtyKey := rediskeys.RobotDirtyKey(userID)
+		val, err := s.redis.Get(ctx, dirtyKey).Result()
+		if err != nil {
+			// dirty 标记不存在或读取失败，该用户无脏数据，跳过
+			continue
+		}
+		if val != "1" {
 			continue
 		}
 
 		balance, err := s.redis.Get(ctx, rediskeys.RobotVirtualBalanceKey(userID)).Int64()
 		if err != nil {
-			// 读取余额失败，重新加回 dirtyKey 等下次重试
-			if err := s.redis.SAdd(ctx, dirtyKey, member).Err(); err != nil {
-				logger.Error("sadd dirty key failed",
-					"key", dirtyKey, "member", member, "error", err)
-			}
-			logger.Error("get virtual balance failed, re-add to dirty", "user_id", userID, "error", err)
+			// 读取余额失败，保留 dirty 标记等下次重试
+			logger.Error("get virtual balance failed, keep dirty", "user_id", userID, "error", err)
 			continue
 		}
 
 		if err := s.repo.UpdateBalance(ctx, userID, balance); err != nil {
-			// DB 更新失败，重新加回 dirtyKey 等下次重试
-			if err := s.redis.SAdd(ctx, dirtyKey, member).Err(); err != nil {
-				logger.Error("sadd dirty key failed",
-					"key", dirtyKey, "member", member, "error", err)
-			}
-			logger.Error("update balance to DB failed, re-add to dirty", "user_id", userID, "error", err)
+			// DB 更新失败，保留 dirty 标记等下次重试
+			logger.Error("update balance to DB failed, keep dirty", "user_id", userID, "error", err)
 			continue
 		}
+
+		// 同步成功，清除 dirty 标记
+		if err := s.redis.Del(ctx, dirtyKey).Err(); err != nil {
+			logger.Error("del dirty key failed", "key", dirtyKey, "user_id", userID, "error", err)
+		}
 	}
+	return nil
 }
 
 // AddToRobotSet 添加到机器人ID集合（供RobotChecker使用）

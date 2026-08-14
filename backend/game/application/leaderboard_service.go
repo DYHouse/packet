@@ -70,12 +70,12 @@ func (s *LeaderboardService) BuildFinalLeaderboard(
 // CleanupRedisTotals 清理 Redis session_player_totals 缓存。
 // DB 已成为权威数据源，Redis totals 不再用于 finalResults 生成，
 // 清理避免内存泄漏与下一局数据污染。
-func (s *LeaderboardService) CleanupRedisTotals(ctx context.Context, sessionID string) {
+func (s *LeaderboardService) CleanupRedisTotals(ctx context.Context, roomID, sessionID string) {
 	if sessionID == "" || s.redis == nil {
 		return
 	}
-	if err := s.redis.Del(ctx, rediskeys.SessionPlayerTotalsKey(sessionID)).Err(); err != nil {
+	if err := s.redis.Del(ctx, rediskeys.SessionPlayerTotalsKey(roomID, sessionID)).Err(); err != nil {
 		logger.Warn("cleanup redis session_player_totals failed",
-			"session_id", sessionID, "error", err)
+			"room_id", roomID, "session_id", sessionID, "error", err)
 	}
 }

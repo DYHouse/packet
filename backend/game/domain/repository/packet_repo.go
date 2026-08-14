@@ -10,13 +10,13 @@ import (
 // 当 key 不存在时 Get 返回非 nil error（沿用 redis.Nil 语义），调用方据此判断是否命中缓存。
 type PacketCacheRepository interface {
 	// Get 获取红包生成结果缓存
-	Get(ctx context.Context, roundID string) (string, error)
+	Get(ctx context.Context, roomID, roundID string) (string, error)
 	// SetNX 仅当 key 不存在时设置缓存，返回 true 表示设置成功
-	SetNX(ctx context.Context, roundID string, value string, ttl time.Duration) (bool, error)
+	SetNX(ctx context.Context, roomID, roundID string, value string, ttl time.Duration) (bool, error)
 	// GetPacketInfo 根据 packetID 获取红包详情 JSON 字符串，key 不存在时返回 redis.Nil 错误。
-	GetPacketInfo(ctx context.Context, packetID string) (string, error)
+	GetPacketInfo(ctx context.Context, roomID, packetID string) (string, error)
 	// GetAvailablePacketIDs 获取轮次可用红包 ID 列表（按插入顺序返回）。
-	GetAvailablePacketIDs(ctx context.Context, roundID string) ([]string, error)
+	GetAvailablePacketIDs(ctx context.Context, roomID, roundID string) ([]string, error)
 }
 
 // RewardCycleType 奖励周期类型，区分顺子与豹子

@@ -21,26 +21,26 @@ func NewPacketCacheRepository(client cRedis.RedisClient) repository.PacketCacheR
 }
 
 // Get 获取红包生成结果缓存。key 不存在时返回 redis.Nil 错误。
-func (r *packetCacheRepository) Get(ctx context.Context, roundID string) (string, error) {
-	key := rediskeys.RoundPacketsKey(roundID)
+func (r *packetCacheRepository) Get(ctx context.Context, roomID, roundID string) (string, error) {
+	key := rediskeys.RoundPacketsKey(roomID, roundID)
 	return r.client.Get(ctx, key).Result()
 }
 
 // SetNX 仅当 key 不存在时设置缓存。
-func (r *packetCacheRepository) SetNX(ctx context.Context, roundID string, value string, ttl time.Duration) (bool, error) {
-	key := rediskeys.RoundPacketsKey(roundID)
+func (r *packetCacheRepository) SetNX(ctx context.Context, roomID, roundID string, value string, ttl time.Duration) (bool, error) {
+	key := rediskeys.RoundPacketsKey(roomID, roundID)
 	return r.client.SetNX(ctx, key, value, ttl).Result()
 }
 
 // GetPacketInfo 根据 packetID 获取红包详情 JSON 字符串。key 不存在时返回 redis.Nil 错误。
-func (r *packetCacheRepository) GetPacketInfo(ctx context.Context, packetID string) (string, error) {
-	key := rediskeys.PacketInfoKey(packetID)
+func (r *packetCacheRepository) GetPacketInfo(ctx context.Context, roomID, packetID string) (string, error) {
+	key := rediskeys.PacketInfoKey(roomID, packetID)
 	return r.client.Get(ctx, key).Result()
 }
 
 // GetAvailablePacketIDs 获取轮次可用红包 ID 列表（按插入顺序返回）。
-func (r *packetCacheRepository) GetAvailablePacketIDs(ctx context.Context, roundID string) ([]string, error) {
-	key := rediskeys.RoundAvailablePacketsKey(roundID)
+func (r *packetCacheRepository) GetAvailablePacketIDs(ctx context.Context, roomID, roundID string) ([]string, error) {
+	key := rediskeys.RoundAvailablePacketsKey(roomID, roundID)
 	return r.client.LRange(ctx, key, 0, -1).Result()
 }
 

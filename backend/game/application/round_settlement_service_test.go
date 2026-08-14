@@ -18,7 +18,7 @@ func setupRoundState(t *testing.T, roomID, roundID, phase string, roundNo int, s
 	rdb := testRedisClient.Raw()
 	ctx := context.Background()
 
-	roundStateKey := rediskeys.RoundStateKey(roundID)
+	roundStateKey := rediskeys.RoundStateKey(roomID, roundID)
 	rdb.HSet(ctx, roundStateKey, "phase", phase, "round_no", roundNo, "sender_id", senderID, "total_amount", totalAmount)
 }
 
@@ -41,7 +41,7 @@ func setupPlayerAndGrabber(t *testing.T, roomID, roundID, userID string) {
 	playersKey := rediskeys.RoomPlayersKey(roomID)
 	rdb.HSet(ctx, playersKey, userID, `{"user_id":"`+userID+`","nickname":"TestPlayer","avatar":"avatar.png"}`)
 
-	grabbersKey := rediskeys.RoundGrabbersKey(roundID)
+	grabbersKey := rediskeys.RoundGrabbersKey(roomID, roundID)
 	rdb.SAdd(ctx, grabbersKey, userID)
 }
 
@@ -73,7 +73,7 @@ func TestSettleRoundSuccess(t *testing.T) {
 
 	// 验证 phase 变为 SETTLED
 	rdb := testRedisClient.Raw()
-	phase, err := rdb.HGet(ctx, rediskeys.RoundStateKey(roundID), "phase").Result()
+	phase, err := rdb.HGet(ctx, rediskeys.RoundStateKey(roomID, roundID), "phase").Result()
 	if err != nil {
 		t.Fatalf("HGet phase 失败: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestSettleRoundNilBroadcaster(t *testing.T) {
 
 	// phase 仍应变为 SETTLED
 	rdb := testRedisClient.Raw()
-	phase, _ := rdb.HGet(ctx, rediskeys.RoundStateKey(roundID), "phase").Result()
+	phase, _ := rdb.HGet(ctx, rediskeys.RoundStateKey(roomID, roundID), "phase").Result()
 	if phase != "SETTLED" {
 		t.Errorf("phase got %q, want SETTLED", phase)
 	}
@@ -253,7 +253,7 @@ func TestSettleRoundRepoError(t *testing.T) {
 
 	// meta=nil 时仍应执行 Lua（sessionPlayerTotalsKey 为空字符串）
 	rdb := testRedisClient.Raw()
-	phase, _ := rdb.HGet(ctx, rediskeys.RoundStateKey(roundID), "phase").Result()
+	phase, _ := rdb.HGet(ctx, rediskeys.RoundStateKey(roomID, roundID), "phase").Result()
 	if phase != "SETTLED" {
 		t.Errorf("phase got %q, want SETTLED（meta=nil 不应阻止 Lua 执行）", phase)
 	}
