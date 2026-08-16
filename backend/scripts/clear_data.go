@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/cashparty/backend/common/config"
 	cRedis "github.com/cashparty/backend/common/redis"
@@ -41,7 +42,18 @@ func main() {
 }
 
 func clearDatabase(cfg config.MySQLConfig) error {
-	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{})
+	// 去掉 DSN 中的数据库名，避免数据库不存在时连接失败（上次 clear 可能已删除数据库）。
+	// 标准 DSN 格式: user:pass@tcp(host:port)/dbname?params → user:pass@tcp(host:port)/?params
+	dsn := cfg.DSN
+	parts := strings.SplitN(dsn, ")/", 2)
+	if len(parts) == 2 {
+		queryIdx := strings.Index(parts[1], "?")
+		if queryIdx >= 0 {
+			dsn = parts[0] + ")/" + parts[1][queryIdx:]
+		}
+	}
+
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("连接 MySQL 失败: %w", err)
 	}
@@ -66,14 +78,14 @@ func clearRedis(cfg config.RedisConfig) error {
 	}
 	defer client.Close()
 
-	// 脚本场景使用 Raw() 获取原生客户端执行 Keys / Del
-	rdb := client.Raw()
-
 	ctx := context.Background()
 
-	keys, err := rdb.Keys(ctx, fmt.Sprintf("%s:*", rediskeys.KeyPrefix)).Result()
+	// Cluster 模式下 Keys 命令只扫描单个节点，会漏掉其他节点上的 key。
+	// 必须用 ScanAll 跨所有 master 节点扫描，确保全局 key（如 robot:pool:available）
+	// 也能被清除，否则会导致 init_robot_accounts 后 Redis 池残留旧 user_id。
+	keys, err := client.ScanAll(ctx, fmt.Sprintf("%s:*", rediskeys.KeyPrefix), 1000)
 	if err != nil {
-		return fmt.Errorf("获取 Redis keys 失败: %w", err)
+		return fmt.Errorf("扫描 Redis keys 失败: %w", err)
 	}
 
 	if len(keys) == 0 {
@@ -81,9 +93,16 @@ func clearRedis(cfg config.RedisConfig) error {
 		return nil
 	}
 
-	deleted, err := rdb.Del(ctx, keys...).Result()
-	if err != nil {
-		return fmt.Errorf("删除 Redis keys 失败: %w", err)
+	// Cluster 模式下批量 Del 会触发 CROSSSLOT 错误（keys 不在同一 slot），
+	// 改为逐个删除以兼容 Cluster 模式。
+	var deleted int64
+	for _, key := range keys {
+		if err := client.Del(ctx, key).Err(); err != nil {
+			// 单个 key 删除失败不中断，记录警告继续
+			log.Printf("删除 Redis key 失败: key=%s, error=%v", key, err)
+			continue
+		}
+		deleted++
 	}
 
 	log.Printf("已删除 %d 个 Redis keys", deleted)

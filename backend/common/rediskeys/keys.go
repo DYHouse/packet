@@ -128,11 +128,12 @@ const (
 	KeyRoundGrabbedPrefix = KeyPrefix + ":{%s}:round:grabbed:"
 
 	// KeyRoomPacketIDSeq 房间内红包ID自增序列（{roomID} hash tag，替代全局计数器）。
-	// 替代旧的全局 KeyGlobalPacketID，红包 ID 仅在房间内引用，无需全局唯一。
+	// Deprecated: packetID 已改为雪花 ID 生成（idgen），不再使用 Redis INCR 序列。
+	// 保留常量仅用于兼容历史 Redis 残留 key 的清理脚本，新代码禁止使用。
 	KeyRoomPacketIDSeq = KeyPrefix + ":{%s}:packet_id_seq"
 
 	// KeyGlobalPacketID 全局红包ID自增计数器（已废弃）。
-	// Deprecated: 使用 KeyRoomPacketIDSeq 替代，按房间分片避免 Cluster 跨 slot。
+	// Deprecated: 先后被 KeyRoomPacketIDSeq 和雪花 ID 生成器替代。
 	KeyGlobalPacketID = KeyPrefix + ":global:packet_id"
 
 	// KeyPlayerRoom 玩家当前所在房间映射（已废弃）。

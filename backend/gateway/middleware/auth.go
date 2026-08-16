@@ -205,13 +205,20 @@ func (m *AuthMiddleware) recordFailedAttempt(ctx context.Context, ip string) {
 	}
 }
 
-// clearFailedAttempts 清理失败计数（成功登录后调用）
+// clearFailedAttempts 清理失败计数（成功登录后调用）。
+// Redis Cluster 模式下，单次 Del 多 key 要求所有 key 落在同一 slot，
+// 而 auth_fail 与 locked_ip 前缀不同会跨 slot，触发 CROSSSLOT 错误，
+// 因此改为逐个删除以保证 Cluster 兼容性。
 func (m *AuthMiddleware) clearFailedAttempts(ctx context.Context, ip string) {
 	counterKey := rediskeys.GatewayAuthFailKey(ip)
 	lockKey := rediskeys.GatewayLockedIPKey(ip)
-	if err := m.redis.Del(ctx, counterKey, lockKey).Err(); err != nil {
-		logger.Warn("failed to clear failed attempts",
-			"ip", ip, "error", err)
+	if err := m.redis.Del(ctx, counterKey).Err(); err != nil {
+		logger.Warn("failed to clear failed attempt counter",
+			"ip", ip, "key", counterKey, "error", err)
+	}
+	if err := m.redis.Del(ctx, lockKey).Err(); err != nil {
+		logger.Warn("failed to clear locked ip",
+			"ip", ip, "key", lockKey, "error", err)
 	}
 }
 

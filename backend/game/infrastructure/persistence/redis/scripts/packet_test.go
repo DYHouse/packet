@@ -161,7 +161,7 @@ func TestGrabPacketInfoNotFound(t *testing.T) {
 // luaSendPacket 测试
 // KEYS: [roomHashKey, playersKey, roundStateKey, availablePacketsKey, grabbersKey]
 // ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now,
-//        grabTimeout, packetInfoPrefix, packetAvailablePrefix, globalPacketIDKey,
+//        grabTimeout, packetInfoPrefix, packetAvailablePrefix, packetIDsJson,
 //        packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount,
 //        packetDataTTL, roundStateTTL]
 // =============================================================================
@@ -186,7 +186,7 @@ func runSendPacket(t *testing.T, ctx context.Context, c cRedis.RedisClient, scen
 		testGrabTimeout,                    // grabTimeout
 		rediskeys.PacketInfoPrefix(testRoomID),      // packetInfoPrefix
 		rediskeys.PacketAvailablePrefix(testRoomID), // packetAvailablePrefix
-		rediskeys.KeyGlobalPacketID,        // globalPacketIDKey
+		`[1001,1002,1003,1004,1005]`,       // packetIDsJson（Go 侧预生成的雪花 ID 数组）
 		`[100,100,100,100,100]`,            // packetAmountsJson
 		testRoundID,                        // roundID
 		testRoomID,                         // roomID

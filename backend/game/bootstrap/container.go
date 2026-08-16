@@ -170,7 +170,7 @@ func NewContainer(
 	registry.Register(timeoutScheduler)
 
 	packetCacheRepo := redisRepo.NewPacketCacheRepository(redis)
-	grabService := application.NewGrabService(redis, packetCacheRepo, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
+	grabService := application.NewGrabService(redis, packetCacheRepo, idGen, timeoutCfg.Grab, timeoutCfg.Send, *redisTTL)
 
 	// 从 RateLimiterConfig.Commands 构建 UserLimiter 配置
 	userLimiterConfigs := buildUserLimiterConfigs(rateLimiterCfg)

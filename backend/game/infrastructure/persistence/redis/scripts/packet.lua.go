@@ -6,19 +6,19 @@ package scripts
 // Lua 拼接的 key 与 Go 常量映射：
 //   - packetAvailablePrefix .. packetID              → rediskeys.KeyPacketAvailablePrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketAvailableKey(packetID)）
-//   - roomPacketIDSeqKey                              → rediskeys.KeyRoomPacketIDSeq
 //   - packetInfoPrefix .. packetID                   → rediskeys.KeyPacketInfoPrefix + packetID
 //                                                  （工厂函数 rediskeys.PacketInfoKey(packetID)）
 //   - roundGrabbedPrefix .. roundID .. ':' .. userID → rediskeys.KeyRoundGrabbed
 //                                                  （工厂函数 rediskeys.RoundGrabbedKey(roundID, userID)）
 //
 // 注意：
-//   - 具体 prefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPacketInfoPrefix/KeyPacketAvailablePrefix/KeyRoomPacketIDSeq 等常量。
+//   - 具体 prefix 由 Go 侧通过 ARGV 传入，值为 rediskeys.KeyPacketInfoPrefix/KeyPacketAvailablePrefix 等常量。
 //   - luaGrabPacket 为单 packetID 场景，packet info / available key 已改为通过 KEYS[6]/KEYS[7]
 //     由 Go 侧直接传入（rediskeys.PacketInfoKey / PacketAvailableKey），不再在 Lua 内拼接 prefix。
 //   - luaRobotGrabPacket / luaAutoDistributePackets / luaSendPacket 为循环内动态 packetID 场景，
-//     通过 ARGV 接收具体 prefix（packetInfoPrefix / packetAvailablePrefix / roomPacketIDSeqKey / roundGrabbedPrefix），
-//     对应 KeyPacketInfoPrefix / KeyPacketAvailablePrefix / KeyRoomPacketIDSeq。
+//     通过 ARGV 接收具体 prefix（packetInfoPrefix / packetAvailablePrefix / roundGrabbedPrefix），
+//     对应 KeyPacketInfoPrefix / KeyPacketAvailablePrefix。
+//   - packetID 由 Go 侧用雪花 ID 生成器（idgen）预生成后通过 ARGV 传入，Lua 不再 INCR（避免跨房间冲突）。
 
 // LuaGrabPacket 抢红包脚本
 // KEYS: [availablePacketsKey, userGrabKey, grabbersKey, roundStateKey, playersKey, packetInfoKey, packetAvailableKey]
@@ -92,7 +92,7 @@ if grabbedCount >= totalPackets then
 	redis.call('HSET', roundStateKey, 'phase', 'SETTLING')
 end
 
-return {0, tonumber(packetID), amount, position, '', isLast}  -- LuaErrSuccess
+return {0, packetID, amount, position, '', isLast}  -- LuaErrSuccess
 `
 
 // LuaRobotGrabPacket 机器人抢红包脚本（原子操作：从可用列表随机选+抢）
@@ -191,7 +191,7 @@ if grabbedCount >= totalPackets then
 	redis.call('HSET', roundStateKey, 'phase', 'SETTLING')
 end
 
-return {0, tonumber(chosenPacketID), amount, position, '', isLast}  -- LuaErrSuccess
+return {0, chosenPacketID, amount, position, '', isLast}  -- LuaErrSuccess
 `
 
 // LuaAutoDistributePackets 自动分配未抢红包
@@ -281,7 +281,8 @@ return {0, #results, results}  -- LuaErrSuccess
 
 // LuaSendPacket 统一发红包脚本
 // KEYS: [roomHashKey, playersKey, roundStateKey, availablePacketsKey, grabbersKey]
-// ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now, grabTimeout, packetInfoPrefix, packetAvailablePrefix, roomPacketIDSeqKey, packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount, packetDataTTL, roundStateTTL]
+// ARGV: [senderID, senderType, totalAmount, commission, actualAmount, roundNo, now, grabTimeout, packetInfoPrefix, packetAvailablePrefix, packetIDsJson, packetAmountsJson, roundID, roomID, scenario, rewardType, rewardAmount, packetDataTTL, roundStateTTL]
+// packetIDsJson: Go 侧用雪花 ID 生成器预生成的 packetID 数组（JSON），与 packetAmountsJson 一一对应
 // scenario: 1=first_round, 2=player_manual, 3=timeout_forced, 4=resume_interrupt
 // 返回: {code, roundID, packetIDs}
 // 错误码: LuaErrGameNotInPlaying(6), LuaErrNotFirstRound(50), LuaErrNoPlayers(52), LuaErrNotYourTurn(51), LuaErrPacketsAlreadyExist(20)
@@ -302,7 +303,7 @@ local now = tonumber(ARGV[7])
 local grabTimeout = tonumber(ARGV[8])
 local packetInfoPrefix = ARGV[9]
 local packetAvailablePrefix = ARGV[10]
-local roomPacketIDSeqKey = ARGV[11]
+local packetIDsJson = ARGV[11]
 local packetAmountsJson = ARGV[12]
 local roundID = ARGV[13]
 local roomID = ARGV[14]
@@ -356,11 +357,12 @@ if currentRoundID ~= '' then
 end
 
 local amounts = cjson.decode(packetAmountsJson)
+local preGeneratedIDs = cjson.decode(packetIDsJson)
 local packetCount = #amounts
 local packetIDs = {}
 
 for i, amount in ipairs(amounts) do
-    local packetID = redis.call('INCR', roomPacketIDSeqKey)
+    local packetID = preGeneratedIDs[i]
     local packetKey = packetInfoPrefix .. packetID
     local availableKey = packetAvailablePrefix .. packetID
 

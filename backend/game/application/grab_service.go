@@ -3,10 +3,12 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/cashparty/backend/common/config"
 	"github.com/cashparty/backend/common/converter"
+	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	cRedis "github.com/cashparty/backend/common/redis"
@@ -21,15 +23,17 @@ import (
 type GrabService struct {
 	redis       cRedis.RedisClient
 	packetCache repository.PacketCacheRepository
+	idGen       idgen.IDGenerator
 	grabTimeout int64
 	sendTimeout int64
 	redisTTL    config.RedisTTLConfig
 }
 
-func NewGrabService(redis cRedis.RedisClient, packetCache repository.PacketCacheRepository, grabTimeout, sendTimeout time.Duration, redisTTL config.RedisTTLConfig) *GrabService {
+func NewGrabService(redis cRedis.RedisClient, packetCache repository.PacketCacheRepository, idGen idgen.IDGenerator, grabTimeout, sendTimeout time.Duration, redisTTL config.RedisTTLConfig) *GrabService {
 	return &GrabService{
 		redis:       redis,
 		packetCache: packetCache,
+		idGen:       idGen,
 		grabTimeout: int64(grabTimeout.Seconds()),
 		sendTimeout: int64(sendTimeout.Seconds()),
 		redisTTL:    redisTTL,
@@ -221,6 +225,24 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 		return "", nil, err
 	}
 
+	// 用雪花 ID 生成器预生成 packetID（全局唯一，避免跨房间冲突）。
+	// 规约 SID-2：业务代码依赖 IDGenerator 接口；时钟回拨返回 error，调用方需处理。
+	// 注意：packetID MUST 以字符串形式传给 Lua，因为 Lua 5.1 的 number 是 double，
+	// 雪花 ID 超过 2^53 会精度丢失，导致 Redis key 不匹配。
+	packetIDStrs := make([]string, len(packetAmounts))
+	for i := range packetAmounts {
+		pid, genErr := s.idGen.GenerateString()
+		if genErr != nil {
+			logger.Error("generate packet id failed", "error", genErr, "room_id", roomID, "round_id", roundID)
+			return "", nil, fmt.Errorf("generate packet id failed: %w", genErr)
+		}
+		packetIDStrs[i] = pid
+	}
+	packetIDsJSON, err := json.Marshal(packetIDStrs)
+	if err != nil {
+		return "", nil, err
+	}
+
 	keys := []string{
 		rediskeys.RoomHashKey(roomID),
 		rediskeys.RoomPlayersKey(roomID),
@@ -240,7 +262,7 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 		s.grabTimeout,
 		rediskeys.PacketInfoPrefix(roomID),
 		rediskeys.PacketAvailablePrefix(roomID),
-		rediskeys.RoomPacketIDSeqKey(roomID),
+		string(packetIDsJSON),
 		string(amountsJSON),
 		roundID,
 		roomID,
@@ -266,14 +288,8 @@ func (s *GrabService) InitRoundPackets(ctx context.Context, roomID, roundID, sen
 
 	roundIDResult := converter.ParseString(res[1])
 
-	var packetIDs []string
-	if len(res) > 2 {
-		packetIDsJSON := converter.ParseString(res[2])
-		var packetIDInts []int64
-		if err := json.Unmarshal([]byte(packetIDsJSON), &packetIDInts); err == nil {
-			packetIDs = converter.FormatIDs(packetIDInts)
-		}
-	}
+	// packetIDs 直接用 Go 侧预生成的雪花 ID（Lua 返回值仅作审计/回显，不再解析）。
+	packetIDs := packetIDStrs
 
 	logger.Info("round packets initialized",
 		"room_id", roomID,

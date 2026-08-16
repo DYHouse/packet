@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cashparty/backend/common/converter"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/common/message"
 	"github.com/cashparty/backend/game/domain/events"
@@ -236,7 +235,7 @@ func (p *PacketOrchestrator) publishPacketCreatedEvent(ctx context.Context, room
 		}
 
 		var packet struct {
-			PacketID int64  `json:"packet_id"`
+			PacketID string `json:"packet_id"`
 			RoomID   string `json:"room_id"`
 			RoundID  string `json:"round_id"`
 			Amount   int64  `json:"amount"`
@@ -248,7 +247,7 @@ func (p *PacketOrchestrator) publishPacketCreatedEvent(ctx context.Context, room
 		}
 
 		packets = append(packets, &events.PacketData{
-			PacketID: converter.FormatID(packet.PacketID),
+			PacketID: packet.PacketID,
 			RoomID:   packet.RoomID,
 			RoundID:  packet.RoundID,
 			Amount:   packet.Amount,

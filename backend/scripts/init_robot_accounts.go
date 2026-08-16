@@ -179,26 +179,28 @@ func clearRobotAccounts(ctx context.Context, db *gorm.DB, redisClient cRedis.Red
 		return fmt.Errorf("delete robot users failed: %w", err)
 	}
 
-	// 3. Clear Redis robot-related keys using raw client
-	rawClient := redisClient.Raw()
-	robotKeys, err := rawClient.Keys(ctx, "cashparty:robot:*").Result()
+	// 3. Clear Redis robot-related keys.
+	// Cluster 模式下 Keys 命令只扫描单节点，必须用 ScanAll 跨所有 master 节点扫描，
+	// 否则全局 key（如 cashparty:robot:pool:available）会残留旧 user_id，
+	// 导致调度器取到旧 ID 后查询 users 表报 "El usuario no existe"。
+	robotKeys, err := redisClient.ScanAll(ctx, "cashparty:robot:*", 1000)
 	if err != nil {
-		return fmt.Errorf("get robot keys failed: %w", err)
+		return fmt.Errorf("scan robot keys failed: %w", err)
 	}
-	if len(robotKeys) > 0 {
-		if err := redisClient.Del(ctx, robotKeys...).Err(); err != nil {
-			return fmt.Errorf("delete robot keys failed: %w", err)
+	for _, key := range robotKeys {
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			log.Printf("删除 robot key 失败: key=%s, error=%v", key, err)
 		}
 	}
 
 	// 4. Clear user cache keys for robot users
-	userCacheKeys, err := rawClient.Keys(ctx, fmt.Sprintf("%s:user:*", rediskeys.KeyPrefix)).Result()
+	userCacheKeys, err := redisClient.ScanAll(ctx, fmt.Sprintf("%s:user:*", rediskeys.KeyPrefix), 1000)
 	if err != nil {
-		return fmt.Errorf("get user cache keys failed: %w", err)
+		return fmt.Errorf("scan user cache keys failed: %w", err)
 	}
-	if len(userCacheKeys) > 0 {
-		if err := redisClient.Del(ctx, userCacheKeys...).Err(); err != nil {
-			return fmt.Errorf("delete user cache keys failed: %w", err)
+	for _, key := range userCacheKeys {
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			log.Printf("删除 user cache key 失败: key=%s, error=%v", key, err)
 		}
 	}
 
