@@ -42,10 +42,6 @@ func (p *RoomEventPublisher) publish(ctx context.Context, event *events.RoomEven
 	}
 	if event.TraceID == "" {
 		event.TraceID = trace.Generate()
-		logger.Warn("event TraceID not in ctx, auto-generated",
-			"event_type", event.EventType,
-			"room_id", event.RoomID,
-			"trace_id", event.TraceID)
 	}
 	event.EventHeader.FillIfEmpty()
 
