@@ -508,7 +508,7 @@ func (s *SeatAppService) HandleSeatTimeout(ctx context.Context, roomID, userID s
 	}
 
 	// 用户已被成功踢出房间 → 删除 userID 维度 current_room
-	// （带 TTL 兜底，DEL 失败也会在 30 分钟后过期）
+	// （带 TTL 兜底，DEL 失败也会在 UserRoomTTL 后过期）
 	s.redis.Del(ctx, rediskeys.CurrentRoomKey(userID))
 
 	if s.publisher != nil {

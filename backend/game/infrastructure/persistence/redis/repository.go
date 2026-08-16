@@ -28,10 +28,6 @@ func NewRoomRepository(client redis.RedisClient, redisTTL config.RedisTTLConfig)
 	return &RoomRepository{client: client, redisTTL: redisTTL}
 }
 
-// currentRoomTTL 为 userID 维度 current_room key 的 TTL。
-// 用于跨房间反查（用户当前所在房间），DEL 失败时由 TTL 兜底自动过期。
-const currentRoomTTL = 30 * time.Minute
-
 func parseLuaCode(val interface{}) int {
 	switch v := val.(type) {
 	case int64:
@@ -271,8 +267,10 @@ func (r *RoomRepository) JoinAsSpectator(ctx context.Context, roomID string, spe
 
 	// 2. userID 维度 SETNX 原子抢占 current_room（失败说明已在其他房间）
 	// 跨房间防重入检查从 Lua 内移出，避免 Cluster 跨 slot。
+	// TTL 与 user_room key 保持一致（UserRoomTTL），避免 current_room 提前过期导致
+	// 网关反查/待入账金额查询/跨房间防重入检查失效。
 	currentRoomKey := rediskeys.CurrentRoomKey(userID)
-	ok, err := r.client.SetNX(ctx, currentRoomKey, roomID, currentRoomTTL).Result()
+	ok, err := r.client.SetNX(ctx, currentRoomKey, roomID, r.redisTTL.UserRoomTTL).Result()
 	if err != nil {
 		// Redis 故障 → 回滚（从 spectators 删除 + 删除房间内 in_room 映射）
 		r.client.HDel(ctx, spectatorsKey, userID)
