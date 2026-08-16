@@ -162,7 +162,7 @@ func (s *RobotSchedulerRedis) GetActiveCount(ctx context.Context) (int64, error)
 
 // ScanRoomIDs 扫描匹配指定前缀的房间 key，返回房间 ID 列表。
 // prefix 应为完整 SCAN 匹配模式（如 "cashparty:*:room:hash"）。
-// 房间 ID 取 key 中最后一个冒号后的段。
+// 房间 ID 从 key 的 hash tag {roomID} 中提取。
 // Cluster 模式下通过 ScanAll 自动跨所有 master 节点扫描。
 func (s *RobotSchedulerRedis) ScanRoomIDs(ctx context.Context, prefix string, count int64) ([]string, error) {
 	keys, err := s.redis.ScanAll(ctx, prefix, count)
@@ -171,11 +171,13 @@ func (s *RobotSchedulerRedis) ScanRoomIDs(ctx context.Context, prefix string, co
 	}
 	roomIDs := make([]string, 0, len(keys))
 	for _, key := range keys {
-		idx := strings.LastIndex(key, ":")
-		if idx < 0 || idx == len(key)-1 {
+		// 从 hash tag {roomID} 中提取 roomID
+		start := strings.Index(key, "{")
+		end := strings.Index(key, "}")
+		if start < 0 || end < 0 || end <= start {
 			continue
 		}
-		roomID := key[idx+1:]
+		roomID := key[start+1 : end]
 		if roomID == "" {
 			continue
 		}

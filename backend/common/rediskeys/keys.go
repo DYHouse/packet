@@ -100,8 +100,6 @@ const (
 	// KeyRoundGrabbed 玩家本轮已抢标记(Lua 脚本使用，{roomID} hash tag)。
 	// 对应 Lua 中的 roundGrabbedPrefix .. roundID .. ':' .. userID
 	KeyRoundGrabbed = KeyPrefix + ":{%s}:round:grabbed:%s:%s"
-	// KeyPacketInfo 红包详情（{roomID} hash tag）。
-	KeyPacketInfo = KeyPrefix + ":{%s}:packet:info:%s"
 	// KeyGrabRecord 抢红包记录（{roomID} hash tag）。
 	KeyGrabRecord = KeyPrefix + ":{%s}:grab:record:%s"
 	// KeyRoundGrabRecord 轮次抢红包记录（{roomID} hash tag）。
@@ -109,9 +107,25 @@ const (
 
 	// KeyRoundState 轮次状态（{roomID} hash tag）。
 	KeyRoundState = KeyPrefix + ":{%s}:round:state:%s"
+	// KeyRoundStatePrefix 轮次状态 key 前缀（带尾随冒号，Lua 脚本动态拼接用）。
+	// 完整 key = fmt.Sprintf(KeyRoundStatePrefix, roomID) + roundID。
+	KeyRoundStatePrefix = KeyPrefix + ":{%s}:round:state:"
+
+	// KeyPacketInfo 红包详情（{roomID} hash tag）。
+	KeyPacketInfo = KeyPrefix + ":{%s}:packet:info:%s"
+	// KeyPacketInfoPrefix 红包详情 key 前缀（带尾随冒号，Lua 脚本动态拼接用）。
+	// 完整 key = fmt.Sprintf(KeyPacketInfoPrefix, roomID) + packetID。
+	KeyPacketInfoPrefix = KeyPrefix + ":{%s}:packet:info:"
 
 	// KeyPacketAvailable 红包可用标记 key 模板（{roomID} hash tag）。
 	KeyPacketAvailable = KeyPrefix + ":{%s}:packet:available:%s"
+	// KeyPacketAvailablePrefix 红包可用标记 key 前缀（带尾随冒号，Lua 脚本动态拼接用）。
+	// 完整 key = fmt.Sprintf(KeyPacketAvailablePrefix, roomID) + packetID。
+	KeyPacketAvailablePrefix = KeyPrefix + ":{%s}:packet:available:"
+
+	// KeyRoundGrabbedPrefix 玩家本轮已抢标记 key 前缀（带尾随冒号，Lua 脚本动态拼接用）。
+	// 完整 key = fmt.Sprintf(KeyRoundGrabbedPrefix, roomID) + roundID + ":" + userID。
+	KeyRoundGrabbedPrefix = KeyPrefix + ":{%s}:round:grabbed:"
 
 	// KeyRoomPacketIDSeq 房间内红包ID自增序列（{roomID} hash tag，替代全局计数器）。
 	// 替代旧的全局 KeyGlobalPacketID，红包 ID 仅在房间内引用，无需全局唯一。
@@ -423,25 +437,25 @@ func UserByIdKey(id string) string {
 // RoundStatePrefix 轮次状态 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
 // 返回值形如 cashparty:{room123}:round:state:，调用方拼接 roundID。
 func RoundStatePrefix(roomID string) string {
-	return fmt.Sprintf("cashparty:{%s}:round:state:", roomID)
+	return fmt.Sprintf(KeyRoundStatePrefix, roomID)
 }
 
 // PacketInfoPrefix 红包详情 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
 // 返回值形如 cashparty:{room123}:packet:info:，调用方拼接 packetID。
 func PacketInfoPrefix(roomID string) string {
-	return fmt.Sprintf("cashparty:{%s}:packet:info:", roomID)
+	return fmt.Sprintf(KeyPacketInfoPrefix, roomID)
 }
 
 // PacketAvailablePrefix 红包可用标记 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
 // 返回值形如 cashparty:{room123}:packet:available:，调用方拼接 packetID。
 func PacketAvailablePrefix(roomID string) string {
-	return fmt.Sprintf("cashparty:{%s}:packet:available:", roomID)
+	return fmt.Sprintf(KeyPacketAvailablePrefix, roomID)
 }
 
 // RoundGrabbedPrefix 玩家本轮已抢标记 key 前缀（带 {roomID} hash tag，Lua 脚本动态拼接用）。
 // 返回值形如 cashparty:{room123}:round:grabbed:，调用方拼接 roundID:userID。
 func RoundGrabbedPrefix(roomID string) string {
-	return fmt.Sprintf("cashparty:{%s}:round:grabbed:", roomID)
+	return fmt.Sprintf(KeyRoundGrabbedPrefix, roomID)
 }
 
 // RoundPacketsKey 轮次红包列表 key
