@@ -119,13 +119,13 @@ func buildTLSConfig(cfg TLSConfig) *tls.Config {
 	return tlsCfg
 }
 
-// buildTransport 为 kafka.Writer 构造 Transport。明文模式返回 nil。
+// buildTransport 为 kafka.Writer 构造 Transport。明文模式返回空 Transport（非 nil）。
 func buildTransport(saslCfg SASLConfig, tlsCfg TLSConfig) *kafka.Transport {
 	mechanism := buildSASLMechanism(saslCfg)
 	tls := buildTLSConfig(tlsCfg)
-	// 明文模式（无 SASL 无 TLS）返回 nil，保持与改造前完全一致
+	// 明文模式（无 SASL 无 TLS）返回空 Transport，避免 Writer.Transport 为 nil 时 panic
 	if mechanism == nil && tls == nil {
-		return nil
+		return &kafka.Transport{}
 	}
 	return &kafka.Transport{
 		SASL: mechanism,

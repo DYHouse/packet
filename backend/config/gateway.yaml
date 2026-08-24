@@ -16,11 +16,10 @@ gateway:
 
 redis:
   mode: "standalone"
-  # 本地开发：通过 SSH 隧道转发到 AWS ElastiCache (Valkey TLS)
-  #   ssh -i cashparty.pem -N -L 6379:master.cashparty.q7vjko.cnw1.cache.amazonaws.com.cn:6379 ec2-user@<ec2公网IP>
-  # 生产部署：addr 改为 ElastiCache 真实端点（同 VPC 可直连）
+  # 本地开发：连接 docker-compose 里的 redis 容器（明文，无 AUTH）
+  # 生产部署：可改回 AWS ElastiCache (Valkey TLS)，启用 tls + password
   addr: "127.0.0.1:6379"
-  password: "Cashparty20262026"    # ElastiCache AUTH Token
+  password: ""
   db: 0
   pool_size: 100
   min_idle_conns: 10
@@ -30,9 +29,9 @@ redis:
   master_name: ""
   sentinel_addrs: []
   cluster_addrs: []               # Cluster 模式节点地址列表（mode=cluster 时填写）
-  tls:                            # TLS 传输加密配置（对接 AWS ElastiCache Valkey TLS 时启用）
-    enable: true
-    insecure_skip_verify: true    # ElastiCache 自签名证书，必须设为 true
+  tls:
+    enable: false
+    insecure_skip_verify: false
     ca_cert_path: ""
     cert_path: ""
     key_path: ""
@@ -55,18 +54,19 @@ nacos:
 
 kafka:
   enabled: true
+  # 本地开发：使用 docker-compose 启动的本地 Kafka（PLAINTEXT，无 SASL/TLS）
+  # 生产部署：改回 AWS MSK (SASL OAUTHBEARER + TLS)
   brokers:
-    - "b-1.cashpartymsk.ed6k6p.c2.kafka.cn-northwest-1.amazonaws.com.cn:9098"
-    - "b-2.cashpartymsk.ed6k6p.c2.kafka.cn-northwest-1.amazonaws.com.cn:9098"
+    - "127.0.0.1:9092"
   sasl:
-    mechanism: "OAUTHBEARER"
-    region: "cn-northwest-1"
+    mechanism: ""
+    region: ""
     username: ""
     password: ""
   tls:
-    enabled: true
+    enabled: false
     ca_cert_path: ""
-    insecure_skip_verify: true
+    insecure_skip_verify: false
 
 broadcast:
   mode: "redis_pubsub"
