@@ -397,7 +397,7 @@ func (c *Container) initRobotServices() {
 
 	// Create account service
 	c.RobotAccountService = robot.NewRobotAccountService(
-		robotAccountRepo, c.UserService, c.VirtualBalanceService, c.RobotPoolService, c.AvatarCfg,
+		robotAccountRepo, c.UserService, c.VirtualBalanceService, c.RobotPoolService, c.AvatarCfg, c.idGen,
 	)
 
 	// Create robot player

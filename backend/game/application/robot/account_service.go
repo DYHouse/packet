@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/cashparty/backend/common/config"
+	"github.com/cashparty/backend/common/idgen"
 	"github.com/cashparty/backend/common/logger"
 	"github.com/cashparty/backend/game/application"
 	repository "github.com/cashparty/backend/game/domain/repository"
@@ -23,11 +24,12 @@ const (
 // RobotAccountService manages the lifecycle of robot accounts including
 // creation, status transitions, virtual balance operations and lookups.
 type RobotAccountService struct {
-	repo           repository.RobotAccountRepository
-	userSvc        *application.UserService
-	virtualBalance settlementDomain.VirtualBalanceService
-	robotPool      repository.RobotPoolRepository
-	avatarCfg      *config.AvatarConfig
+	repo             repository.RobotAccountRepository
+	userSvc          *application.UserService
+	virtualBalance   settlementDomain.VirtualBalanceService
+	robotPool        repository.RobotPoolRepository
+	avatarCfg        *config.AvatarConfig
+	robotUserIDGen   idgen.IDGenerator
 }
 
 // NewRobotAccountService creates a new RobotAccountService instance.
@@ -37,13 +39,15 @@ func NewRobotAccountService(
 	virtualBalance settlementDomain.VirtualBalanceService,
 	robotPool repository.RobotPoolRepository,
 	avatarCfg *config.AvatarConfig,
+	robotUserIDGen idgen.IDGenerator,
 ) *RobotAccountService {
 	return &RobotAccountService{
-		repo:           repo,
-		userSvc:        userSvc,
-		virtualBalance: virtualBalance,
-		robotPool:      robotPool,
-		avatarCfg:      avatarCfg,
+		repo:             repo,
+		userSvc:          userSvc,
+		virtualBalance:   virtualBalance,
+		robotPool:        robotPool,
+		avatarCfg:        avatarCfg,
+		robotUserIDGen:   robotUserIDGen,
 	}
 }
 
@@ -55,8 +59,17 @@ func (s *RobotAccountService) BatchCreateRobotsWithBalance(ctx context.Context, 
 	}
 
 	for i := 1; i <= count; i++ {
-		robotUserID := fmt.Sprintf("robot_%05d", i)
-		nickname := fmt.Sprintf("Robot_%d", i)
+		// 机器人外部 user_id 采用 "robot_" + 雪花 ID，天然唯一。
+		// 旧版使用固定编号 robot_%05d，该格式在 SaveUser 复用旧记录时会导致
+		// 新昵称无法写入（SaveUser 遇到已存在 user_id 直接跳过），雪花 ID 可避免此问题，
+		// 并支持任意规模扩容，无需记忆起始编号。
+		robotUserIDInt, err := s.robotUserIDGen.GenerateInt64()
+		if err != nil {
+			logger.Error("failed to generate robot user id", "seq", i, "error", err)
+			return err
+		}
+		robotUserID := fmt.Sprintf("robot_%d", robotUserIDInt)
+		nickname := GenerateNickname()
 
 		avatar := ""
 		if s.avatarCfg != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/cashparty/backend/game/domain/repository"
 	mysqlRepo "github.com/cashparty/backend/game/infrastructure/persistence/mysql"
 	"github.com/cashparty/backend/game/infrastructure/persistence/redis"
+	"github.com/cashparty/backend/game/model"
 	settlementRedis "github.com/cashparty/backend/settlement/infrastructure/persistence/redis"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -46,7 +47,8 @@ func main() {
 	count := flag.Int("count", 10, "Number of robot accounts to create")
 	initialBalance := flag.Int64("initial_balance", 1000000, "Initial virtual balance in cents (default: 1000000 = 10000 yuan)")
 	configPath := flag.String("config", "./config/game.yaml", "Path to game config file")
-	clearExisting := flag.Bool("clear", false, "Clear existing robot accounts before initialization")
+	clearExisting := flag.Bool("clear", false, "Clear existing robot accounts before initialization (deletes users table rows for robots)")
+	retireOld := flag.Bool("retire-old", false, "Retire old fixed-sequence robots (robot_%05d) by marking disabled, removing from pool. Preserves users table for history.")
 	flag.Parse()
 
 	cfg, err := gameconfig.Load(*configPath)
@@ -110,6 +112,7 @@ func main() {
 		virtualBalanceSvc,
 		robotPoolSvc,
 		&cfg.Avatar,
+		idGen,
 	)
 
 	// 8. Clear existing robots if requested
@@ -119,6 +122,17 @@ func main() {
 			log.Fatalf("clear robot accounts failed: %v", err)
 		}
 		log.Println("existing robot accounts cleared")
+	}
+
+	// 8.5 Retire old fixed-sequence robots if requested
+	if *retireOld {
+		log.Println("retiring old fixed-sequence robots (robot_NNNNN)...")
+		stats, err := retireOldFixedSequenceRobots(ctx, db, redisClient, robotRepo, robotPoolSvc)
+		if err != nil {
+			log.Fatalf("retire old robots failed: %v", err)
+		}
+		log.Printf("old robots retired: disabled=%d in robot_accounts, removed from available pool, Redis robot:* keys cleared",
+			stats.DisabledCount)
 	}
 
 	log.Printf("creating %d robot accounts (initial_balance=%d)...", *count, *initialBalance)
@@ -205,4 +219,68 @@ func clearRobotAccounts(ctx context.Context, db *gorm.DB, redisClient cRedis.Red
 	}
 
 	return nil
+}
+
+// retireStats 统计旧号机器人的淘汰结果。
+type retireStats struct {
+	DisabledCount int64
+}
+
+// retireOldFixedSequenceRobots 淘汰旧版固定编号机器人（robot_00001 格式）。
+// 操作：
+//  1. robot_accounts 中对旧号记录批量 UPDATE status = disabled
+//  2. 清空 Redis 机器人调度相关 key（可用池、虚拟余额、房间关联等）
+//  3. 从可用池逐个移除
+// 注意：users 表记录保持不变，用于历史对局查询时回显昵称。
+func retireOldFixedSequenceRobots(
+	ctx context.Context,
+	db *gorm.DB,
+	redisClient cRedis.RedisClient,
+	robotRepo repository.RobotAccountRepository,
+	robotPoolSvc repository.RobotPoolRepository,
+) (retireStats, error) {
+	var stats retireStats
+
+	// 1. 批量 UPDATE robot_accounts 中用户 ID 匹配旧号格式的行。
+	// 旧号特征：外部 user_id（users 表）形如 robot_%05d，
+	// 对应 robot_accounts.user_id 为内部雪花 int64，需通过 users 表定位。
+	// 用 JOIN 更新以覆盖仅 robot_accounts 存在、但 users 中缺失的边缘情况。
+	res := db.WithContext(ctx).Exec(`
+UPDATE robot_accounts ra
+JOIN users u ON ra.user_id = u.id
+SET ra.status = ?
+WHERE u.is_robot = 1 AND u.user_id REGEXP '^robot_[0-9]{5}$'
+`, model.RobotStatusDisabled)
+	if res.Error != nil {
+		return stats, fmt.Errorf("batch update old robot_accounts status failed: %w", res.Error)
+	}
+	stats.DisabledCount = res.RowsAffected
+	log.Printf("marked %d old robot accounts as disabled", stats.DisabledCount)
+
+	// 2. 清空 Redis 机器人调度 key（与 clearRobotAccounts 相同的 ScanAll 逻辑）。
+	// 清空后会由 retire 之后新一轮 -count 建号流程重新写入新号。
+	robotKeys, err := redisClient.ScanAll(ctx, "cashparty:robot:*", 1000)
+	if err != nil {
+		return stats, fmt.Errorf("scan robot redis keys failed: %w", err)
+	}
+	for _, key := range robotKeys {
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			log.Printf("删除 robot key 失败: key=%s, error=%v", key, err)
+		}
+	}
+
+	// 3. 清空机器人 user cache，避免旧昵称/旧头像残留。
+	userCacheKeys, err := redisClient.ScanAll(ctx, fmt.Sprintf("%s:user:*", rediskeys.KeyPrefix), 1000)
+	if err != nil {
+		return stats, fmt.Errorf("scan user cache keys failed: %w", err)
+	}
+	for _, key := range userCacheKeys {
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			log.Printf("删除 user cache key 失败: key=%s, error=%v", key, err)
+		}
+	}
+	_ = robotRepo
+	_ = robotPoolSvc
+
+	return stats, nil
 }
