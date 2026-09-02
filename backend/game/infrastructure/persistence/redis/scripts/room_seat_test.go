@@ -126,6 +126,56 @@ func TestJoinAsSpectator(t *testing.T) {
 			t.Errorf("expected code %d (RoomFull), got %d", domain.LuaErrRoomFull, code)
 		}
 	})
+
+	// 观众满员但总容量未满时应放行:想上座的玩家不因观众席占满而被拒绝
+	t.Run("SpectatorFullButTotalNotFull", func(t *testing.T) {
+		_, c, ctx := setupMiniRedis(t)
+		roomID := "1004"
+		userID := "user11"
+		// max_players=5, max_spectators=10, 已有 10 个观众 -> 总数 10 < 15, 应放行
+		createRoom(t, c, ctx, roomID, 1, 5, 10)
+		for i := 1; i <= 10; i++ {
+			addSpectator(t, c, ctx, roomID, fmt.Sprintf("user%d", i), 0)
+		}
+
+		keys := []string{
+			rediskeys.RoomHashKey(roomID),
+			rediskeys.RoomSpectatorsKey(roomID),
+			rediskeys.RoomPlayersKey(roomID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
+		}
+		args := []interface{}{userID, "{}", time.Now().Unix(), roomID, 3600, 3600}
+
+		arr := resultArr(t, JoinAsSpectator.Run(ctx, c, keys, args...))
+		if code := codeOf(t, arr); code != domain.LuaErrSuccess {
+			t.Errorf("expected code %d (success), got %d", domain.LuaErrSuccess, code)
+		}
+	})
+
+	// 总容量满员时仍拒绝:观众数不受单独限制,但 maxTotal 封顶
+	t.Run("TotalFull", func(t *testing.T) {
+		_, c, ctx := setupMiniRedis(t)
+		roomID := "1005"
+		userID := "user16"
+		// max_players=5, max_spectators=10, 已有 15 个观众 -> 总数 15 >= 15, 拒绝
+		createRoom(t, c, ctx, roomID, 1, 5, 10)
+		for i := 1; i <= 15; i++ {
+			addSpectator(t, c, ctx, roomID, fmt.Sprintf("user%d", i), 0)
+		}
+
+		keys := []string{
+			rediskeys.RoomHashKey(roomID),
+			rediskeys.RoomSpectatorsKey(roomID),
+			rediskeys.RoomPlayersKey(roomID),
+			rediskeys.PlayerRoomInRoomKey(roomID, userID),
+		}
+		args := []interface{}{userID, "{}", time.Now().Unix(), roomID, 3600, 3600}
+
+		arr := resultArr(t, JoinAsSpectator.Run(ctx, c, keys, args...))
+		if code := codeOf(t, arr); code != domain.LuaErrRoomFull {
+			t.Errorf("expected code %d (RoomFull), got %d", domain.LuaErrRoomFull, code)
+		}
+	})
 }
 
 // ============================================================================

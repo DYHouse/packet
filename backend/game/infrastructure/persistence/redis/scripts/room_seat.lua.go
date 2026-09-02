@@ -4,7 +4,9 @@ package scripts
 // KEYS: [roomHashKey, spectatorsKey, playersKey, userRoomKey]
 // ARGV: [userID, spectatorData, now, roomIDStr, roomDataTTL, userRoomTTL]
 // 返回: {code, roomID, roomNo, configID}
-// 错误码: LuaErrRoomNotFound(1), LuaErrAlreadyInRoom(4), LuaErrRoomFull(15), LuaErrRoomFullTotal(3)
+// 错误码: LuaErrRoomNotFound(1), LuaErrAlreadyInRoom(4), LuaErrRoomFull(15)
+// 注: 观众不再受 max_spectators 单独限制,仅受总容量(max_players+max_spectators)约束,
+// 避免"观众满员导致想上座的玩家无法进房"的死锁。
 // 注: 跨房间防重入检查(用户是否已在其他房间)已移至 Go 侧用 SETNX current_room 实现,
 // 避免在 Lua 内同时操作 roomID 维度 key 与 userID 维度 key 导致 Cluster 跨 slot。
 const luaJoinAsSpectator = `
@@ -45,10 +47,6 @@ local maxTotal = maxPlayers + maxSpectators
 
 if totalInRoom >= maxTotal then
 	return {15, '', '', 0}  -- LuaErrRoomFull
-end
-
-if spectatorCount >= maxSpectators then
-	return {3, '', '', 0}  -- LuaErrRoomFullTotal
 end
 
 local roomNo = redis.call('HGET', roomHashKey, 'room_no') or ''
