@@ -9,6 +9,10 @@ const (
 	RoomStatusWaiting     RoomStatus = 1
 	RoomStatusPlaying     RoomStatus = 2
 	RoomStatusInterrupted RoomStatus = 4
+
+	// RoomStatusRetired 房间已下架（运营管理态）。负数取值与游戏运行态（正数）隔离，
+	// 房间列表查询按 status IN (0,1,2) 过滤，下架房间不会出现在列表与自动匹配中。
+	RoomStatusRetired RoomStatus = -1
 )
 
 type Room struct {

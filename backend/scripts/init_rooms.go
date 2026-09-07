@@ -113,12 +113,13 @@ func initRoomConfigs(db *gorm.DB) error {
 		result := db.Where("room_fee = ?", roomConfigs[i].RoomFee).First(&existing)
 		if result.Error == nil {
 			roomConfigs[i].ID = existing.ID
+			// 注意：不覆盖 status。已下架（status=0）的类型不会被重跑本脚本复活，
+			// 房间类型的上下架由 manage_room_types.go 管理。
 			if err := db.Model(&existing).Updates(map[string]interface{}{
 				"name":        roomConfigs[i].Name,
 				"max_players": roomConfigs[i].MaxPlayers,
 				"max_rounds":  roomConfigs[i].MaxRounds,
 				"sort_order":  roomConfigs[i].SortOrder,
-				"status":      roomConfigs[i].Status,
 			}).Error; err != nil {
 				return fmt.Errorf("update room config %s failed: %w", roomConfigs[i].Name, err)
 			}
