@@ -13,6 +13,7 @@ func setDefaults(cfg *Config) {
 	commonconfig.SetLogDefaults(&cfg.Log)
 	commonconfig.SetPlatformDefaults(&cfg.Platform)
 	commonconfig.SetRobotDefaults(&cfg.Robot)
+	commonconfig.SetRoomDefaults(&cfg.Room)
 	commonconfig.SetSettlementSchedulerDefaults(&cfg.SettlementScheduler)
 	commonconfig.SetLockDefaults(&cfg.Lock)
 	commonconfig.SetRedisTTLDefaults(&cfg.RedisTTL)

@@ -25,13 +25,14 @@ type DBRepositoryImpl struct {
 	snapshotRepo      repository.SnapshotRepository
 }
 
-func NewDBRepository(db *gorm.DB) repository.DBRepository {
+// NewDBRepository 创建 DB 聚合仓储。minRoomFee 为房间列表与自动匹配的最小房费（分），默认 500（5 元）。
+func NewDBRepository(db *gorm.DB, minRoomFee int64) repository.DBRepository {
 	return &DBRepositoryImpl{
 		db:                db,
-		roomRepo:          NewGormRoomRepository(db),
+		roomRepo:          NewGormRoomRepository(db, minRoomFee),
 		sessionRepo:       NewGormSessionRepository(db),
 		userRepo:          NewGormUserRepository(db),
-		roomConfigRepo:    NewGormRoomConfigRepository(db),
+		roomConfigRepo:    NewGormRoomConfigRepository(db, minRoomFee),
 		roundRepo:         NewGormRoundRepository(db),
 		historyRepo:       NewGormHistoryRepository(db),
 		packetRepo:        NewGormPacketRepository(db),
@@ -83,9 +84,11 @@ type GormTransactionImpl struct {
 }
 
 func NewGormTransaction(db *gorm.DB) *GormTransactionImpl {
+	// 事务内 roomRepo 仅用于写操作（如 UpdateRoom），不执行房间列表查询，
+	// 因此不注入 minRoomFee 过滤（传 0），避免事务构造签名随列表过滤策略变化。
 	return &GormTransactionImpl{
 		db:                db,
-		roomRepo:          NewGormRoomRepository(db),
+		roomRepo:          NewGormRoomRepository(db, 0),
 		sessionRepo:       NewGormSessionRepository(db),
 		userRepo:          NewGormUserRepository(db),
 		roundRepo:         NewGormRoundRepository(db),

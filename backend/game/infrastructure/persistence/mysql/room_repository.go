@@ -12,10 +12,13 @@ import (
 
 type gormRoomRepository struct {
 	db *gorm.DB
+	// minRoomFee 房间列表与自动匹配的最小房费（分）。小于该房费的房间在列表与匹配中被过滤。
+	// 默认 500（5 元）；构造传入 0 时不过滤（防御性兜底，正常链路不会为 0）。
+	minRoomFee int64
 }
 
-func NewGormRoomRepository(db *gorm.DB) repository.RoomDBRepository {
-	return &gormRoomRepository{db: db}
+func NewGormRoomRepository(db *gorm.DB, minRoomFee int64) repository.RoomDBRepository {
+	return &gormRoomRepository{db: db, minRoomFee: minRoomFee}
 }
 
 func (r *gormRoomRepository) GetRoom(ctx context.Context, roomID string) (*model.Room, error) {
@@ -53,6 +56,11 @@ func (r *gormRoomRepository) GetRoomList(ctx context.Context, configID, status, 
 		query = query.Where("status = ?", status)
 	}
 
+	// 最小房费过滤：过滤掉低于阈值的房间（如低额体验房）
+	if r.minRoomFee > 0 {
+		query = query.Where("room_fee >= ?", r.minRoomFee)
+	}
+
 	offset := (page - 1) * pageSize
 	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&rooms).Error; err != nil {
 		return nil, err
@@ -75,6 +83,11 @@ func (r *gormRoomRepository) GetRoomCount(ctx context.Context, configID, status 
 		query = query.Where("status = ?", status)
 	}
 
+	// 最小房费过滤：与 GetRoomList 保持一致，保证分页总数与实际条数一致
+	if r.minRoomFee > 0 {
+		query = query.Where("room_fee >= ?", r.minRoomFee)
+	}
+
 	if err := query.Count(&count).Error; err != nil {
 		return 0, err
 	}
@@ -84,15 +97,29 @@ func (r *gormRoomRepository) GetRoomCount(ctx context.Context, configID, status 
 
 func (r *gormRoomRepository) MatchRoomByBalance(ctx context.Context, balance int64) (string, error) {
 	var roomID int64
-	err := r.db.WithContext(ctx).Raw(`
+
+	// 基础查询：按余额上限匹配有空位的房间，优先选择空位最多的房间
+	querySQL := `
 		SELECT room_id
 		FROM rooms
 		WHERE room_fee <= ?
 		  AND status IN (0, 1)
 		  AND player_count < max_players
+	`
+	args := []interface{}{balance}
+
+	// 最小房费过滤：避免把用户自动匹配进低于阈值的房间（如低额体验房）
+	if r.minRoomFee > 0 {
+		querySQL += "  AND room_fee >= ?"
+		args = append(args, r.minRoomFee)
+	}
+
+	querySQL += `
 		ORDER BY (max_players - player_count) ASC
 		LIMIT 1
-	`, balance).Scan(&roomID).Error
+	`
+
+	err := r.db.WithContext(ctx).Raw(querySQL, args...).Scan(&roomID).Error
 	if err != nil {
 		return "", err
 	}

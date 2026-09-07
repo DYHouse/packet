@@ -20,6 +20,7 @@ type Config struct {
 	IDGenerator         commonconfig.IDGeneratorConfig         `mapstructure:"id_generator" yaml:"id_generator"`
 	Avatar              commonconfig.AvatarConfig              `mapstructure:"avatar" yaml:"avatar"`
 	Robot               commonconfig.RobotConfig               `mapstructure:"robot" yaml:"robot"`
+	Room                commonconfig.RoomConfig                `mapstructure:"room" yaml:"room"`
 	SettlementScheduler commonconfig.SettlementSchedulerConfig `mapstructure:"settlement_scheduler" yaml:"settlement_scheduler"`
 	Lock                commonconfig.LockConfig                `mapstructure:"lock" yaml:"lock"`
 	Lua                 commonconfig.LuaConfig                 `mapstructure:"lua" yaml:"lua"`

@@ -101,7 +101,8 @@ func main() {
 	robotPoolSvc := redis.NewRobotPoolService(redisClient)
 
 	// 6. Create UserService (use DBRepository so SaveUser works end-to-end)
-	dbRepo := mysqlRepo.NewDBRepository(db)
+	// 脚本不涉及房间列表查询，minRoomFee 传 0（不过滤）
+	dbRepo := mysqlRepo.NewDBRepository(db, 0)
 	userCacheRepo := redis.NewUserCacheRepository(redisClient)
 	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen, nil)
 

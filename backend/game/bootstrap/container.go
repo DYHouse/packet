@@ -150,8 +150,9 @@ func NewContainer(
 	redisTTL *config.RedisTTLConfig,
 	rateLimiterCfg *gameconfig.RateLimiterConfig,
 	idGen idgen.IDGenerator,
+	roomCfg *config.RoomConfig,
 ) *Container {
-	dbRepo := mysqlRepo.NewDBRepository(db)
+	dbRepo := mysqlRepo.NewDBRepository(db, roomCfg.MinRoomFee)
 	broadcaster := broadcast.NewGameBroadcaster(broadcastCfg, kafkaProducer, redis)
 	eventPublisher := messaging.NewRoomEventPublisher(kafkaProducer, kafka.TopicRoomEvents)
 	gameEventPublisher := messaging.NewGameEventPublisher(kafkaProducer)

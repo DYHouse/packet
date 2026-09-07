@@ -159,7 +159,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	traceIDGen := settlementService.NewTraceIDGenerator(idGen)
 	platformCfg := settlementConfig.FromCommonConfig(&cfg.Platform)
 
-	dbRepo := mysqlRepo.NewDBRepository(db)
+	dbRepo := mysqlRepo.NewDBRepository(db, cfg.Room.MinRoomFee)
 	userCacheRepo := redisRepo.NewUserCacheRepository(redisClient)
 	userSvc := application.NewUserService(dbRepo, userCacheRepo, &cfg.Avatar, idGen, nil)
 	// 通过 UserSaverAdapter 将 game 层 *application.UserService 适配为 settlement/domain.UserService，
@@ -215,7 +215,7 @@ func NewApplicationWithConfig(cfg *gameconfig.Config) (*Application, error) {
 	}
 
 	container := NewContainer(&cfg.Platform, &cfg.Timeout, &cfg.Avatar, &cfg.Robot, &cfg.Broadcast, db, redisClient, kafkaProducer, roundSettleSvc, penaltySettlementSvc, packetGenerator, roomRepo,
-		platformClient, billRepo, roundSettlementRepo, refundAuditRepo, settlementQueryRepo, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundApplySvc, refundExecuteSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen)
+		platformClient, billRepo, roundSettlementRepo, refundAuditRepo, settlementQueryRepo, traceIDGen, platformCfg, userIDConvert, exceptionMgr, creditRetrySvc, deductSvc, refundApplySvc, refundExecuteSvc, rewardSettler, callMgr, gameSettleSvc, robotChecker, settlementVirtualBalance, taskRunner, &cfg.SettlementScheduler, &cfg.RedisTTL, &cfg.RateLimiter, idGen, &cfg.Room)
 	container.LockCfg = &cfg.Lock
 	container.InitAppServices()
 
